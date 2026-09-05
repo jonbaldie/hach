@@ -191,3 +191,59 @@ spec = do
             sTools = baseState { tsFocus = FocusTools, tsTools = [tool1, tool2], tsSelectedToolIndex = 1 }
             (_, actions) = updateTui (EvUserKey KeyUp) sTools
         actions `shouldBe` [ActionScrollTools (-1)]
+
+    describe "Prompt History Navigation (Up/Down in FocusInput)" $ do
+      it "recalls the previous prompt on KeyUp" $ do
+        let s0 = baseState { tsPromptHistory = ["prompt 1", "prompt 2"] }
+            (s1, _) = updateTui (EvUserKey KeyUp) s0
+        tsInputBuffer s1 `shouldBe` "prompt 2"
+        tsPromptHistoryIndex s1 `shouldBe` Just 1
+
+      it "recalls earlier prompts on subsequent KeyUps" $ do
+        let s0 = baseState { tsPromptHistory = ["prompt 1", "prompt 2", "prompt 3"] }
+            (s1, _) = updateTui (EvUserKey KeyUp) s0
+            (s2, _) = updateTui (EvUserKey KeyUp) s1
+        tsInputBuffer s2 `shouldBe` "prompt 2"
+        tsPromptHistoryIndex s2 `shouldBe` Just 1
+        let (s3, _) = updateTui (EvUserKey KeyUp) s2
+        tsInputBuffer s3 `shouldBe` "prompt 1"
+        tsPromptHistoryIndex s3 `shouldBe` Just 0
+
+      it "stops at the oldest prompt on repeated KeyUps" $ do
+        let s0 = baseState { tsPromptHistory = ["prompt 1", "prompt 2"] }
+            (s1, _) = updateTui (EvUserKey KeyUp) s0
+            (s2, _) = updateTui (EvUserKey KeyUp) s1
+            (s3, _) = updateTui (EvUserKey KeyUp) s2
+        tsInputBuffer s3 `shouldBe` "prompt 1"
+        tsPromptHistoryIndex s3 `shouldBe` Just 0
+
+      it "moves forward in history with KeyDown and restores draft buffer" $ do
+        let s0 = baseState
+              { tsPromptHistory = ["prompt 1", "prompt 2"]
+              , tsInputBuffer   = "my pending draft"
+              }
+            (s1, _) = updateTui (EvUserKey KeyUp) s0
+        tsInputBuffer s1 `shouldBe` "prompt 2"
+        tsPromptDraft s1 `shouldBe` "my pending draft"
+
+        let (s2, _) = updateTui (EvUserKey KeyUp) s1
+        tsInputBuffer s2 `shouldBe` "prompt 1"
+
+        let (s3, _) = updateTui (EvUserKey KeyDown) s2
+        tsInputBuffer s3 `shouldBe` "prompt 2"
+
+        let (s4, _) = updateTui (EvUserKey KeyDown) s3
+        tsInputBuffer s4 `shouldBe` "my pending draft"
+        tsPromptHistoryIndex s4 `shouldBe` Nothing
+
+      it "appends submitted prompt to tsPromptHistory on Enter and resets index" $ do
+        let s0 = baseState { tsInputBuffer = "first query" }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+        tsPromptHistory s1 `shouldBe` ["first query"]
+        tsPromptHistoryIndex s1 `shouldBe` Nothing
+
+        let s2 = fst (updateTui (EvHarness (EvDone "answer")) s1)
+            s3 = s2 { tsInputBuffer = "second query" }
+            (s4, _) = updateTui (EvUserKey KeyEnter) s3
+        tsPromptHistory s4 `shouldBe` ["first query", "second query"]
+        tsPromptHistoryIndex s4 `shouldBe` Nothing

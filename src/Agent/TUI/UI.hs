@@ -425,6 +425,7 @@ helpOverlay =
     , withAttr brandAttr (txt "Task Input:")
     , padLeft (Pad 2) $ vBox
         [ hBox [withAttr shortcutKeyAttr (txt "Enter             "), withAttr dimAttr (txt "Submit prompt to the autonomous agent")]
+        , hBox [withAttr shortcutKeyAttr (txt "Up / Down         "), withAttr dimAttr (txt "Recall previous / next prompt history")]
         , hBox [withAttr shortcutKeyAttr (txt "Ctrl+U            "), withAttr dimAttr (txt "Clear current input line")]
         ]
     , txt " "

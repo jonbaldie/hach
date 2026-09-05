@@ -83,6 +83,9 @@ data TuiState = TuiState
   , tsShowHelp           :: !Bool
   , tsShouldQuit         :: !Bool
   , tsCancelRequested    :: !Bool
+  , tsPromptHistory      :: ![Text]
+  , tsPromptHistoryIndex :: !(Maybe Int)
+  , tsPromptDraft        :: !Text
   } deriving (Show, Eq)
 
 -- | Initialize a clean TUI state.
@@ -101,6 +104,9 @@ initialTuiState model maxTurns = TuiState
   , tsShowHelp           = False
   , tsShouldQuit         = False
   , tsCancelRequested    = False
+  , tsPromptHistory      = []
+  , tsPromptHistoryIndex = Nothing
+  , tsPromptDraft        = ""
   }
 
 -- | Simplified user keystroke events abstracted from Vty.

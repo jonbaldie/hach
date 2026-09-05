@@ -33,11 +33,15 @@ handleSubmitPrompt rawPrompt state
   | otherwise =
       let trimmed = T.strip rawPrompt
           newHistory = tsHistory state ++ [DiUser trimmed]
+          newPromptHistory = tsPromptHistory state ++ [trimmed]
           newState = state
-            { tsHistory     = newHistory
-            , tsInputBuffer = ""
-            , tsStatus      = StatusThinking
-            , tsFocus       = FocusHistory
+            { tsHistory            = newHistory
+            , tsInputBuffer        = ""
+            , tsStatus             = StatusThinking
+            , tsFocus              = FocusHistory
+            , tsPromptHistory      = newPromptHistory
+            , tsPromptHistoryIndex = Nothing
+            , tsPromptDraft        = ""
             }
       in (newState, [ActionRunAgent trimmed])
 
@@ -109,6 +113,41 @@ handleInputKey :: UserKey -> TuiState -> (TuiState, [TuiAction])
 handleInputKey key state@TuiState{..} = case key of
   KeyEnter ->
     handleSubmitPrompt tsInputBuffer state
+
+  KeyUp
+    | null tsPromptHistory -> (state, [])
+    | otherwise ->
+        let total = length tsPromptHistory
+            (newIdx, draft) = case tsPromptHistoryIndex of
+              Nothing  -> (total - 1, tsInputBuffer)
+              Just idx -> (max 0 (idx - 1), tsPromptDraft)
+            newBuffer = tsPromptHistory !! newIdx
+        in ( state { tsInputBuffer        = newBuffer
+                   , tsPromptHistoryIndex = Just newIdx
+                   , tsPromptDraft        = draft
+                   }
+           , []
+           )
+
+  KeyDown -> case tsPromptHistoryIndex of
+    Nothing -> (state, [])
+    Just idx
+      | idx + 1 < length tsPromptHistory ->
+          let newIdx = idx + 1
+              newBuffer = tsPromptHistory !! newIdx
+          in ( state { tsInputBuffer        = newBuffer
+                     , tsPromptHistoryIndex = Just newIdx
+                     }
+             , []
+             )
+      | otherwise ->
+          -- Reached past the newest prompt: restore draft buffer
+          ( state { tsInputBuffer        = tsPromptDraft
+                  , tsPromptHistoryIndex = Nothing
+                  , tsPromptDraft        = ""
+                  }
+          , []
+          )
 
   KeyChar c ->
     (state { tsInputBuffer = tsInputBuffer `T.snoc` c }, [])
