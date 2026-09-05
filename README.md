@@ -58,11 +58,16 @@ The harness equips the model with four standard coding tools:
 
 ## Configuration
 
-Configuration is loaded from `.env`:
-- Line 1: `OPENROUTER_API_KEY=<your-key>`
-- Line 2: `OPENROUTER_MODEL=<model-name>` (e.g. `meta/muse-glimmer-30b`)
+Configuration resolution precedence:
 
-The harness strictly loads the model specified on **line 2** of `.env`.
+1. **OpenRouter API Key**:
+   - Process environment variable `OPENROUTER_API_KEY`
+   - `.env` file (`OPENROUTER_API_KEY=<key>`)
+
+2. **OpenRouter Model**:
+   - `--model <name>` or `--model=<name>` command-line flag
+   - Process environment variable `OPENROUTER_MODEL`
+   - Line 2 of `.env` (or `OPENROUTER_MODEL=<model>` in `.env`)
 
 ---
 
@@ -84,9 +89,15 @@ cabal run agent-integration-test
 ## Running the CLI Harness
 
 ```bash
-# Pass the task as command-line arguments:
+# Run with the default model (from line 2 of .env):
 cabal run agent-harness -- "Inspect the src directory and summarize the codebase architecture."
 
-# Or run interactively:
-cabal run agent-harness
+# Override the model using the --model flag:
+cabal run agent-harness -- --model meta/muse-glimmer-30b "Create hello.txt and verify it"
+
+# Alternatively with equals syntax:
+cabal run agent-harness -- --model=anthropic/claude-3.5-sonnet "Run the tests"
+
+# Or run interactively (will prompt for task):
+cabal run agent-harness -- --model meta/muse-glimmer-30b
 ```

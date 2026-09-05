@@ -49,3 +49,112 @@ spec = do
 
     it "returns Nothing if fewer than two lines" $ do
       parseLineTwoModel ["OPENROUTER_API_KEY=sk-test"] `shouldBe` Nothing
+
+  describe "parseCliArgs" $ do
+    it "parses --model with separate argument" $ do
+      let args = ["--model", "meta/llama-3", "do", "something"]
+      parseCliArgs args `shouldBe` Right CliOptions
+        { optModel = Just "meta/llama-3"
+        , optPrompt = Just "do something"
+        }
+
+    it "parses --model= syntax" $ do
+      let args = ["--model=anthropic/claude-3", "run", "all", "tests"]
+      parseCliArgs args `shouldBe` Right CliOptions
+        { optModel = Just "anthropic/claude-3"
+        , optPrompt = Just "run all tests"
+        }
+
+    it "parses short flag -m" $ do
+      let args = ["-m", "openai/gpt-4o", "hello"]
+      parseCliArgs args `shouldBe` Right CliOptions
+        { optModel = Just "openai/gpt-4o"
+        , optPrompt = Just "hello"
+        }
+
+    it "parses flag positioned between prompt words" $ do
+      let args = ["hello", "--model", "meta/muse-glimmer-30b", "world"]
+      parseCliArgs args `shouldBe` Right CliOptions
+        { optModel = Just "meta/muse-glimmer-30b"
+        , optPrompt = Just "hello world"
+        }
+
+    it "parses arguments when no model flag is provided" $ do
+      let args = ["run", "my", "task"]
+      parseCliArgs args `shouldBe` Right CliOptions
+        { optModel = Nothing
+        , optPrompt = Just "run my task"
+        }
+
+    it "parses empty arguments" $ do
+      parseCliArgs [] `shouldBe` Right CliOptions
+        { optModel = Nothing
+        , optPrompt = Nothing
+        }
+
+    it "fails when --model has no argument" $ do
+      case parseCliArgs ["--model"] of
+        Left _ -> pure ()
+        Right _ -> expectationFailure "Expected parseCliArgs to fail when --model has no argument"
+
+    it "fails when --model= is empty" $ do
+      case parseCliArgs ["--model="] of
+        Left _ -> pure ()
+        Right _ -> expectationFailure "Expected parseCliArgs to fail when --model= is empty"
+
+  describe "resolveConfigWith" $ do
+    let dotEnvSample = "OPENROUTER_API_KEY=sk-dotenv\nOPENROUTER_MODEL=meta/muse-glimmer-30b\n"
+
+    it "CLI flag overrides both OS env and .env for model" $ do
+      let res = resolveConfigWith
+                  (Just "custom/cli-model")
+                  (Just "sk-os-env")
+                  (Just "os-model")
+                  (Just dotEnvSample)
+      res `shouldBe` Right EnvConfig
+        { envApiKey = "sk-os-env"
+        , envModel = "custom/cli-model"
+        }
+
+    it "uses OS environment API key in preference to .env" $ do
+      let res = resolveConfigWith
+                  Nothing
+                  (Just "sk-os-env")
+                  Nothing
+                  (Just dotEnvSample)
+      res `shouldBe` Right EnvConfig
+        { envApiKey = "sk-os-env"
+        , envModel = "meta/muse-glimmer-30b"
+        }
+
+    it "falls back to .env when OS environment variables are missing" $ do
+      let res = resolveConfigWith
+                  Nothing
+                  Nothing
+                  Nothing
+                  (Just dotEnvSample)
+      res `shouldBe` Right EnvConfig
+        { envApiKey = "sk-dotenv"
+        , envModel = "meta/muse-glimmer-30b"
+        }
+
+    it "uses OS environment model when no CLI flag given and .env missing" $ do
+      let res = resolveConfigWith
+                  Nothing
+                  (Just "sk-os-env")
+                  (Just "os-model")
+                  Nothing
+      res `shouldBe` Right EnvConfig
+        { envApiKey = "sk-os-env"
+        , envModel = "os-model"
+        }
+
+    it "fails if API key is not in OS env or .env" $ do
+      let res = resolveConfigWith
+                  Nothing
+                  Nothing
+                  (Just "os-model")
+                  Nothing
+      case res of
+        Left _ -> pure ()
+        Right _ -> expectationFailure "Expected error when API key is missing"

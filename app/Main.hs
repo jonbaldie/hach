@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Main (main) where
 
@@ -23,14 +24,21 @@ defaultSystemPrompt =
 
 main :: IO ()
 main = do
-  args <- getArgs
-  cwd  <- getCurrentDirectory
+  rawArgs <- getArgs
+  cwd     <- getCurrentDirectory
 
-  envRes <- loadEnvConfig ".env"
+  CliOptions{..} <- case parseCliArgs rawArgs of
+    Left err -> do
+      putStrLn ("Argument error: " <> err)
+      putStrLn "Usage: agent-harness [--model <model_name>] [task prompt...]"
+      exitFailure
+    Right opts -> pure opts
+
+  envRes <- resolveEnvConfig optModel (Just ".env")
   EnvConfig{..} <- case envRes of
     Left err -> do
       putStrLn ("Configuration error: " <> err)
-      putStrLn "Please ensure .env contains OPENROUTER_API_KEY and line 2 specifies the model."
+      putStrLn "Please set OPENROUTER_API_KEY in the environment or in .env."
       exitFailure
     Right cfg -> pure cfg
 
@@ -38,14 +46,14 @@ main = do
   putStrLn "  Haskell Agentic Coding Harness (Functional Pearl)     "
   putStrLn "========================================================"
   putStrLn ("Workspace: " <> cwd)
-  putStrLn ("Model:     " <> T.unpack envModel <> " (loaded from line 2 of .env)")
+  putStrLn ("Model:     " <> T.unpack envModel)
   putStrLn "========================================================"
 
-  taskPrompt <- case args of
-    [] -> do
+  taskPrompt <- case optPrompt of
+    Just p  -> pure p
+    Nothing -> do
       putStrLn "Enter your task/request:"
       TIO.getLine
-    _ -> pure (T.pack (unwords args))
 
   when (T.null (T.strip taskPrompt)) $ do
     putStrLn "Empty task prompt provided. Exiting."
