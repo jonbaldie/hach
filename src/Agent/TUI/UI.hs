@@ -128,7 +128,7 @@ renderHeader TuiState{..} =
   withBorderStyle unicodeRounded $
   border $
   hBox
-    [ withAttr brandAttr (txt " ✻ antigravity ")
+    [ withAttr brandAttr (txt " ✻ agent ")
     , withAttr dimAttr (txt "│ ")
     , withAttr dimAttr (txt "model: ")
     , withAttr modelAttr (txt tsModelName)
@@ -411,7 +411,7 @@ helpOverlay =
   center $
   withBorderStyle unicodeBold $
   withAttr activeBorderAttr $
-  borderWithLabel (withAttr brandAttr (txt " ✻ Antigravity & Claude Keyboard Guide ")) $
+  borderWithLabel (withAttr brandAttr (txt " ✻ Agent Keyboard Guide ")) $
   padAll 2 $
   vBox
     [ withAttr brandAttr (txt "Navigation & Global:")
