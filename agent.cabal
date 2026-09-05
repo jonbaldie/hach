@@ -1,0 +1,99 @@
+cabal-version:      3.0
+name:               agent
+version:            0.1.0.0
+synopsis:           A minimal agentic coding harness in Haskell (Functional Pearl)
+license:            MIT
+author:             Jonathan Baldie
+maintainer:         jonathan@baldie.net
+category:           Control, AI, Language
+build-type:         Simple
+
+common common-options
+    default-language:   GHC2021
+    default-extensions:
+        OverloadedStrings
+        DeriveFunctor
+        GADTs
+        RecordWildCards
+        LambdaCase
+    ghc-options:
+        -Wall
+        -Wcompat
+        -Wincomplete-record-updates
+        -Wincomplete-uni-patterns
+        -Wredundant-constraints
+
+library
+    import:           common-options
+    hs-source-dirs:   src
+    exposed-modules:
+        Agent.Types
+        Agent.Core
+        Agent.Tools
+        Agent.OpenRouter
+        Agent.Interpreter.IO
+        Agent.Interpreter.Pure
+        Agent.Env
+    build-depends:
+        base >= 4.18 && < 5,
+        text,
+        bytestring,
+        containers,
+        aeson,
+        http-client,
+        http-client-tls,
+        http-types,
+        directory,
+        filepath,
+        process
+
+executable agent-harness
+    import:           common-options
+    main-is:          Main.hs
+    hs-source-dirs:   app
+    build-depends:
+        base >= 4.18 && < 5,
+        agent,
+        text,
+        bytestring,
+        directory,
+        filepath
+    ghc-options:
+        -threaded
+        -rtsopts
+        -with-rtsopts=-N
+
+executable agent-integration-test
+    import:           common-options
+    main-is:          IntegrationSpec.hs
+    hs-source-dirs:   test-integration
+    build-depends:
+        base >= 4.18 && < 5,
+        agent,
+        text,
+        bytestring,
+        directory,
+        filepath
+    ghc-options:
+        -threaded
+        -rtsopts
+        -with-rtsopts=-N
+
+test-suite agent-test
+    import:           common-options
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test
+    other-modules:
+        Agent.CoreSpec
+        Agent.ToolsSpec
+        Agent.EnvSpec
+        Agent.OpenRouterSpec
+    build-depends:
+        base >= 4.18 && < 5,
+        agent,
+        text,
+        bytestring,
+        containers,
+        aeson,
+        hspec >= 2.10
