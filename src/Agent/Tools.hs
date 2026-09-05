@@ -6,29 +6,45 @@ module Agent.Tools
     allToolDefs
   , readFileToolDef
   , writeFileToolDef
+  , replaceFileContentToolDef
   , runCommandToolDef
   , listDirToolDef
+  , findFilesToolDef
+  , grepSearchToolDef
 
     -- * Argument Parsing
   , ReadFileArgs(..)
   , WriteFileArgs(..)
+  , ReplaceFileContentArgs(..)
   , RunCommandArgs(..)
   , ListDirArgs(..)
+  , FindFilesArgs(..)
+  , GrepSearchArgs(..)
   , parseReadFileArgs
   , parseWriteFileArgs
+  , parseReplaceFileContentArgs
   , parseRunCommandArgs
   , parseListDirArgs
+  , parseFindFilesArgs
+  , parseGrepSearchArgs
+
+    -- * Output Truncation
+  , truncateToolOutput
 
     -- * Execution (IO)
   , executeCodingTool
   , executeReadFile
   , executeWriteFile
+  , executeReplaceFileContent
   , executeRunCommand
   , executeListDir
+  , executeFindFiles
+  , executeGrepSearch
   ) where
 
 import Agent.Types
 import Control.Exception (SomeException, try)
+import Control.Monad (forM)
 import Data.Aeson
   ( FromJSON(..), (.:), (.:?), (.!=), object, (.=)
   )
@@ -53,6 +69,7 @@ import System.FilePath
   , isAbsolute
   , isPathSeparator
   , joinPath
+  , makeRelative
   , pathSeparator
   , splitDirectories
   , takeDirectory
@@ -101,6 +118,30 @@ writeFileToolDef = ToolDef
       ]
   }
 
+replaceFileContentToolDef :: ToolDef
+replaceFileContentToolDef = ToolDef
+  { toolName = "replace_file_content"
+  , toolDescription = "Replace a unique contiguous block of text in a file with new content. Fails if the target content does not match uniquely."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "path" .= object
+              [ "type" .= ("string" :: Text)
+              , "description" .= ("Path of the file to modify" :: Text)
+              ]
+          , "old_content" .= object
+              [ "type" .= ("string" :: Text)
+              , "description" .= ("Exact contiguous text block to replace" :: Text)
+              ]
+          , "new_content" .= object
+              [ "type" .= ("string" :: Text)
+              , "description" .= ("Replacement text" :: Text)
+              ]
+          ]
+      , "required" .= (["path", "old_content", "new_content"] :: [Text])
+      ]
+  }
+
 runCommandToolDef :: ToolDef
 runCommandToolDef = ToolDef
   { toolName = "run_command"
@@ -132,9 +173,61 @@ listDirToolDef = ToolDef
       ]
   }
 
+findFilesToolDef :: ToolDef
+findFilesToolDef = ToolDef
+  { toolName = "find_files"
+  , toolDescription = "Search for files within a directory matching a pattern or substring. Automatically ignores .git, dist-newstyle, and .env."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "pattern" .= object
+              [ "type" .= ("string" :: Text)
+              , "description" .= ("File name pattern or substring (e.g. '*.hs', 'Spec.hs', 'README')" :: Text)
+              ]
+          , "path" .= object
+              [ "type" .= ("string" :: Text)
+              , "description" .= ("Directory to search (defaults to '.')" :: Text)
+              ]
+          ]
+      , "required" .= (["pattern"] :: [Text])
+      ]
+  }
+
+grepSearchToolDef :: ToolDef
+grepSearchToolDef = ToolDef
+  { toolName = "grep_search"
+  , toolDescription = "Search file contents for an exact text pattern. Returns matching file paths, line numbers, and line contents."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "query" .= object
+              [ "type" .= ("string" :: Text)
+              , "description" .= ("Text pattern to search for" :: Text)
+              ]
+          , "path" .= object
+              [ "type" .= ("string" :: Text)
+              , "description" .= ("Directory or file to search (defaults to '.')" :: Text)
+              ]
+          , "case_sensitive" .= object
+              [ "type" .= ("boolean" :: Text)
+              , "description" .= ("Whether search is case-sensitive (defaults to true)" :: Text)
+              ]
+          ]
+      , "required" .= (["query"] :: [Text])
+      ]
+  }
+
 -- | Standard set of coding tools exposed to the agent.
 allToolDefs :: [ToolDef]
-allToolDefs = [readFileToolDef, writeFileToolDef, runCommandToolDef, listDirToolDef]
+allToolDefs =
+  [ readFileToolDef
+  , writeFileToolDef
+  , replaceFileContentToolDef
+  , runCommandToolDef
+  , listDirToolDef
+  , findFilesToolDef
+  , grepSearchToolDef
+  ]
 
 --------------------------------------------------------------------------------
 -- Argument Types & Parsers
@@ -156,6 +249,16 @@ instance FromJSON WriteFileArgs where
   parseJSON = Aeson.withObject "WriteFileArgs" $ \o ->
     WriteFileArgs <$> o .: "path" <*> o .: "content"
 
+data ReplaceFileContentArgs = ReplaceFileContentArgs
+  { replacePath       :: !FilePath
+  , replaceOldContent :: !Text
+  , replaceNewContent :: !Text
+  } deriving (Show, Eq)
+
+instance FromJSON ReplaceFileContentArgs where
+  parseJSON = Aeson.withObject "ReplaceFileContentArgs" $ \o ->
+    ReplaceFileContentArgs <$> o .: "path" <*> o .: "old_content" <*> o .: "new_content"
+
 newtype RunCommandArgs = RunCommandArgs { runCommandCmd :: Text }
   deriving (Show, Eq)
 
@@ -170,6 +273,25 @@ instance FromJSON ListDirArgs where
   parseJSON = Aeson.withObject "ListDirArgs" $ \o ->
     ListDirArgs <$> o .:? "path" .!= "."
 
+data FindFilesArgs = FindFilesArgs
+  { findPattern :: !Text
+  , findPath    :: !FilePath
+  } deriving (Show, Eq)
+
+instance FromJSON FindFilesArgs where
+  parseJSON = Aeson.withObject "FindFilesArgs" $ \o ->
+    FindFilesArgs <$> o .: "pattern" <*> o .:? "path" .!= "."
+
+data GrepSearchArgs = GrepSearchArgs
+  { grepQuery         :: !Text
+  , grepPath          :: !FilePath
+  , grepCaseSensitive :: !Bool
+  } deriving (Show, Eq)
+
+instance FromJSON GrepSearchArgs where
+  parseJSON = Aeson.withObject "GrepSearchArgs" $ \o ->
+    GrepSearchArgs <$> o .: "query" <*> o .:? "path" .!= "." <*> o .:? "case_sensitive" .!= True
+
 parseArgsWith :: (FromJSON a) => ToolCall -> Either String a
 parseArgsWith tc = do
   val <- parseCallArgs tc
@@ -181,11 +303,41 @@ parseReadFileArgs = parseArgsWith
 parseWriteFileArgs :: ToolCall -> Either String WriteFileArgs
 parseWriteFileArgs = parseArgsWith
 
+parseReplaceFileContentArgs :: ToolCall -> Either String ReplaceFileContentArgs
+parseReplaceFileContentArgs = parseArgsWith
+
 parseRunCommandArgs :: ToolCall -> Either String RunCommandArgs
 parseRunCommandArgs = parseArgsWith
 
 parseListDirArgs :: ToolCall -> Either String ListDirArgs
 parseListDirArgs = parseArgsWith
+
+parseFindFilesArgs :: ToolCall -> Either String FindFilesArgs
+parseFindFilesArgs = parseArgsWith
+
+parseGrepSearchArgs :: ToolCall -> Either String GrepSearchArgs
+parseGrepSearchArgs = parseArgsWith
+
+--------------------------------------------------------------------------------
+-- Output Truncation
+--------------------------------------------------------------------------------
+
+-- | Truncate excessive tool output (capped at 30,000 characters and 1,000 lines).
+truncateToolOutput :: Text -> Text
+truncateToolOutput raw
+  | T.length raw > maxChars || length (T.lines raw) > maxLines =
+      let lineSubset = take maxLines (T.lines raw)
+          charSubset = T.take maxChars (T.unlines lineSubset)
+          truncatedNotice = "\n\n[Output truncated: showing "
+            <> T.pack (show (length (T.lines charSubset)))
+            <> " lines / "
+            <> T.pack (show (T.length charSubset))
+            <> " characters]"
+      in charSubset <> truncatedNotice
+  | otherwise = raw
+  where
+    maxChars = 30000
+    maxLines = 1000
 
 --------------------------------------------------------------------------------
 -- Tool Execution against Workspace (IO)
@@ -193,8 +345,8 @@ parseListDirArgs = parseArgsWith
 
 -- | Execute any supported tool within the given workspace directory.
 executeCodingTool :: FilePath -> ToolCall -> IO ToolResult
-executeCodingTool root call =
-  case functionName call of
+executeCodingTool root call = do
+  res <- case functionName call of
     "read_file" ->
       case parseReadFileArgs call of
         Left err   -> pure $ ToolError ("Failed to parse read_file args: " <> T.pack err)
@@ -204,6 +356,11 @@ executeCodingTool root call =
       case parseWriteFileArgs call of
         Left err   -> pure $ ToolError ("Failed to parse write_file args: " <> T.pack err)
         Right args -> executeWriteFile root args
+
+    "replace_file_content" ->
+      case parseReplaceFileContentArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse replace_file_content args: " <> T.pack err)
+        Right args -> executeReplaceFileContent root args
 
     "run_command" ->
       case parseRunCommandArgs call of
@@ -215,8 +372,21 @@ executeCodingTool root call =
         Left err   -> pure $ ToolError ("Failed to parse list_dir args: " <> T.pack err)
         Right args -> executeListDir root args
 
+    "find_files" ->
+      case parseFindFilesArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse find_files args: " <> T.pack err)
+        Right args -> executeFindFiles root args
+
+    "grep_search" ->
+      case parseGrepSearchArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse grep_search args: " <> T.pack err)
+        Right args -> executeGrepSearch root args
+
     unknown ->
       pure $ ToolError ("Unknown tool function: " <> unknown)
+  pure $ case res of
+    ToolSuccess out -> ToolSuccess (truncateToolOutput out)
+    err             -> err
 
 -- | Logically collapses '.' and '..' components in an absolute path.
 collapseLogicalPath :: FilePath -> FilePath
@@ -295,6 +465,33 @@ executeWriteFile root (WriteFileArgs path content) = do
         Right () ->
           pure $ ToolSuccess ("Successfully wrote " <> T.pack (show (T.length content)) <> " characters to " <> T.pack path)
 
+executeReplaceFileContent :: FilePath -> ReplaceFileContentArgs -> IO ToolResult
+executeReplaceFileContent root (ReplaceFileContentArgs path oldContent newContent) = do
+  pathRes <- resolveWorkspacePath root path
+  case pathRes of
+    Left err -> pure $ ToolError (T.pack err)
+    Right fullPath -> do
+      exists <- doesFileExist fullPath
+      if not exists
+        then pure $ ToolError ("File not found: " <> T.pack path)
+        else do
+          readRes <- try (BS.readFile fullPath) :: IO (Either SomeException BS.ByteString)
+          case readRes of
+            Left ex -> pure $ ToolError ("Read error: " <> T.pack (show ex))
+            Right bytes -> do
+              let txt = TE.decodeUtf8With TE.lenientDecode bytes
+                  matches = T.count oldContent txt
+              if matches == 0
+                then pure $ ToolError ("Target content not found in '" <> T.pack path <> "'.")
+                else if matches > 1
+                  then pure $ ToolError ("Target content found multiple (" <> T.pack (show matches) <> ") times in '" <> T.pack path <> "'; replacement requires a unique match.")
+                  else do
+                    let updated = T.replace oldContent newContent txt
+                    writeRes <- try (BS.writeFile fullPath (TE.encodeUtf8 updated)) :: IO (Either SomeException ())
+                    case writeRes of
+                      Left ex -> pure $ ToolError ("Write error: " <> T.pack (show ex))
+                      Right () -> pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
+
 executeRunCommand :: FilePath -> RunCommandArgs -> IO ToolResult
 executeRunCommand root (RunCommandArgs cmd) = do
   let sh = (shell (T.unpack cmd)) { cwd = Just root }
@@ -332,3 +529,107 @@ executeListDir root (ListDirArgs path) = do
             Left ex -> pure $ ToolError ("List directory error: " <> T.pack (show ex))
             Right entries ->
               pure $ ToolSuccess (T.unlines (map T.pack entries))
+
+executeFindFiles :: FilePath -> FindFilesArgs -> IO ToolResult
+executeFindFiles root (FindFilesArgs pat searchPath) = do
+  pathRes <- resolveWorkspacePath root searchPath
+  case pathRes of
+    Left err -> pure $ ToolError (T.pack err)
+    Right startDir -> do
+      dirExists <- doesDirectoryExist startDir
+      if not dirExists
+        then pure $ ToolError ("Directory not found: " <> T.pack searchPath)
+        else do
+          canonRoot <- canonicalizePath root
+          files <- traverseDir canonRoot startDir
+          let matches = filter (matchPattern pat) files
+              limited = take 100 matches
+              resText = if null limited
+                then "No matching files found."
+                else T.unlines (map T.pack limited)
+          pure $ ToolSuccess resText
+  where
+    ignoredDirs = [".git", "dist-newstyle", ".env", ".cabal-sandbox", "node_modules"]
+
+    traverseDir canonRoot current = do
+      entriesRes <- try (listDirectory current) :: IO (Either SomeException [FilePath])
+      case entriesRes of
+        Left _ -> pure []
+        Right entries -> do
+          let validEntries = filter (`notElem` ignoredDirs) entries
+          subResults <- forM validEntries $ \entry -> do
+            let full = current </> entry
+            isDir <- doesDirectoryExist full
+            if isDir
+              then traverseDir canonRoot full
+              else do
+                let rel = makeRelative canonRoot full
+                pure [rel]
+          pure (concat subResults)
+
+    matchPattern p fp =
+      let name = T.pack (takeFileName fp)
+          full = T.pack fp
+      in if "*" `T.isInfixOf` p
+           then let parts = filter (not . T.null) (T.splitOn "*" p)
+                in all (`T.isInfixOf` name) parts || all (`T.isInfixOf` full) parts
+           else p `T.isInfixOf` name || p `T.isInfixOf` full
+
+executeGrepSearch :: FilePath -> GrepSearchArgs -> IO ToolResult
+executeGrepSearch root (GrepSearchArgs query searchPath caseSensitive) = do
+  pathRes <- resolveWorkspacePath root searchPath
+  case pathRes of
+    Left err -> pure $ ToolError (T.pack err)
+    Right startPath -> do
+      isDir <- doesDirectoryExist startPath
+      isFile <- doesFileExist startPath
+      canonRoot <- canonicalizePath root
+      if isFile
+        then do
+          let rel = makeRelative canonRoot startPath
+          matches <- grepInFile rel startPath
+          pure $ ToolSuccess (if null matches then "No matches found." else T.unlines matches)
+        else if isDir
+          then do
+            files <- collectFiles canonRoot startPath
+            matches <- forM files $ \(rel, full) -> grepInFile rel full
+            let allMatches = concat matches
+                limited = take 100 allMatches
+            pure $ ToolSuccess (if null limited then "No matches found." else T.unlines limited)
+          else
+            pure $ ToolError ("Path does not exist: " <> T.pack searchPath)
+  where
+    ignoredDirs = [".git", "dist-newstyle", ".env", ".cabal-sandbox", "node_modules"]
+
+    collectFiles canonRoot current = do
+      entriesRes <- try (listDirectory current) :: IO (Either SomeException [FilePath])
+      case entriesRes of
+        Left _ -> pure []
+        Right entries -> do
+          let valid = filter (`notElem` ignoredDirs) entries
+          subResults <- forM valid $ \entry -> do
+            let full = current </> entry
+            isDir <- doesDirectoryExist full
+            if isDir
+              then collectFiles canonRoot full
+              else do
+                let rel = makeRelative canonRoot full
+                pure [(rel, full)]
+          pure (concat subResults)
+
+    grepInFile rel full = do
+      res <- try (BS.readFile full) :: IO (Either SomeException BS.ByteString)
+      case res of
+        Left _ -> pure []
+        Right bytes ->
+          if BS.any (== 0) (BS.take 1024 bytes)
+            then pure []
+            else do
+              let txt = TE.decodeUtf8With (\_ _ -> Just ' ') bytes
+                  ls = zip [1 :: Int ..] (T.lines txt)
+                  checkLine (_, line) =
+                    if caseSensitive
+                      then query `T.isInfixOf` line
+                      else T.toLower query `T.isInfixOf` T.toLower line
+                  matching = filter checkLine ls
+              pure [ T.pack rel <> ":" <> T.pack (show lineNum) <> ": " <> line | (lineNum, line) <- matching ]

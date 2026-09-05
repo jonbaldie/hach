@@ -21,7 +21,9 @@ module Agent.TUI.Types
   , TuiAction(..)
   ) where
 
+import Agent.Skills (SkillCatalog)
 import Agent.Types (AgentEvent, TokenUsage, ToolResult)
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 
 -- | Operational status of the agent in the TUI.
@@ -88,6 +90,7 @@ data TuiState = TuiState
   , tsPromptDraft        :: !Text
   , tsContextTokens      :: !Int
   , tsTokenUsage         :: !(Maybe TokenUsage)
+  , tsSkills             :: !SkillCatalog
   } deriving (Show, Eq)
 
 -- | Initialize a clean TUI state.
@@ -111,6 +114,7 @@ initialTuiState model maxTurns = TuiState
   , tsPromptDraft        = ""
   , tsContextTokens      = 0
   , tsTokenUsage         = Nothing
+  , tsSkills             = Map.empty
   }
 
 -- | Simplified user keystroke events abstracted from Vty.

@@ -292,10 +292,24 @@ formatToolTarget name rawArgs =
           case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
             Just (p :: Text) -> p
             Nothing          -> truncateText 30 rawArgs
-        "run_command" ->
-          case AesonTypes.parseMaybe (\obj -> obj .: "cmd") o of
-            Just (c :: Text) -> c
+        "replace_file_content" ->
+          case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
+            Just (p :: Text) -> p
             Nothing          -> truncateText 30 rawArgs
+        "find_files" ->
+          case AesonTypes.parseMaybe (\obj -> obj .: "pattern") o of
+            Just (p :: Text) -> p
+            Nothing          -> truncateText 30 rawArgs
+        "grep_search" ->
+          case AesonTypes.parseMaybe (\obj -> obj .: "query") o of
+            Just (q :: Text) -> q
+            Nothing          -> truncateText 30 rawArgs
+        "run_command" ->
+          case AesonTypes.parseMaybe (\obj -> obj .: "command") o of
+            Just (c :: Text) -> c
+            Nothing          -> case AesonTypes.parseMaybe (\obj -> obj .: "cmd") o of
+              Just (c :: Text) -> c
+              Nothing          -> truncateText 30 rawArgs
         "list_dir" ->
           case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
             Just (p :: Text) -> p

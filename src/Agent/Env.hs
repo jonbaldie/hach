@@ -10,17 +10,23 @@ module Agent.Env
   , resolveConfigWith
   , resolveEnvConfig
   , loadEnvConfig
+  , loadProjectInstructions
+  , buildSystemPrompt
   ) where
 
+import Control.Exception (try, SomeException)
+import qualified Data.ByteString as BS
 import Data.Char (isSpace)
 import Data.List (stripPrefix)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
+import System.FilePath ((</>))
 
 -- | Parsed environment configuration for running the agent harness.
 data EnvConfig = EnvConfig
@@ -168,3 +174,37 @@ resolveEnvConfig mCliModel mDotEnvPath = do
 -- | Legacy helper to load configuration specifically from a .env file.
 loadEnvConfig :: FilePath -> IO (Either String EnvConfig)
 loadEnvConfig path = resolveEnvConfig Nothing (Just path)
+
+-- | Load project instructions from AGENT.md or CLAUDE.md in the workspace directory.
+-- Precedence: AGENT.md is preferred; if missing, CLAUDE.md is loaded.
+loadProjectInstructions :: FilePath -> IO (Maybe Text)
+loadProjectInstructions workspace = do
+  let agentMd = workspace </> "AGENT.md"
+      claudeMd = workspace </> "CLAUDE.md"
+  agentExists <- doesFileExist agentMd
+  if agentExists
+    then readFileUtf8 agentMd
+    else do
+      claudeExists <- doesFileExist claudeMd
+      if claudeExists
+        then readFileUtf8 claudeMd
+        else pure Nothing
+  where
+    readFileUtf8 fp = do
+      res <- try (BS.readFile fp) :: IO (Either SomeException BS.ByteString)
+      case res of
+        Left _ -> pure Nothing
+        Right bytes -> pure (Just (TE.decodeUtf8With (\_ _ -> Just ' ') bytes))
+
+-- | Build the combined system prompt, appending project guidelines if present.
+buildSystemPrompt :: Maybe Text -> Text
+buildSystemPrompt mProjectGuidelines =
+  let basePrompt =
+        "You are an expert autonomous coding assistant. You have access to tools " <>
+        "to inspect files, write code, run shell commands, and explore the workspace. " <>
+        "Always inspect existing code before making changes, verify your work by running commands, " <>
+        "and provide a concise final summary when complete."
+  in case mProjectGuidelines of
+    Just guidelines | not (T.null (T.strip guidelines)) ->
+      basePrompt <> "\n\n# Project Guidelines:\n" <> guidelines
+    _ -> basePrompt

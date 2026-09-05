@@ -4,6 +4,10 @@ module Agent.EnvSpec (spec) where
 
 import Agent.Env
 import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
+import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
+import System.FilePath ((</>))
 import Test.Hspec
 
 spec :: Spec
@@ -172,3 +176,40 @@ spec = do
       case res of
         Left _ -> pure ()
         Right _ -> expectationFailure "Expected error when API key is missing"
+
+  describe "buildSystemPrompt" $ do
+    it "returns default prompt when no project instructions exist" $ do
+      let prompt = buildSystemPrompt Nothing
+      prompt `shouldSatisfy` ("expert autonomous coding assistant" `T.isInfixOf`)
+
+    it "appends project guidelines when provided" $ do
+      let guidelines = "Follow functional pearl style."
+          prompt = buildSystemPrompt (Just guidelines)
+      prompt `shouldSatisfy` ("# Project Guidelines:" `T.isInfixOf`)
+      prompt `shouldSatisfy` ("Follow functional pearl style." `T.isInfixOf`)
+
+  describe "loadProjectInstructions" $ do
+    let testSandbox = "dist-newstyle/test-sandbox-env"
+    around_ (\action -> do
+      createDirectoryIfMissing True testSandbox
+      action
+      removeDirectoryRecursive testSandbox) $ do
+      it "returns Nothing when neither AGENT.md nor CLAUDE.md exists" $ do
+        res <- loadProjectInstructions testSandbox
+        res `shouldBe` Nothing
+
+      it "loads AGENT.md when it exists" $ do
+        TIO.writeFile (testSandbox </> "AGENT.md") "Agent rules"
+        res <- loadProjectInstructions testSandbox
+        res `shouldBe` Just "Agent rules"
+
+      it "loads CLAUDE.md when AGENT.md does not exist" $ do
+        TIO.writeFile (testSandbox </> "CLAUDE.md") "Claude rules"
+        res <- loadProjectInstructions testSandbox
+        res `shouldBe` Just "Claude rules"
+
+      it "prefers AGENT.md over CLAUDE.md when both exist" $ do
+        TIO.writeFile (testSandbox </> "AGENT.md") "Agent rules"
+        TIO.writeFile (testSandbox </> "CLAUDE.md") "Claude rules"
+        res <- loadProjectInstructions testSandbox
+        res `shouldBe` Just "Agent rules"

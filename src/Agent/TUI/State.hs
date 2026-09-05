@@ -8,7 +8,9 @@ module Agent.TUI.State
   , toggleToolExpanded
   ) where
 
+import Agent.Skills (Skill(..), injectSkillsIntoPrompt, parseSkillInvocations)
 import Agent.TUI.Types
+import Agent.TUI.UI (formatTokens)
 import Agent.Types (AgentEvent(..), TokenUsage(..), ToolResult)
 import qualified Data.Text as T
 
@@ -29,10 +31,64 @@ updateTui event state = case event of
 -- | Handle submitting a user task prompt.
 handleSubmitPrompt :: T.Text -> TuiState -> (TuiState, [TuiAction])
 handleSubmitPrompt rawPrompt state
-  | T.null (T.strip rawPrompt) = (state, [])
+  | T.null trimmed = (state, [])
+  | trimmed == "/clear" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+      in ( state { tsHistory            = []
+                 , tsHistoryScroll      = 0
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/help" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+      in ( state { tsShowHelp           = True
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/cost" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          costNotice = case tsTokenUsage state of
+            Just TokenUsage{..} ->
+              "Tokens: " <> formatTokens (tsContextTokens state) <> " in context window (" <>
+              formatTokens tuPromptTokens <> " prompt, " <>
+              formatTokens tuCompletionTokens <> " completion)"
+            Nothing ->
+              "Tokens: " <> formatTokens (tsContextTokens state) <> " in context window"
+          newHistory = tsHistory state ++ [DiNotice costNotice]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/compact" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = if length (tsHistory state) > 4
+            then DiNotice "Prior conversation turns compacted for context efficiency." : drop (length (tsHistory state) - 4) (tsHistory state)
+            else tsHistory state ++ [DiNotice "Conversation history compacted."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
   | otherwise =
-      let trimmed = T.strip rawPrompt
-          newHistory = tsHistory state ++ [DiUser trimmed]
+      let (cleanedPrompt, invokedSkills) = parseSkillInvocations (tsSkills state) trimmed
+          finalPrompt = injectSkillsIntoPrompt invokedSkills cleanedPrompt
+          skillNotices = [ DiNotice ("Activated skill: " <> skillName s) | s <- invokedSkills ]
+          newHistory = tsHistory state ++ [DiUser trimmed] ++ skillNotices
           newPromptHistory = tsPromptHistory state ++ [trimmed]
           newState = state
             { tsHistory            = newHistory
@@ -43,7 +99,9 @@ handleSubmitPrompt rawPrompt state
             , tsPromptHistoryIndex = Nothing
             , tsPromptDraft        = ""
             }
-      in (newState, [ActionRunAgent trimmed])
+      in (newState, [ActionRunAgent finalPrompt])
+  where
+    trimmed = T.strip rawPrompt
 
 -- | Process user keypress events.
 handleUserKey :: UserKey -> TuiState -> (TuiState, [TuiAction])

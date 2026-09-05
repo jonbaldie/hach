@@ -2,11 +2,14 @@
 
 module Agent.TUISpec (spec) where
 
+import Agent.Skills (Skill(..), SkillSource(..))
 import Agent.TUI.App (vtyToUserKey)
 import Agent.TUI.State
 import Agent.TUI.Types
 import Agent.TUI.UI (formatTokens)
 import Agent.Types (AgentEvent(..), TokenUsage(..), ToolResult(..))
+import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
 import qualified Graphics.Vty as Vty
 import Test.Hspec
 
@@ -326,3 +329,45 @@ spec = do
         formatTokens 1000 `shouldBe` "1,000"
         formatTokens 1520 `shouldBe` "1,520"
         formatTokens 128450 `shouldBe` "128,450"
+
+    describe "Local Slash Commands and Skill Invocations" $ do
+      it "handles /clear locally by emptying dialogue history without running agent" $ do
+        let s0 = baseState { tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
+            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
+        tsHistory s1 `shouldBe` []
+        tsInputBuffer s1 `shouldBe` ""
+        actions `shouldBe` []
+
+      it "handles /help locally by toggling help dialog without running agent" $ do
+        let s0 = baseState { tsShowHelp = False, tsInputBuffer = "/help" }
+            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
+        tsShowHelp s1 `shouldBe` True
+        tsInputBuffer s1 `shouldBe` ""
+        actions `shouldBe` []
+
+      it "handles /cost locally by appending token notice without running agent" $ do
+        let s0 = baseState { tsContextTokens = 1500, tsInputBuffer = "/cost" }
+            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
+        tsInputBuffer s1 `shouldBe` ""
+        actions `shouldBe` []
+        tsHistory s1 `shouldSatisfy` \h -> any (\case DiNotice msg -> "1,500" `T.isInfixOf` msg; _ -> False) h
+
+      it "handles /compact locally by appending compact notice without running agent" $ do
+        let s0 = baseState { tsInputBuffer = "/compact" }
+            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
+        tsInputBuffer s1 `shouldBe` ""
+        actions `shouldBe` []
+        tsHistory s1 `shouldSatisfy` \h -> any (\case DiNotice msg -> "compacted" `T.isInfixOf` msg; _ -> False) h
+
+      it "invokes discovered skill when user types /skill-name" $ do
+        let skillA = Skill "to-spec" "Generate spec" "Spec rules here" "/p" SkillGlobal
+            s0 = baseState
+              { tsSkills = Map.fromList [("to-spec", skillA)]
+              , tsInputBuffer = "/to-spec create auth"
+              }
+            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
+        actions `shouldSatisfy` \case
+          [ActionRunAgent prompt] ->
+            "<skill name=\"to-spec\">" `T.isInfixOf` prompt && "create auth" `T.isInfixOf` prompt
+          _ -> False
+        tsHistory s1 `shouldSatisfy` \h -> any (\case DiUser u -> "/to-spec create auth" `T.isInfixOf` u; _ -> False) h

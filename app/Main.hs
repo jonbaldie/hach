@@ -6,6 +6,7 @@ module Main (main) where
 import Agent.Core
 import Agent.Env
 import Agent.Interpreter.IO
+import Agent.Skills (discoverSkills, injectSkillsIntoPrompt, parseSkillInvocations)
 import Agent.Tools
 import Agent.TUI.App (runTui)
 import Agent.Types
@@ -15,13 +16,6 @@ import qualified Data.Text.IO as TIO
 import System.Directory (getCurrentDirectory)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
-
-defaultSystemPrompt :: T.Text
-defaultSystemPrompt =
-  "You are an expert autonomous coding assistant. You have access to tools " <>
-  "to inspect files, write code, run shell commands, and explore the workspace. " <>
-  "Always inspect existing code before making changes, verify your work by running commands, " <>
-  "and provide a concise final summary when complete."
 
 main :: IO ()
 main = do
@@ -65,14 +59,20 @@ main = do
         putStrLn "Empty task prompt provided. Exiting."
         exitFailure
 
+      skills <- discoverSkills cwd
+      mGuidelines <- loadProjectInstructions cwd
+      let sysPrompt = buildSystemPrompt mGuidelines
+          (cleaned, invoked) = parseSkillInvocations skills (T.strip taskPrompt)
+          finalPrompt = injectSkillsIntoPrompt invoked cleaned
+
       let agentConfig = AgentConfig
             { cfgModel        = envModel
-            , cfgSystemPrompt = Just defaultSystemPrompt
+            , cfgSystemPrompt = Just sysPrompt
             , cfgMaxTurns     = 10
             }
           initialHistory =
-            [ SystemMsg defaultSystemPrompt
-            , UserMsg taskPrompt
+            [ SystemMsg sysPrompt
+            , UserMsg finalPrompt
             ]
 
       putStrLn ("\nStarting agent loop for task: " <> T.unpack taskPrompt)

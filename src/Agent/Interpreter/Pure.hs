@@ -117,12 +117,54 @@ pureAlgebra = AgentAlgebra
                   matching = filter (\k -> if null prefix then True else takeDirectory k == prefix) keys
               pure $ ToolSuccess (T.unlines (map T.pack matching))
 
+        "replace_file_content" ->
+          case parseReplaceFileContentArgs call of
+            Left err -> pure $ ToolError ("Parse error: " <> T.pack err)
+            Right (ReplaceFileContentArgs path oldContent newContent) -> do
+              env <- getEnv
+              case Map.lookup path (mockFiles env) of
+                Nothing -> pure $ ToolError ("File not found: " <> T.pack path)
+                Just currentText ->
+                  let count = T.count oldContent currentText
+                  in if count == 0
+                    then pure $ ToolError ("Target content not found in '" <> T.pack path <> "'.")
+                    else if count > 1
+                      then pure $ ToolError ("Target content found " <> T.pack (show count) <> " times in '" <> T.pack path <> "'; replacement requires a unique match.")
+                      else do
+                        let updated = T.replace oldContent newContent currentText
+                        modifyEnv $ \e -> e { mockFiles = Map.insert path updated (mockFiles e) }
+                        pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
+
+        "find_files" ->
+          case parseFindFilesArgs call of
+            Left err -> pure $ ToolError ("Parse error: " <> T.pack err)
+            Right (FindFilesArgs pat _) -> do
+              env <- getEnv
+              let keys = Map.keys (mockFiles env)
+                  matching = filter (\k -> pat `T.isInfixOf` T.pack k || ("*" `T.isInfixOf` pat && not (null keys))) keys
+              pure $ ToolSuccess (T.unlines (map T.pack matching))
+
+        "grep_search" ->
+          case parseGrepSearchArgs call of
+            Left err -> pure $ ToolError ("Parse error: " <> T.pack err)
+            Right (GrepSearchArgs query _ caseSens) -> do
+              env <- getEnv
+              let matches = concatMap (searchInFile query caseSens) (Map.toList (mockFiles env))
+              pure $ ToolSuccess (T.unlines matches)
+
         unknown ->
           pure $ ToolError ("Unknown mock tool: " <> unknown)
 
   , interpLog = \ev ->
       modifyEnv $ \env -> env { mockEvents = mockEvents env ++ [ev] }
   }
+
+searchInFile :: Text -> Bool -> (FilePath, Text) -> [Text]
+searchInFile q cs (fp, content) =
+  let ls = zip [1 :: Int ..] (T.lines content)
+      check (_, line) =
+        if cs then q `T.isInfixOf` line else T.toLower q `T.isInfixOf` T.toLower line
+  in [ T.pack fp <> ":" <> T.pack (show lineNum) <> ": " <> line | (lineNum, line) <- filter check ls ]
 
 -- | Run an 'AgentProgram' purely with a 'MockEnv'.
 runPure :: MockEnv -> AgentProgram a -> (a, MockEnv)

@@ -7,8 +7,10 @@ module Agent.TUI.App
   ) where
 
 import Agent.Core
+import Agent.Env (buildSystemPrompt, loadProjectInstructions)
 import Agent.Interpreter.IO
 import Agent.OpenRouter
+import Agent.Skills (discoverSkills, injectSkillsIntoPrompt, parseSkillInvocations)
 import Agent.Tools
 import Agent.TUI.State
 import Agent.TUI.Types
@@ -79,7 +81,11 @@ runTui ioEnv initialPrompt = do
   eventChan <- newBChan 100
   workerVar <- newTVarIO (Nothing :: Maybe (Async ()))
 
-  let baseState = initialTuiState (ioModel ioEnv) 10
+  skills <- discoverSkills (ioWorkspace ioEnv)
+  mGuidelines <- loadProjectInstructions (ioWorkspace ioEnv)
+  let sysPrompt = buildSystemPrompt mGuidelines
+
+  let baseState = (initialTuiState (ioModel ioEnv) 10) { tsSkills = skills }
       startingState = case initialPrompt of
         Just p  -> fst $ updateTui (EvSubmit p) baseState
         Nothing -> baseState
@@ -88,11 +94,15 @@ runTui ioEnv initialPrompt = do
       app = App
         { appDraw         = drawUI
         , appChooseCursor = showFirstCursor
-        , appHandleEvent  = handleBrickEvent eventChan workerVar ioEnv
+        , appHandleEvent  = handleBrickEvent eventChan workerVar ioEnv sysPrompt
         , appStartEvent   = do
             -- If an initial prompt was provided on CLI, trigger its execution
             case initialPrompt of
-              Just p  -> triggerAgentRun eventChan workerVar ioEnv [DiUser p]
+              Just p  -> do
+                currentState <- get
+                let (cleaned, invoked) = parseSkillInvocations (tsSkills currentState) (T.strip p)
+                    finalP = injectSkillsIntoPrompt invoked (if T.null cleaned then p else cleaned)
+                triggerAgentRun eventChan workerVar ioEnv sysPrompt finalP [DiUser p]
               Nothing -> pure ()
         , appAttrMap      = const tuiAttrMap
         }
@@ -110,10 +120,20 @@ runTui ioEnv initialPrompt = do
   mapM_ cancel mWorker
 
 -- | Convert dialogue history into LLM messages for multi-turn context.
-dialogueToMessages :: Text -> [DialogueItem] -> [Message]
-dialogueToMessages sysPrompt items =
-  SystemMsg sysPrompt : concatMap itemToMessages items
+-- Uses the expanded prompt for the latest turn so that skill instructions
+-- reach the model while preserving clean display history in the UI.
+dialogueToMessages :: Text -> Text -> [DialogueItem] -> [Message]
+dialogueToMessages sysPrompt currentPrompt items =
+  let priorItems = dropLastUser items
+      priorMsgs  = concatMap itemToMessages priorItems
+  in SystemMsg sysPrompt : priorMsgs ++ [UserMsg currentPrompt]
   where
+    dropLastUser [] = []
+    dropLastUser (x:xs) =
+      case reverse (x:xs) of
+        (DiUser _ : rest) -> reverse rest
+        _                 -> x : xs
+
     itemToMessages = \case
       DiUser u      -> [UserMsg u]
       DiAssistant a -> [AssistantMsg (Just a) []]
@@ -125,9 +145,11 @@ triggerAgentRun
   :: BChan AgentEvent
   -> TVar (Maybe (Async ()))
   -> IOEnv
+  -> Text
+  -> Text
   -> [DialogueItem]
   -> EventM Name TuiState ()
-triggerAgentRun eventChan workerVar ioEnv historyItems = liftIO $ do
+triggerAgentRun eventChan workerVar ioEnv sysPrompt currentPrompt historyItems = liftIO $ do
   -- Cancel existing worker if any
   mOldWorker <- atomically $ do
     w <- readTVar workerVar
@@ -136,17 +158,12 @@ triggerAgentRun eventChan workerVar ioEnv historyItems = liftIO $ do
   mapM_ cancel mOldWorker
 
   newWorker <- async $ do
-    let sysPrompt =
-          "You are an expert autonomous coding assistant. You have access to tools " <>
-          "to inspect files, write code, run shell commands, and explore the workspace. " <>
-          "Always inspect existing code before making changes, verify your work by running commands, " <>
-          "and provide a concise final summary when complete."
-        agentConfig = AgentConfig
+    let agentConfig = AgentConfig
           { cfgModel        = ioModel ioEnv
           , cfgSystemPrompt = Just sysPrompt
           , cfgMaxTurns     = 10
           }
-        initHistory = dialogueToMessages sysPrompt historyItems
+        initHistory = dialogueToMessages sysPrompt currentPrompt historyItems
 
     res <- try (foldAgentProgram (tuiAlgebra eventChan ioEnv) (agentLoop agentConfig allToolDefs initHistory))
     case res of
@@ -166,9 +183,10 @@ handleBrickEvent
   :: BChan AgentEvent
   -> TVar (Maybe (Async ()))
   -> IOEnv
+  -> Text
   -> BrickEvent Name AgentEvent
   -> EventM Name TuiState ()
-handleBrickEvent eventChan workerVar ioEnv = \case
+handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
   AppEvent agentEv -> do
     modify (handleAgentEvent agentEv)
     case agentEv of
@@ -193,8 +211,8 @@ handleBrickEvent eventChan workerVar ioEnv = \case
               writeTVar workerVar Nothing
               pure w
             mapM_ cancel mWorker
-          ActionRunAgent _prompt -> do
-            triggerAgentRun eventChan workerVar ioEnv (tsHistory nextState)
+          ActionRunAgent prompt -> do
+            triggerAgentRun eventChan workerVar ioEnv sysPrompt prompt (tsHistory nextState)
             vScrollToEnd (viewportScroll VpHistory)
           ActionScrollHistory delta ->
             vScrollBy (viewportScroll VpHistory) delta
