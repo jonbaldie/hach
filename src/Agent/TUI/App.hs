@@ -33,15 +33,18 @@ vtyToUserKey = \case
   Vty.EvKey (Vty.KChar 'c') [Vty.MCtrl] -> Just (KeyCtrl 'c')
   Vty.EvKey (Vty.KChar 'u') [Vty.MCtrl] -> Just (KeyCtrl 'u')
   Vty.EvKey (Vty.KChar '\t') []        -> Just KeyTab
-  Vty.EvKey Vty.KBackTab []            -> Just KeyBackTab
+  Vty.EvKey (Vty.KChar '\t') [Vty.MShift] -> Just KeyBackTab
+  Vty.EvKey Vty.KBackTab _             -> Just KeyBackTab
   Vty.EvKey Vty.KEnter []              -> Just KeyEnter
   Vty.EvKey Vty.KBS []                 -> Just KeyBackspace
   Vty.EvKey Vty.KDel []                -> Just KeyDelete
   Vty.EvKey Vty.KEsc []                -> Just KeyEsc
   Vty.EvKey Vty.KUp []                 -> Just KeyUp
   Vty.EvKey Vty.KDown []               -> Just KeyDown
-  Vty.EvKey Vty.KPageUp []             -> Just KeyPageUp
-  Vty.EvKey Vty.KPageDown []           -> Just KeyPageDown
+  Vty.EvKey Vty.KPageUp _              -> Just KeyPageUp
+  Vty.EvKey Vty.KPageDown _            -> Just KeyPageDown
+  Vty.EvMouseDown _ _ Vty.BScrollUp _  -> Just KeyScrollUp
+  Vty.EvMouseDown _ _ Vty.BScrollDown _-> Just KeyScrollDown
   Vty.EvKey (Vty.KFun 1) []            -> Just KeyF1
   Vty.EvKey (Vty.KChar c) []           -> Just (KeyChar c)
   _                                    -> Nothing
@@ -94,7 +97,11 @@ runTui ioEnv initialPrompt = do
         , appAttrMap      = const tuiAttrMap
         }
 
-  let buildVty = VtyCross.mkVty Vty.defaultConfig
+  let buildVty = do
+        vty <- VtyCross.mkVty Vty.defaultConfig
+        let output = Vty.outputIface vty
+        Vty.setMode output Vty.Mouse True
+        pure vty
   initialVty <- buildVty
   _ <- customMain initialVty buildVty (Just eventChan) app startingState
 

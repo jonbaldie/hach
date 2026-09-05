@@ -92,6 +92,14 @@ handleUserKey key state@TuiState{..} =
     KeyBackTab ->
       (state { tsFocus = prevFocus tsFocus }, [])
 
+    KeyScrollUp -> case tsFocus of
+      FocusTools -> (state, [ActionScrollTools (-2)])
+      _          -> (state { tsHistoryScroll = max 0 (tsHistoryScroll - 2) }, [ActionScrollHistory (-2)])
+
+    KeyScrollDown -> case tsFocus of
+      FocusTools -> (state, [ActionScrollTools 2])
+      _          -> (state { tsHistoryScroll = tsHistoryScroll + 2 }, [ActionScrollHistory 2])
+
     -- 2. Focus-specific actions
     _ -> case tsFocus of
       FocusInput ->
@@ -157,6 +165,12 @@ handleInputKey key state@TuiState{..} = case key of
 
   KeyCtrl 'u' ->
     (state { tsInputBuffer = "" }, [])
+
+  KeyPageUp ->
+    (state { tsHistoryScroll = max 0 (tsHistoryScroll - 5) }, [ActionScrollHistory (-5)])
+
+  KeyPageDown ->
+    (state { tsHistoryScroll = tsHistoryScroll + 5 }, [ActionScrollHistory 5])
 
   _ ->
     (state, [])

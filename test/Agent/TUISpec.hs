@@ -2,10 +2,12 @@
 
 module Agent.TUISpec (spec) where
 
+import Agent.TUI.App (vtyToUserKey)
 import Agent.TUI.State
 import Agent.TUI.Types
 import Agent.TUI.UI (formatTokens)
 import Agent.Types (AgentEvent(..), TokenUsage(..), ToolResult(..))
+import qualified Graphics.Vty as Vty
 import Test.Hspec
 
 spec :: Spec
@@ -192,6 +194,44 @@ spec = do
             sTools = baseState { tsFocus = FocusTools, tsTools = [tool1, tool2], tsSelectedToolIndex = 1 }
             (_, actions) = updateTui (EvUserKey KeyUp) sTools
         actions `shouldBe` [ActionScrollTools (-1)]
+
+      it "scrolls history on KeyPageUp and KeyPageDown even when focused in FocusInput" $ do
+        let sInput = baseState { tsFocus = FocusInput }
+            (_, actionsUp) = updateTui (EvUserKey KeyPageUp) sInput
+            (_, actionsDown) = updateTui (EvUserKey KeyPageDown) sInput
+        actionsUp `shouldBe` [ActionScrollHistory (-5)]
+        actionsDown `shouldBe` [ActionScrollHistory 5]
+
+      it "scrolls history on mouse wheel KeyScrollUp and KeyScrollDown in FocusInput" $ do
+        let sInput = baseState { tsFocus = FocusInput }
+            (_, actionsUp) = updateTui (EvUserKey KeyScrollUp) sInput
+            (_, actionsDown) = updateTui (EvUserKey KeyScrollDown) sInput
+        actionsUp `shouldBe` [ActionScrollHistory (-2)]
+        actionsDown `shouldBe` [ActionScrollHistory 2]
+
+      it "scrolls tools on KeyScrollUp and KeyScrollDown in FocusTools" $ do
+        let sTools = baseState { tsFocus = FocusTools }
+            (_, actionsUp) = updateTui (EvUserKey KeyScrollUp) sTools
+            (_, actionsDown) = updateTui (EvUserKey KeyScrollDown) sTools
+        actionsUp `shouldBe` [ActionScrollTools (-2)]
+        actionsDown `shouldBe` [ActionScrollTools 2]
+
+      it "scrolls tool activity on KeyDown even when there is only 1 tool card" $ do
+        let tool1 = ToolItem "read_file" "{}" Nothing True
+            sTools = baseState { tsFocus = FocusTools, tsTools = [tool1], tsSelectedToolIndex = 0 }
+            (_, actions) = updateTui (EvUserKey KeyDown) sTools
+        actions `shouldBe` [ActionScrollTools 1]
+
+    describe "Vty to UserKey Event Conversion" $ do
+      it "converts mouse scroll wheel up to KeyScrollUp" $ do
+        vtyToUserKey (Vty.EvMouseDown 10 10 Vty.BScrollUp []) `shouldBe` Just KeyScrollUp
+
+      it "converts mouse scroll wheel down to KeyScrollDown" $ do
+        vtyToUserKey (Vty.EvMouseDown 10 10 Vty.BScrollDown []) `shouldBe` Just KeyScrollDown
+
+      it "converts Shift+Tab variations to KeyBackTab" $ do
+        vtyToUserKey (Vty.EvKey (Vty.KChar '\t') [Vty.MShift]) `shouldBe` Just KeyBackTab
+        vtyToUserKey (Vty.EvKey Vty.KBackTab [Vty.MShift]) `shouldBe` Just KeyBackTab
 
     describe "Prompt History Navigation (Up/Down in FocusInput)" $ do
       it "recalls the previous prompt on KeyUp" $ do

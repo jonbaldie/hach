@@ -30,6 +30,8 @@ instance Arbitrary UserKey where
     , pure KeyDown
     , pure KeyPageUp
     , pure KeyPageDown
+    , pure KeyScrollUp
+    , pure KeyScrollDown
     , pure KeyF1
     , KeyCtrl <$> elements ['a'..'z']
     ]

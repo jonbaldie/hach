@@ -372,7 +372,7 @@ renderToolCard selectedIdx isToolsFocused idx ToolItem{..} =
         padBottom (Pad 1) $
         vBox [headerLine, subLine, expandedBody]
 
-  in if isSelected then visible cardWidget else cardWidget
+  in cardWidget
 
 --------------------------------------------------------------------------------
 -- Task Input Panel
