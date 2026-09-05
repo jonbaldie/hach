@@ -56,6 +56,7 @@ spec = do
       parseCliArgs args `shouldBe` Right CliOptions
         { optModel = Just "meta/llama-3"
         , optPrompt = Just "do something"
+        , optNoTui = False
         }
 
     it "parses --model= syntax" $ do
@@ -63,6 +64,7 @@ spec = do
       parseCliArgs args `shouldBe` Right CliOptions
         { optModel = Just "anthropic/claude-3"
         , optPrompt = Just "run all tests"
+        , optNoTui = False
         }
 
     it "parses short flag -m" $ do
@@ -70,6 +72,7 @@ spec = do
       parseCliArgs args `shouldBe` Right CliOptions
         { optModel = Just "openai/gpt-4o"
         , optPrompt = Just "hello"
+        , optNoTui = False
         }
 
     it "parses flag positioned between prompt words" $ do
@@ -77,6 +80,15 @@ spec = do
       parseCliArgs args `shouldBe` Right CliOptions
         { optModel = Just "meta/muse-glimmer-30b"
         , optPrompt = Just "hello world"
+        , optNoTui = False
+        }
+
+    it "parses --no-tui flag" $ do
+      let args = ["--no-tui", "echo", "hello"]
+      parseCliArgs args `shouldBe` Right CliOptions
+        { optModel = Nothing
+        , optPrompt = Just "echo hello"
+        , optNoTui = True
         }
 
     it "parses arguments when no model flag is provided" $ do
@@ -84,12 +96,14 @@ spec = do
       parseCliArgs args `shouldBe` Right CliOptions
         { optModel = Nothing
         , optPrompt = Just "run my task"
+        , optNoTui = False
         }
 
     it "parses empty arguments" $ do
       parseCliArgs [] `shouldBe` Right CliOptions
         { optModel = Nothing
         , optPrompt = Nothing
+        , optNoTui = False
         }
 
     it "fails when --model has no argument" $ do

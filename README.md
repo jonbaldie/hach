@@ -86,18 +86,40 @@ cabal run agent-integration-test
 
 ---
 
-## Running the CLI Harness
+## Interactive Modern TUI
+
+The harness launches directly into a modern, full-screen **Terminal User Interface (TUI)** built with Brick:
+
+- **Header Bar**: Displays real-time operational status (`IDLE`, `THINKING...`, `RUNNING TOOL: <name>`, `ERROR`), active model, and current/maximum turns.
+- **Dialogue History Panel**: Scrollable conversation log with color-coded badges for user requests, assistant answers, and system notices.
+- **Tool Activity Panel**: Interactive cards for each tool execution (`read_file`, `write_file`, `run_command`, `list_dir`) with expandable inputs and outputs.
+- **Task Input Panel**: Multi-line prompt buffer with live cursor.
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Tab` / `Shift+Tab` | Cycle focus between Input, History, and Tool Activity panels |
+| `Enter` | Submit prompt (in Input) or toggle expand/collapse (in Tools) |
+| `Ctrl+U` | Clear input buffer |
+| `Up` / `Down` | Scroll conversation (in History) or select tool card (in Tools) |
+| `PageUp` / `PageDown` | Fast-scroll conversation history |
+| `c` | Clear conversation history (in History panel) |
+| `Esc` / `Ctrl+C` | Cancel running agent turn, or close help dialog |
+| `?` | Toggle shortcut help overlay |
+| `Ctrl+Q` | Cleanly exit the application |
+
+---
+
+## Running the Harness
 
 ```bash
-# Run with the default model (from line 2 of .env):
-cabal run agent-harness -- "Inspect the src directory and summarize the codebase architecture."
+# Launch interactive full-screen TUI (default):
+cabal run agent-harness
 
-# Override the model using the --model flag:
-cabal run agent-harness -- --model meta/muse-glimmer-30b "Create hello.txt and verify it"
+# Launch TUI with an initial prompt and model override:
+cabal run agent-harness -- --model meta/muse-glimmer-30b "Inspect the src directory"
 
-# Alternatively with equals syntax:
-cabal run agent-harness -- --model=anthropic/claude-3.5-sonnet "Run the tests"
-
-# Or run interactively (will prompt for task):
-cabal run agent-harness -- --model meta/muse-glimmer-30b
+# Run in headless streaming CLI mode (e.g. for scripting or non-TTY pipes):
+cabal run agent-harness -- --no-tui --model meta/muse-glimmer-30b "Say hello"
 ```

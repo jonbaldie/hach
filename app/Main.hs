@@ -7,6 +7,7 @@ import Agent.Core
 import Agent.Env
 import Agent.Interpreter.IO
 import Agent.Tools
+import Agent.TUI.App (runTui)
 import Agent.Types
 import Control.Monad (when)
 import qualified Data.Text as T
@@ -30,7 +31,7 @@ main = do
   CliOptions{..} <- case parseCliArgs rawArgs of
     Left err -> do
       putStrLn ("Argument error: " <> err)
-      putStrLn "Usage: agent-harness [--model <model_name>] [task prompt...]"
+      putStrLn "Usage: agent-harness [--model <model_name>] [--no-tui] [task prompt...]"
       exitFailure
     Right opts -> pure opts
 
@@ -42,43 +43,46 @@ main = do
       exitFailure
     Right cfg -> pure cfg
 
-  putStrLn "========================================================"
-  putStrLn "  Haskell Agentic Coding Harness (Functional Pearl)     "
-  putStrLn "========================================================"
-  putStrLn ("Workspace: " <> cwd)
-  putStrLn ("Model:     " <> T.unpack envModel)
-  putStrLn "========================================================"
-
-  taskPrompt <- case optPrompt of
-    Just p  -> pure p
-    Nothing -> do
-      putStrLn "Enter your task/request:"
-      TIO.getLine
-
-  when (T.null (T.strip taskPrompt)) $ do
-    putStrLn "Empty task prompt provided. Exiting."
-    exitFailure
-
   ioEnv <- newIOEnv envApiKey envModel cwd True
 
-  let agentConfig = AgentConfig
-        { cfgModel        = envModel
-        , cfgSystemPrompt = Just defaultSystemPrompt
-        , cfgMaxTurns     = 10
-        }
-      initialHistory =
-        [ SystemMsg defaultSystemPrompt
-        , UserMsg taskPrompt
-        ]
+  if not optNoTui
+    then runTui ioEnv optPrompt
+    else do
+      putStrLn "========================================================"
+      putStrLn "  Haskell Agentic Coding Harness (Functional Pearl)     "
+      putStrLn "========================================================"
+      putStrLn ("Workspace: " <> cwd)
+      putStrLn ("Model:     " <> T.unpack envModel)
+      putStrLn "========================================================"
 
-  putStrLn ("\nStarting agent loop for task: " <> T.unpack taskPrompt)
-  (result, finalHistory) <- runIO ioEnv (agentLoop agentConfig allToolDefs initialHistory)
+      taskPrompt <- case optPrompt of
+        Just p  -> pure p
+        Nothing -> do
+          putStrLn "Enter your task/request:"
+          TIO.getLine
 
-  case result of
-    AgentCompleted _ans -> do
-      putStrLn "\nTask successfully completed!"
-      putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
-    AgentMaxTurnsReached turns -> do
-      putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
-    AgentFailed err -> do
-      putStrLn ("\nAgent failed with error: " <> T.unpack err)
+      when (T.null (T.strip taskPrompt)) $ do
+        putStrLn "Empty task prompt provided. Exiting."
+        exitFailure
+
+      let agentConfig = AgentConfig
+            { cfgModel        = envModel
+            , cfgSystemPrompt = Just defaultSystemPrompt
+            , cfgMaxTurns     = 10
+            }
+          initialHistory =
+            [ SystemMsg defaultSystemPrompt
+            , UserMsg taskPrompt
+            ]
+
+      putStrLn ("\nStarting agent loop for task: " <> T.unpack taskPrompt)
+      (result, finalHistory) <- runIO ioEnv (agentLoop agentConfig allToolDefs initialHistory)
+
+      case result of
+        AgentCompleted _ans -> do
+          putStrLn "\nTask successfully completed!"
+          putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
+        AgentMaxTurnsReached turns -> do
+          putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
+        AgentFailed err -> do
+          putStrLn ("\nAgent failed with error: " <> T.unpack err)

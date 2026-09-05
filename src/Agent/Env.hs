@@ -32,6 +32,7 @@ data EnvConfig = EnvConfig
 data CliOptions = CliOptions
   { optModel  :: !(Maybe Text)
   , optPrompt :: !(Maybe Text)
+  , optNoTui  :: !Bool
   } deriving (Show, Eq)
 
 -- | Parse command line arguments into 'CliOptions'.
@@ -40,40 +41,44 @@ data CliOptions = CliOptions
 --   --model=<name>
 --   -m <name>
 --   -m=<name>
+--   --no-tui
 -- Positional arguments are concatenated to form the task prompt.
 parseCliArgs :: [String] -> Either String CliOptions
-parseCliArgs args = go args Nothing []
+parseCliArgs args = go args Nothing False []
   where
-    go [] mModel promptWords =
+    go [] mModel noTui promptWords =
       let mPrompt = case promptWords of
             [] -> Nothing
             ws -> Just (T.pack (unwords ws))
-      in Right CliOptions { optModel = mModel, optPrompt = mPrompt }
+      in Right CliOptions { optModel = mModel, optPrompt = mPrompt, optNoTui = noTui }
 
-    go ("--model" : val : rest) _ promptWords
+    go ("--no-tui" : rest) mModel _ promptWords =
+      go rest mModel True promptWords
+
+    go ("--model" : val : rest) _ noTui promptWords
       | null (dropWhile isSpace val) = Left "--model requires a non-empty argument"
-      | otherwise = go rest (Just (T.strip (T.pack val))) promptWords
+      | otherwise = go rest (Just (T.strip (T.pack val))) noTui promptWords
 
-    go ["--model"] _ _ = Left "--model requires an argument"
+    go ["--model"] _ _ _ = Left "--model requires an argument"
 
-    go (arg : rest) mModel promptWords
+    go (arg : rest) mModel noTui promptWords
       | Just val <- stripPrefix "--model=" arg =
           if null (dropWhile isSpace val)
             then Left "--model= requires a non-empty argument"
-            else go rest (Just (T.strip (T.pack val))) promptWords
+            else go rest (Just (T.strip (T.pack val))) noTui promptWords
       | arg == "-m" =
           case rest of
             (val : rest')
               | not (null (dropWhile isSpace val)) ->
-                  go rest' (Just (T.strip (T.pack val))) promptWords
+                  go rest' (Just (T.strip (T.pack val))) noTui promptWords
               | otherwise -> Left "-m requires a non-empty argument"
             [] -> Left "-m requires an argument"
       | Just val <- stripPrefix "-m=" arg =
           if null (dropWhile isSpace val)
             then Left "-m= requires a non-empty argument"
-            else go rest (Just (T.strip (T.pack val))) promptWords
+            else go rest (Just (T.strip (T.pack val))) noTui promptWords
       | otherwise =
-          go rest mModel (promptWords ++ [arg])
+          go rest mModel noTui (promptWords ++ [arg])
 
 -- | Extract the model specifically from line two of the lines of .env.
 -- Follows the requirement: "always use the model on line two of the .env".
