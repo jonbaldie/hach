@@ -164,6 +164,12 @@ handleBrickEvent
 handleBrickEvent eventChan workerVar ioEnv = \case
   AppEvent agentEv -> do
     modify (handleAgentEvent agentEv)
+    case agentEv of
+      EvLLMResponse _ _ -> vScrollToEnd (viewportScroll VpHistory)
+      EvDone _          -> vScrollToEnd (viewportScroll VpHistory)
+      EvError _         -> vScrollToEnd (viewportScroll VpHistory)
+      EvToolCall _ _    -> vScrollToEnd (viewportScroll VpTools)
+      _                 -> pure ()
 
   VtyEvent vtyEv -> do
     case vtyToUserKey vtyEv of
@@ -180,8 +186,15 @@ handleBrickEvent eventChan workerVar ioEnv = \case
               writeTVar workerVar Nothing
               pure w
             mapM_ cancel mWorker
-          ActionRunAgent _prompt ->
+          ActionRunAgent _prompt -> do
             triggerAgentRun eventChan workerVar ioEnv (tsHistory nextState)
+            vScrollToEnd (viewportScroll VpHistory)
+          ActionScrollHistory delta ->
+            vScrollBy (viewportScroll VpHistory) delta
+          ActionScrollHistoryToBottom ->
+            vScrollToEnd (viewportScroll VpHistory)
+          ActionScrollTools delta ->
+            vScrollBy (viewportScroll VpTools) (delta * 2)
       Nothing ->
         pure ()
 

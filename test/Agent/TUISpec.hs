@@ -156,3 +156,38 @@ spec = do
             (s5, actions) = updateTui (EvUserKey KeyEnter) s4
         tsHistory s5 `shouldBe` [DiUser "First question", DiAssistant "First answer", DiUser "M2"]
         actions `shouldBe` [ActionRunAgent "M2"]
+
+    describe "Viewport Scrolling Actions" $ do
+      it "emits ActionScrollHistory 1 on KeyDown in History panel" $ do
+        let sHistory = baseState { tsFocus = FocusHistory }
+            (_, actions) = updateTui (EvUserKey KeyDown) sHistory
+        actions `shouldBe` [ActionScrollHistory 1]
+
+      it "emits ActionScrollHistory (-1) on KeyUp in History panel" $ do
+        let sHistory = baseState { tsFocus = FocusHistory }
+            (_, actions) = updateTui (EvUserKey KeyUp) sHistory
+        actions `shouldBe` [ActionScrollHistory (-1)]
+
+      it "emits ActionScrollHistory 5 on KeyPageDown in History panel" $ do
+        let sHistory = baseState { tsFocus = FocusHistory }
+            (_, actions) = updateTui (EvUserKey KeyPageDown) sHistory
+        actions `shouldBe` [ActionScrollHistory 5]
+
+      it "emits ActionScrollHistory (-5) on KeyPageUp in History panel" $ do
+        let sHistory = baseState { tsFocus = FocusHistory }
+            (_, actions) = updateTui (EvUserKey KeyPageUp) sHistory
+        actions `shouldBe` [ActionScrollHistory (-5)]
+
+      it "emits ActionScrollTools 1 on KeyDown in Tools panel" $ do
+        let tool1 = ToolItem "read_file" "{}" Nothing False
+            tool2 = ToolItem "write_file" "{}" Nothing False
+            sTools = baseState { tsFocus = FocusTools, tsTools = [tool1, tool2] }
+            (_, actions) = updateTui (EvUserKey KeyDown) sTools
+        actions `shouldBe` [ActionScrollTools 1]
+
+      it "emits ActionScrollTools (-1) on KeyUp in Tools panel" $ do
+        let tool1 = ToolItem "read_file" "{}" Nothing False
+            tool2 = ToolItem "write_file" "{}" Nothing False
+            sTools = baseState { tsFocus = FocusTools, tsTools = [tool1, tool2], tsSelectedToolIndex = 1 }
+            (_, actions) = updateTui (EvUserKey KeyUp) sTools
+        actions `shouldBe` [ActionScrollTools (-1)]

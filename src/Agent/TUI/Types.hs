@@ -132,4 +132,7 @@ data TuiAction
   = ActionRunAgent !Text
   | ActionCancelAgent
   | ActionQuit
+  | ActionScrollHistory !Int
+  | ActionScrollHistoryToBottom
+  | ActionScrollTools !Int
   deriving (Show, Eq)

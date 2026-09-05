@@ -176,10 +176,12 @@ renderToolCard selectedIdx isToolsFocused idx ToolItem{..} =
           [ txt ("Args: " <> if T.length tiArgs > 35 then T.take 35 tiArgs <> "..." else tiArgs)
           , withAttr shortcutAttr (txt "(Press Enter/Space to expand)")
           ]
-  in padBottom (Pad 1) $
-     withBorderStyle cardStyle $
-     borderWithLabel header $
-     padAll 1 body
+      cardWidget =
+        padBottom (Pad 1) $
+        withBorderStyle cardStyle $
+        borderWithLabel header $
+        padAll 1 body
+  in if isSelected then visible cardWidget else cardWidget
 
 -- | Bottom panel for user prompt typing.
 renderInputPanel :: TuiState -> Widget Name

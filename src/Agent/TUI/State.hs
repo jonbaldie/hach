@@ -126,16 +126,16 @@ handleInputKey key state@TuiState{..} = case key of
 handleHistoryKey :: UserKey -> TuiState -> (TuiState, [TuiAction])
 handleHistoryKey key state@TuiState{..} = case key of
   KeyUp ->
-    (state { tsHistoryScroll = max 0 (tsHistoryScroll - 1) }, [])
+    (state { tsHistoryScroll = max 0 (tsHistoryScroll - 1) }, [ActionScrollHistory (-1)])
 
   KeyDown ->
-    (state { tsHistoryScroll = tsHistoryScroll + 1 }, [])
+    (state { tsHistoryScroll = tsHistoryScroll + 1 }, [ActionScrollHistory 1])
 
   KeyPageUp ->
-    (state { tsHistoryScroll = max 0 (tsHistoryScroll - 5) }, [])
+    (state { tsHistoryScroll = max 0 (tsHistoryScroll - 5) }, [ActionScrollHistory (-5)])
 
   KeyPageDown ->
-    (state { tsHistoryScroll = tsHistoryScroll + 5 }, [])
+    (state { tsHistoryScroll = tsHistoryScroll + 5 }, [ActionScrollHistory 5])
 
   KeyChar 'c' ->
     -- Clear dialogue history
@@ -150,10 +150,20 @@ handleToolsKey key state@TuiState{..} =
   let totalTools = length tsTools
   in case key of
     KeyUp ->
-      (state { tsSelectedToolIndex = max 0 (tsSelectedToolIndex - 1) }, [])
+      let newIdx = max 0 (tsSelectedToolIndex - 1)
+      in (state { tsSelectedToolIndex = newIdx }, [ActionScrollTools (-1)])
 
     KeyDown ->
-      (state { tsSelectedToolIndex = min (max 0 (totalTools - 1)) (tsSelectedToolIndex + 1) }, [])
+      let newIdx = min (max 0 (totalTools - 1)) (tsSelectedToolIndex + 1)
+      in (state { tsSelectedToolIndex = newIdx }, [ActionScrollTools 1])
+
+    KeyPageUp ->
+      let newIdx = max 0 (tsSelectedToolIndex - 5)
+      in (state { tsSelectedToolIndex = newIdx }, [ActionScrollTools (-5)])
+
+    KeyPageDown ->
+      let newIdx = min (max 0 (totalTools - 1)) (tsSelectedToolIndex + 5)
+      in (state { tsSelectedToolIndex = newIdx }, [ActionScrollTools 5])
 
     KeyEnter ->
       (toggleToolExpanded tsSelectedToolIndex state, [])
