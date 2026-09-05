@@ -21,7 +21,7 @@ module Agent.TUI.Types
   , TuiAction(..)
   ) where
 
-import Agent.Types (AgentEvent, ToolResult)
+import Agent.Types (AgentEvent, TokenUsage, ToolResult)
 import Data.Text (Text)
 
 -- | Operational status of the agent in the TUI.
@@ -86,6 +86,8 @@ data TuiState = TuiState
   , tsPromptHistory      :: ![Text]
   , tsPromptHistoryIndex :: !(Maybe Int)
   , tsPromptDraft        :: !Text
+  , tsContextTokens      :: !Int
+  , tsTokenUsage         :: !(Maybe TokenUsage)
   } deriving (Show, Eq)
 
 -- | Initialize a clean TUI state.
@@ -107,6 +109,8 @@ initialTuiState model maxTurns = TuiState
   , tsPromptHistory      = []
   , tsPromptHistoryIndex = Nothing
   , tsPromptDraft        = ""
+  , tsContextTokens      = 0
+  , tsTokenUsage         = Nothing
   }
 
 -- | Simplified user keystroke events abstracted from Vty.

@@ -61,7 +61,7 @@ tuiAlgebra chan IOEnv{..} = AgentAlgebra
         Right asstResp -> pure asstResp
         Left err       -> do
           writeBChan chan (EvError err)
-          pure $ AssistantResponse (Just ("[API Error]: " <> err)) []
+          pure $ AssistantResponse (Just ("[API Error]: " <> err)) [] Nothing
 
   , interpTool = \call ->
       executeCodingTool ioWorkspace call
@@ -165,8 +165,8 @@ handleBrickEvent eventChan workerVar ioEnv = \case
   AppEvent agentEv -> do
     modify (handleAgentEvent agentEv)
     case agentEv of
-      EvLLMResponse _ _ -> vScrollToEnd (viewportScroll VpHistory)
-      EvDone _          -> vScrollToEnd (viewportScroll VpHistory)
+      EvLLMResponse _ _ _ -> vScrollToEnd (viewportScroll VpHistory)
+      EvDone _            -> vScrollToEnd (viewportScroll VpHistory)
       EvError _         -> vScrollToEnd (viewportScroll VpHistory)
       EvToolCall _ _    -> vScrollToEnd (viewportScroll VpTools)
       _                 -> pure ()

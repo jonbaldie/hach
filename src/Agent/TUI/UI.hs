@@ -4,6 +4,7 @@
 module Agent.TUI.UI
   ( drawUI
   , tuiAttrMap
+  , formatTokens
   , Name(..)
   ) where
 
@@ -31,10 +32,11 @@ data Name
 -- Theme Attributes (Claude Code / AGY CLI Style)
 --------------------------------------------------------------------------------
 
-brandAttr, modelAttr, turnAttr, dimAttr :: AttrName
+brandAttr, modelAttr, turnAttr, tokenAttr, dimAttr :: AttrName
 brandAttr = attrName "brand"
 modelAttr = attrName "model"
 turnAttr  = attrName "turn"
+tokenAttr = attrName "token"
 dimAttr   = attrName "dim"
 
 statusIdleAttr, statusThinkingAttr, statusRunningAttr, statusErrorAttr :: AttrName
@@ -74,6 +76,7 @@ tuiAttrMap = attrMap Vty.defAttr
   [ (brandAttr,          Vty.withStyle (fg (Vty.rgbColor (249 :: Int) (115 :: Int) (22 :: Int))) Vty.bold)  -- Claude Warm Amber/Orange
   , (modelAttr,          Vty.withStyle (fg (Vty.rgbColor (192 :: Int) (132 :: Int) (252 :: Int))) Vty.bold)  -- Lavender / Purple
   , (turnAttr,           fg (Vty.rgbColor (251 :: Int) (191 :: Int) (36 :: Int)))                            -- Gold
+  , (tokenAttr,          Vty.withStyle (fg (Vty.rgbColor (56 :: Int) (189 :: Int) (248 :: Int))) Vty.bold)  -- Electric Sky Blue
   , (dimAttr,            fg (Vty.rgbColor (100 :: Int) (116 :: Int) (139 :: Int)))                           -- Slate Gray
   , (statusIdleAttr,     Vty.withStyle (fg (Vty.rgbColor (52 :: Int) (211 :: Int) (153 :: Int))) Vty.bold)  -- Mint Green
   , (statusThinkingAttr, Vty.withStyle (fg (Vty.rgbColor (251 :: Int) (191 :: Int) (36 :: Int))) Vty.bold)  -- Amber
@@ -122,6 +125,17 @@ baseLayout state =
 -- Header
 --------------------------------------------------------------------------------
 
+-- | Format an integer token count with comma thousands separators.
+formatTokens :: Int -> Text
+formatTokens n
+  | n < 0     = "-" <> formatTokens (abs n)
+  | n < 1000  = T.pack (show n)
+  | otherwise = formatTokens (n `div` 1000) <> "," <> padThree (n `mod` 1000)
+  where
+    padThree x =
+      let s = show x
+      in T.pack (replicate (3 - length s) '0' ++ s)
+
 -- | Modern, sleek status bar (Claude Code / AGY CLI style).
 renderHeader :: TuiState -> Widget Name
 renderHeader TuiState{..} =
@@ -134,6 +148,8 @@ renderHeader TuiState{..} =
     , withAttr modelAttr (txt tsModelName)
     , withAttr dimAttr (txt "  │  turn: ")
     , withAttr turnAttr (txt (T.pack (show tsCurrentTurn) <> "/" <> T.pack (show tsMaxTurns)))
+    , withAttr dimAttr (txt "  │  tokens: ")
+    , withAttr tokenAttr (txt (formatTokens tsContextTokens))
     , withAttr dimAttr (txt "  │  ")
     , renderStatus tsStatus
     , padLeft Max (withAttr dimAttr (txt "press ? for help "))

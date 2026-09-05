@@ -104,7 +104,7 @@ agentStep cfg tools turn currentHistory
       logEvent (EvTurnStart turn)
       logEvent (EvPromptingLLM (length currentHistory))
       resp <- promptLLM currentHistory tools
-      logEvent (EvLLMResponse (respContent resp) (respToolCalls resp))
+      logEvent (EvLLMResponse (respContent resp) (respToolCalls resp) (respUsage resp))
 
       case respToolCalls resp of
         [] -> do

@@ -4,7 +4,8 @@ module Agent.TUISpec (spec) where
 
 import Agent.TUI.State
 import Agent.TUI.Types
-import Agent.Types (AgentEvent(..), ToolResult(..))
+import Agent.TUI.UI (formatTokens)
+import Agent.Types (AgentEvent(..), TokenUsage(..), ToolResult(..))
 import Test.Hspec
 
 spec :: Spec
@@ -88,7 +89,7 @@ spec = do
         tsStatus s1 `shouldBe` StatusThinking
 
       it "records LLM assistant text into history" $ do
-        let s1 = fst $ updateTui (EvHarness (EvLLMResponse (Just "Working on it...") [])) baseState
+        let s1 = fst $ updateTui (EvHarness (EvLLMResponse (Just "Working on it...") [] Nothing)) baseState
         tsHistory s1 `shouldBe` [DiAssistant "Working on it..."]
         tsStatus s1 `shouldBe` StatusFinished
 
@@ -247,3 +248,41 @@ spec = do
             (s4, _) = updateTui (EvUserKey KeyEnter) s3
         tsPromptHistory s4 `shouldBe` ["first query", "second query"]
         tsPromptHistoryIndex s4 `shouldBe` Nothing
+
+    describe "Context Window Token Usage Tracking" $ do
+      it "initializes context tokens to 0 and token usage to Nothing" $ do
+        tsContextTokens baseState `shouldBe` 0
+        tsTokenUsage baseState `shouldBe` Nothing
+
+      it "updates context tokens and token usage on EvLLMResponse" $ do
+        let usage = TokenUsage 120 30 150
+            (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
+        tsContextTokens s1 `shouldBe` 150
+        tsTokenUsage s1 `shouldBe` Just usage
+
+      it "updates context tokens with latest turn on subsequent EvLLMResponse" $ do
+        let usage1 = TokenUsage 120 30 150
+            usage2 = TokenUsage 200 45 245
+            (s1, _) = updateTui (EvHarness (EvLLMResponse Nothing [] (Just usage1))) baseState
+            (s2, _) = updateTui (EvHarness (EvLLMResponse (Just "Done") [] (Just usage2))) s1
+        tsContextTokens s2 `shouldBe` 245
+        tsTokenUsage s2 `shouldBe` Just usage2
+
+      it "resets context tokens to 0 when history is cleared" $ do
+        let usage = TokenUsage 120 30 150
+            (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
+            s2 = s1 { tsFocus = FocusHistory }
+            (s3, _) = updateTui (EvUserKey (KeyChar 'c')) s2
+        tsContextTokens s3 `shouldBe` 0
+        tsTokenUsage s3 `shouldBe` Nothing
+
+    describe "formatTokens" $ do
+      it "formats small counts without commas" $ do
+        formatTokens 0 `shouldBe` "0"
+        formatTokens 42 `shouldBe` "42"
+        formatTokens 999 `shouldBe` "999"
+
+      it "formats thousands and larger counts with commas" $ do
+        formatTokens 1000 `shouldBe` "1,000"
+        formatTokens 1520 `shouldBe` "1,520"
+        formatTokens 128450 `shouldBe` "128,450"

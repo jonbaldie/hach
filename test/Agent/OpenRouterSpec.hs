@@ -43,6 +43,24 @@ spec = do
         Left err -> err `shouldBe` "OpenRouter API error: Invalid API key provided"
         Right _  -> expectationFailure "Expected parseChatResponse to fail on API error"
 
+    it "parses token usage metadata from response envelope" $ do
+      let rawJson = LBS.concat
+            [ "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Hello there!\"}}],"
+            , "\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":18,\"total_tokens\":60}}"
+            ]
+      case parseChatResponse rawJson of
+        Left err -> expectationFailure ("Failed to parse response: " <> show err)
+        Right resp -> do
+          respContent resp `shouldBe` Just "Hello there!"
+          respUsage resp `shouldBe` Just (TokenUsage 42 18 60)
+
+    it "sets respUsage to Nothing when usage field is absent" $ do
+      let rawJson = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Hello there!\"}}]}"
+      case parseChatResponse rawJson of
+        Left err -> expectationFailure ("Failed to parse response: " <> show err)
+        Right resp -> do
+          respUsage resp `shouldBe` Nothing
+
   describe "ChatRequest serialization" $ do
     it "omits tools when list is empty" $ do
       let req = ChatRequest "test-model" [UserMsg "Hello"] [] Nothing

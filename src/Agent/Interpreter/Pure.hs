@@ -73,7 +73,7 @@ pureAlgebra = AgentAlgebra
           putEnv env { mockLLMSteps = rest }
           pure (stepFn msgs tools)
         [] ->
-          pure $ AssistantResponse (Just "Mock finished.") []
+          pure $ AssistantResponse (Just "Mock finished.") [] Nothing
 
   , interpTool = \call -> do
       case functionName call of

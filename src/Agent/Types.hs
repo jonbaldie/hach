@@ -9,6 +9,7 @@ module Agent.Types
   , Message(..)
   , AssistantResponse(..)
   , parseCallArgs
+  , TokenUsage(..)
 
     -- * Tools & Schemas
   , ToolDef(..)
@@ -112,23 +113,48 @@ instance FromJSON Message where
       "tool" -> ToolMsg <$> o .: "tool_call_id" <*> (o .:? "name" .!= "") <*> o .: "content"
       other -> fail ("Unknown message role: " <> show other)
 
+-- | Token usage metadata for an inference turn.
+data TokenUsage = TokenUsage
+  { tuPromptTokens     :: !Int
+  , tuCompletionTokens :: !Int
+  , tuTotalTokens      :: !Int
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON TokenUsage where
+  toJSON TokenUsage{..} = object
+    [ "prompt_tokens"     .= tuPromptTokens
+    , "completion_tokens" .= tuCompletionTokens
+    , "total_tokens"      .= tuTotalTokens
+    ]
+
+instance FromJSON TokenUsage where
+  parseJSON = withObject "TokenUsage" $ \o ->
+    TokenUsage
+      <$> o .:? "prompt_tokens"     .!= 0
+      <*> o .:? "completion_tokens" .!= 0
+      <*> o .:? "total_tokens"      .!= 0
+
 -- | The model's response for a turn.
 data AssistantResponse = AssistantResponse
   { respContent   :: !(Maybe Text)
   , respToolCalls :: ![ToolCall]
+  , respUsage     :: !(Maybe TokenUsage)
   } deriving (Show, Eq, Generic)
 
 instance ToJSON AssistantResponse where
   toJSON AssistantResponse{..} = object
-    [ "content" .= respContent
-    , "tool_calls" .= respToolCalls
-    ]
+    ( [ "content" .= respContent
+      , "tool_calls" .= respToolCalls
+      ]
+      ++ maybe [] (\u -> ["usage" .= u]) respUsage
+    )
 
 instance FromJSON AssistantResponse where
   parseJSON = withObject "AssistantResponse" $ \o ->
     AssistantResponse
       <$> o .:? "content"
       <*> (o .:? "tool_calls" .!= [])
+      <*> o .:? "usage"
 
 -- | Definition of a tool exposed to the model.
 data ToolDef = ToolDef
@@ -196,7 +222,7 @@ data AgentResult
 data AgentEvent
   = EvTurnStart !Int
   | EvPromptingLLM !Int
-  | EvLLMResponse !(Maybe Text) ![ToolCall]
+  | EvLLMResponse !(Maybe Text) ![ToolCall] !(Maybe TokenUsage)
   | EvToolCall !Text !Text
   | EvToolResult !Text !ToolResult
   | EvTurnComplete !Int

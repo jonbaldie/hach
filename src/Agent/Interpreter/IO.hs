@@ -49,8 +49,12 @@ renderEventIO verbose = \case
   EvPromptingLLM msgCount ->
     when verbose $ putStrLn ("-> Prompting LLM with " <> show msgCount <> " messages in context...")
 
-  EvLLMResponse mContent calls ->
+  EvLLMResponse mContent calls mUsage ->
     when verbose $ do
+      case mUsage of
+        Just TokenUsage{..} ->
+          putStrLn ("<- Context tokens: " <> show tuTotalTokens <> " (prompt: " <> show tuPromptTokens <> ", completion: " <> show tuCompletionTokens <> ")")
+        Nothing -> pure ()
       case mContent of
         Just c | not (T.null c) -> do
           putStrLn "<- Assistant:"
@@ -102,7 +106,7 @@ ioAlgebra IOEnv{..} = AgentAlgebra
         Left err       -> do
           TIO.putStrLn ("[API Error]: " <> err)
           -- Yield an empty assistant message indicating failure so harness loop can conclude
-          pure $ AssistantResponse (Just ("[API Error]: " <> err)) []
+          pure $ AssistantResponse (Just ("[API Error]: " <> err)) [] Nothing
 
   , interpTool = \call ->
       executeCodingTool ioWorkspace call

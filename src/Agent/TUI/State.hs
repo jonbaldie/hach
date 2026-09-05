@@ -9,7 +9,7 @@ module Agent.TUI.State
   ) where
 
 import Agent.TUI.Types
-import Agent.Types (AgentEvent(..), ToolResult)
+import Agent.Types (AgentEvent(..), TokenUsage(..), ToolResult)
 import qualified Data.Text as T
 
 -- | Pure state reducer for the TUI.
@@ -177,8 +177,8 @@ handleHistoryKey key state@TuiState{..} = case key of
     (state { tsHistoryScroll = tsHistoryScroll + 5 }, [ActionScrollHistory 5])
 
   KeyChar 'c' ->
-    -- Clear dialogue history
-    (state { tsHistory = [], tsHistoryScroll = 0 }, [])
+    -- Clear dialogue history and reset context window tokens
+    (state { tsHistory = [], tsHistoryScroll = 0, tsContextTokens = 0, tsTokenUsage = Nothing }, [])
 
   _ ->
     (state, [])
@@ -229,13 +229,21 @@ handleAgentEvent event state@TuiState{..} = case event of
   EvPromptingLLM _ ->
     state { tsStatus = StatusThinking }
 
-  EvLLMResponse mContent calls ->
+  EvLLMResponse mContent calls mUsage ->
     let withText = case mContent of
           Just c | not (T.null (T.strip c)) ->
             tsHistory ++ [DiAssistant c]
           _ -> tsHistory
         newStatus = if null calls then StatusFinished else tsStatus
-    in state { tsHistory = withText, tsStatus = newStatus }
+        (newContextTokens, newUsage) = case mUsage of
+          Just u  -> (tuTotalTokens u, Just u)
+          Nothing -> (tsContextTokens, tsTokenUsage)
+    in state
+         { tsHistory       = withText
+         , tsStatus        = newStatus
+         , tsContextTokens = newContextTokens
+         , tsTokenUsage    = newUsage
+         }
 
   EvToolCall name args ->
     let newItem = ToolItem

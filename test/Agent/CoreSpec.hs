@@ -19,7 +19,7 @@ spec = do
 
   describe "agentLoop with Pure Interpreter" $ do
     it "completes immediately when model returns direct answer" $ do
-      let step1 _ _ = AssistantResponse (Just "Hello world!") []
+      let step1 _ _ = AssistantResponse (Just "Hello world!") [] Nothing
           env = emptyMockEnv { mockLLMSteps = [step1] }
           initHist = [UserMsg "Hi"]
           ((result, finalHist), endEnv) = runPure env (agentLoop baseConfig [] initHist)
@@ -37,14 +37,14 @@ spec = do
             , callArgsRaw = "{\"path\":\"hello.txt\"}"
             }
           -- Turn 1: model calls read_file
-          step1 _ _ = AssistantResponse Nothing [toolCall1]
+          step1 _ _ = AssistantResponse Nothing [toolCall1] Nothing
           -- Turn 2: model sees file content and completes
           step2 hist _ =
             case last hist of
               ToolMsg "call_1" "read_file" content ->
-                AssistantResponse (Just ("The file says: " <> content)) []
+                AssistantResponse (Just ("The file says: " <> content)) [] Nothing
               _ ->
-                AssistantResponse (Just "Failed to get tool output") []
+                AssistantResponse (Just "Failed to get tool output") [] Nothing
 
           env = emptyMockEnv
             { mockLLMSteps = [step1, step2]
@@ -75,14 +75,23 @@ spec = do
             , functionName = "write_file"
             , callArgsRaw = "{\"path\":\"out.txt\",\"content\":\"Pearls in Haskell\"}"
             }
-          step1 _ _ = AssistantResponse Nothing [writeCall]
-          step2 _ _ = AssistantResponse (Just "Wrote successfully!") []
+          step1 _ _ = AssistantResponse Nothing [writeCall] Nothing
+          step2 _ _ = AssistantResponse (Just "Wrote successfully!") [] Nothing
           env = emptyMockEnv { mockLLMSteps = [step1, step2] }
           initHist = [UserMsg "Write out.txt"]
           ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
 
       result `shouldBe` AgentCompleted "Wrote successfully!"
       Map.lookup "out.txt" (mockFiles endEnv) `shouldBe` Just "Pearls in Haskell"
+
+    it "propagates token usage metadata in EvLLMResponse" $ do
+      let usage = TokenUsage 150 40 190
+          step1 _ _ = AssistantResponse (Just "Tokens measured") [] (Just usage)
+          env = emptyMockEnv { mockLLMSteps = [step1] }
+          initHist = [UserMsg "Check tokens"]
+          (_, endEnv) = runPure env (agentLoop baseConfig [] initHist)
+
+      mockEvents endEnv `shouldContain` [EvLLMResponse (Just "Tokens measured") [] (Just usage)]
 
     it "terminates when maximum turns are reached" $ do
       let loopConfig = baseConfig { cfgMaxTurns = 2 }
@@ -91,7 +100,7 @@ spec = do
             , functionName = "read_file"
             , callArgsRaw = "{\"path\":\"hello.txt\"}"
             }
-          stepLoop _ _ = AssistantResponse Nothing [infiniteToolCall]
+          stepLoop _ _ = AssistantResponse Nothing [infiniteToolCall] Nothing
           -- Model keeps calling the tool infinitely
           env = emptyMockEnv
             { mockLLMSteps = repeat stepLoop

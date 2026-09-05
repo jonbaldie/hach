@@ -10,7 +10,7 @@ module Agent.OpenRouter
 import Agent.Types
 import Control.Exception (SomeException, try)
 import Data.Aeson
-  ( FromJSON(..), ToJSON(..), Value, object, withObject, (.:), (.=)
+  ( FromJSON(..), ToJSON(..), Value, object, withObject, (.:), (.:?), (.=)
   )
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonTypes
@@ -58,11 +58,13 @@ instance FromJSON ChoiceWire where
   parseJSON = withObject "ChoiceWire" $ \o ->
     ChoiceWire <$> o .: "message"
 
-newtype OpenRouterEnvelope = OpenRouterEnvelope [ChoiceWire]
+data OpenRouterEnvelope = OpenRouterEnvelope ![ChoiceWire] !(Maybe TokenUsage)
 
 instance FromJSON OpenRouterEnvelope where
   parseJSON = withObject "OpenRouterEnvelope" $ \o ->
-    OpenRouterEnvelope <$> o .: "choices"
+    OpenRouterEnvelope
+      <$> o .: "choices"
+      <*> o .:? "usage"
 
 -- | Parse the response body from OpenRouter.
 parseChatResponse :: LBS.ByteString -> Either Text AssistantResponse
@@ -75,8 +77,9 @@ parseChatResponse body =
     _ ->
       -- 2. Try parsing envelope
       case Aeson.eitherDecode body :: Either String OpenRouterEnvelope of
-        Right (OpenRouterEnvelope (ChoiceWire msg : _)) -> Right msg
-        Right (OpenRouterEnvelope []) ->
+        Right (OpenRouterEnvelope (ChoiceWire msg : _) mUsage) ->
+          Right msg { respUsage = mUsage }
+        Right (OpenRouterEnvelope [] _) ->
           Left "OpenRouter returned empty choices array."
         Left envelopeErr ->
           -- 3. Fallback: try parsing directly as message
