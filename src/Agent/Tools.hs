@@ -39,15 +39,27 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Encoding.Error as TE
 import qualified Data.ByteString as BS
+import Data.List (isPrefixOf)
 import System.Directory
-  ( createDirectoryIfMissing
+  ( canonicalizePath
+  , createDirectoryIfMissing
   , doesDirectoryExist
   , doesFileExist
   , listDirectory
   )
 import System.Exit (ExitCode(..))
-import System.FilePath ((</>), takeDirectory)
+import System.FilePath
+  ( (</>)
+  , isAbsolute
+  , isPathSeparator
+  , joinPath
+  , pathSeparator
+  , splitDirectories
+  , takeDirectory
+  , takeFileName
+  )
 import System.Process (CreateProcess(cwd), readCreateProcessWithExitCode, shell)
+import System.Timeout (timeout)
 
 --------------------------------------------------------------------------------
 -- Tool Definitions (Schemas)
@@ -206,39 +218,93 @@ executeCodingTool root call =
     unknown ->
       pure $ ToolError ("Unknown tool function: " <> unknown)
 
+-- | Logically collapses '.' and '..' components in an absolute path.
+collapseLogicalPath :: FilePath -> FilePath
+collapseLogicalPath p =
+  let dirs = splitDirectories p
+      step acc d
+        | d == "." || d == "./" || d == ".\\" = acc
+        | d == ".." || d == "../" || d == "..\\" = case acc of
+            [] -> []
+            ["/"] -> ["/"]
+            (_:xs) -> xs
+        | otherwise = d : acc
+  in joinPath (reverse (foldl step [] dirs))
+
+-- | Canonicalize an existing path or the deepest existing parent directory
+-- of a non-existing path. This resolves symlinks while preserving target filename.
+canonicalizeCandidate :: FilePath -> IO FilePath
+canonicalizeCandidate path = do
+  existsFile <- doesFileExist path
+  existsDir  <- doesDirectoryExist path
+  if existsFile || existsDir
+    then canonicalizePath path
+    else do
+      let parent = takeDirectory path
+      if parent == path
+        then pure path
+        else do
+          canonParent <- canonicalizeCandidate parent
+          pure (canonParent </> takeFileName path)
+
+-- | Resolve a target path against the workspace root.
+-- Enforces that the resolved path is strictly located within the workspace root,
+-- preventing directory traversal attacks via '..' or absolute paths.
+resolveWorkspacePath :: FilePath -> FilePath -> IO (Either String FilePath)
+resolveWorkspacePath root rawPath = do
+  rootCanon <- canonicalizePath root
+  let candidate = if isAbsolute rawPath
+                    then rawPath
+                    else rootCanon </> rawPath
+      collapsed = collapseLogicalPath candidate
+  finalPath <- canonicalizeCandidate collapsed
+  let rootWithSep = if isPathSeparator (last rootCanon) then rootCanon else rootCanon ++ [pathSeparator]
+  if finalPath == rootCanon || (rootWithSep `isPrefixOf` finalPath)
+    then pure (Right finalPath)
+    else pure (Left ("Access denied: path '" <> rawPath <> "' escapes the workspace root."))
+
 executeReadFile :: FilePath -> ReadFileArgs -> IO ToolResult
 executeReadFile root (ReadFileArgs path) = do
-  let fullPath = root </> path
-  exists <- doesFileExist fullPath
-  if not exists
-    then pure $ ToolError ("File not found: " <> T.pack path)
-    else do
-      res <- try (BS.readFile fullPath) :: IO (Either SomeException BS.ByteString)
-      case res of
-        Left ex -> pure $ ToolError ("Read error: " <> T.pack (show ex))
-        Right bytes ->
-          let txt = TE.decodeUtf8With TE.lenientDecode bytes
-          in pure $ ToolSuccess txt
+  pathRes <- resolveWorkspacePath root path
+  case pathRes of
+    Left err -> pure $ ToolError (T.pack err)
+    Right fullPath -> do
+      exists <- doesFileExist fullPath
+      if not exists
+        then pure $ ToolError ("File not found: " <> T.pack path)
+        else do
+          res <- try (BS.readFile fullPath) :: IO (Either SomeException BS.ByteString)
+          case res of
+            Left ex -> pure $ ToolError ("Read error: " <> T.pack (show ex))
+            Right bytes ->
+              let txt = TE.decodeUtf8With TE.lenientDecode bytes
+              in pure $ ToolSuccess txt
 
 executeWriteFile :: FilePath -> WriteFileArgs -> IO ToolResult
 executeWriteFile root (WriteFileArgs path content) = do
-  let fullPath = root </> path
-  res <- try $ do
-    createDirectoryIfMissing True (takeDirectory fullPath)
-    BS.writeFile fullPath (TE.encodeUtf8 content)
-  case res of
-    Left (ex :: SomeException) ->
-      pure $ ToolError ("Write error: " <> T.pack (show ex))
-    Right () ->
-      pure $ ToolSuccess ("Successfully wrote " <> T.pack (show (T.length content)) <> " characters to " <> T.pack path)
+  pathRes <- resolveWorkspacePath root path
+  case pathRes of
+    Left err -> pure $ ToolError (T.pack err)
+    Right fullPath -> do
+      res <- try $ do
+        createDirectoryIfMissing True (takeDirectory fullPath)
+        BS.writeFile fullPath (TE.encodeUtf8 content)
+      case res of
+        Left (ex :: SomeException) ->
+          pure $ ToolError ("Write error: " <> T.pack (show ex))
+        Right () ->
+          pure $ ToolSuccess ("Successfully wrote " <> T.pack (show (T.length content)) <> " characters to " <> T.pack path)
 
 executeRunCommand :: FilePath -> RunCommandArgs -> IO ToolResult
 executeRunCommand root (RunCommandArgs cmd) = do
   let sh = (shell (T.unpack cmd)) { cwd = Just root }
-  res <- try (readCreateProcessWithExitCode sh "") :: IO (Either SomeException (ExitCode, String, String))
+  -- 60 second timeout to prevent runaway or interactive processes from hanging the harness
+  res <- try (timeout (60 * 1000000) (readCreateProcessWithExitCode sh "")) :: IO (Either SomeException (Maybe (ExitCode, String, String)))
   case res of
     Left ex -> pure $ ToolError ("Process execution failed: " <> T.pack (show ex))
-    Right (exitCode, stdoutStr, stderrStr) ->
+    Right Nothing ->
+      pure $ ToolError ("Command timed out after 60 seconds: " <> cmd)
+    Right (Just (exitCode, stdoutStr, stderrStr)) ->
       let codeInt = case exitCode of
             ExitSuccess   -> 0
             ExitFailure c -> c
@@ -253,13 +319,16 @@ executeRunCommand root (RunCommandArgs cmd) = do
 
 executeListDir :: FilePath -> ListDirArgs -> IO ToolResult
 executeListDir root (ListDirArgs path) = do
-  let fullPath = root </> path
-  dirExists <- doesDirectoryExist fullPath
-  if not dirExists
-    then pure $ ToolError ("Directory does not exist: " <> T.pack path)
-    else do
-      res <- try (listDirectory fullPath) :: IO (Either SomeException [FilePath])
-      case res of
-        Left ex -> pure $ ToolError ("List directory error: " <> T.pack (show ex))
-        Right entries ->
-          pure $ ToolSuccess (T.unlines (map T.pack entries))
+  pathRes <- resolveWorkspacePath root path
+  case pathRes of
+    Left err -> pure $ ToolError (T.pack err)
+    Right fullPath -> do
+      dirExists <- doesDirectoryExist fullPath
+      if not dirExists
+        then pure $ ToolError ("Directory does not exist: " <> T.pack path)
+        else do
+          res <- try (listDirectory fullPath) :: IO (Either SomeException [FilePath])
+          case res of
+            Left ex -> pure $ ToolError ("List directory error: " <> T.pack (show ex))
+            Right entries ->
+              pure $ ToolSuccess (T.unlines (map T.pack entries))

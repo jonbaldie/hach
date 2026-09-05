@@ -71,6 +71,13 @@ handleUserKey key state@TuiState{..} =
       | otherwise ->
           (state, [])
 
+    KeyF1 ->
+      (state { tsShowHelp = not tsShowHelp }, [])
+
+    KeyChar 'q'
+      | tsFocus /= FocusInput && not (isBusy tsStatus) ->
+          (state { tsShouldQuit = True }, [ActionQuit])
+
     KeyChar '?'
       | tsFocus /= FocusInput ->
           (state { tsShowHelp = not tsShowHelp }, [])

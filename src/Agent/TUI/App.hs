@@ -42,6 +42,7 @@ vtyToUserKey = \case
   Vty.EvKey Vty.KDown []               -> Just KeyDown
   Vty.EvKey Vty.KPageUp []             -> Just KeyPageUp
   Vty.EvKey Vty.KPageDown []           -> Just KeyPageDown
+  Vty.EvKey (Vty.KFun 1) []            -> Just KeyF1
   Vty.EvKey (Vty.KChar c) []           -> Just (KeyChar c)
   _                                    -> Nothing
 

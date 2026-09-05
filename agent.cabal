@@ -103,6 +103,7 @@ test-suite agent-test
         Agent.EnvSpec
         Agent.OpenRouterSpec
         Agent.TUISpec
+        Agent.PropertySpec
     build-depends:
         base >= 4.18 && < 5,
         agent,
@@ -111,4 +112,7 @@ test-suite agent-test
         containers,
         aeson,
         hspec >= 2.10,
-        vty >= 6.0
+        vty >= 6.0,
+        QuickCheck >= 2.14,
+        directory,
+        filepath

@@ -10,7 +10,7 @@ module Agent.OpenRouter
 import Agent.Types
 import Control.Exception (SomeException, try)
 import Data.Aeson
-  ( FromJSON(..), ToJSON(..), Value, object, withObject, (.:), (.:?), (.!=), (.=)
+  ( FromJSON(..), ToJSON(..), Value, object, withObject, (.:), (.=)
   )
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonTypes
@@ -62,7 +62,7 @@ newtype OpenRouterEnvelope = OpenRouterEnvelope [ChoiceWire]
 
 instance FromJSON OpenRouterEnvelope where
   parseJSON = withObject "OpenRouterEnvelope" $ \o ->
-    OpenRouterEnvelope <$> o .:? "choices" .!= []
+    OpenRouterEnvelope <$> o .: "choices"
 
 -- | Parse the response body from OpenRouter.
 parseChatResponse :: LBS.ByteString -> Either Text AssistantResponse
@@ -70,7 +70,7 @@ parseChatResponse body =
   -- 1. Check if payload contains an OpenRouter error message
   case Aeson.decode body :: Maybe Value of
     Just (Aeson.Object o)
-      | Just errMsg <- AesonTypes.parseMaybe (\obj -> obj .: "error" >>= (.: "message")) o ->
+      | Just errMsg <- parseErrorPayload o ->
           Left ("OpenRouter API error: " <> errMsg)
     _ ->
       -- 2. Try parsing envelope
@@ -83,6 +83,14 @@ parseChatResponse body =
           case Aeson.eitherDecode body :: Either String AssistantResponse of
             Right directMsg -> Right directMsg
             Left _ -> Left ("JSON parse failure: " <> T.pack envelopeErr)
+  where
+    parseErrorPayload o =
+      case AesonTypes.parseMaybe (\obj -> obj .: "error") o of
+        Just (Aeson.String msg) -> Just msg
+        Just (Aeson.Object errObj) ->
+          AesonTypes.parseMaybe (\obj -> obj .: "message") errObj
+        _ ->
+          AesonTypes.parseMaybe (\obj -> obj .: "message") o
 
 -- | Send an inference request to OpenRouter API.
 sendChatCompletion

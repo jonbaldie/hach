@@ -116,6 +116,7 @@ data UserKey
   | KeyDown
   | KeyPageUp
   | KeyPageDown
+  | KeyF1
   | KeyCtrl !Char
   deriving (Show, Eq)
 
