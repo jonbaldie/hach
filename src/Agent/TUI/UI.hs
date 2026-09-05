@@ -13,7 +13,12 @@ import Brick
 import Brick.Widgets.Border
 import Brick.Widgets.Border.Style
 import Brick.Widgets.Center
+import Data.Aeson (Value, (.:))
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Types as AesonTypes
+import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import qualified Graphics.Vty as Vty
 
 data Name
@@ -22,11 +27,15 @@ data Name
   | VpInput
   deriving (Show, Eq, Ord)
 
--- Attribute Names
-titleAttr, modelAttr, turnAttr :: AttrName
-titleAttr = attrName "title"
+--------------------------------------------------------------------------------
+-- Theme Attributes (Claude Code / AGY CLI Style)
+--------------------------------------------------------------------------------
+
+brandAttr, modelAttr, turnAttr, dimAttr :: AttrName
+brandAttr = attrName "brand"
 modelAttr = attrName "model"
 turnAttr  = attrName "turn"
+dimAttr   = attrName "dim"
 
 statusIdleAttr, statusThinkingAttr, statusRunningAttr, statusErrorAttr :: AttrName
 statusIdleAttr     = attrName "statusIdle"
@@ -34,32 +43,63 @@ statusThinkingAttr = attrName "statusThinking"
 statusRunningAttr  = attrName "statusRunning"
 statusErrorAttr    = attrName "statusError"
 
-userAttr, asstAttr, sysAttr, noticeAttr, toolNameAttr, shortcutAttr, activeBorderAttr :: AttrName
-userAttr         = attrName "user"
-asstAttr         = attrName "assistant"
-sysAttr          = attrName "system"
-noticeAttr       = attrName "notice"
-toolNameAttr     = attrName "toolName"
-shortcutAttr     = attrName "shortcut"
-activeBorderAttr = attrName "activeBorder"
+userAttr, userPromptAttr, userTextAttr :: AttrName
+userAttr       = attrName "user"
+userPromptAttr = attrName "userPrompt"
+userTextAttr   = attrName "userText"
+
+asstAttr, asstTextAttr, codeBlockAttr :: AttrName
+asstAttr     = attrName "assistant"
+asstTextAttr = attrName "assistantText"
+codeBlockAttr = attrName "codeBlock"
+
+sysAttr, noticeAttr :: AttrName
+sysAttr    = attrName "system"
+noticeAttr = attrName "notice"
+
+toolIconAttr, toolNameAttr, toolTargetAttr, toolSuccessAttr, toolErrorAttr :: AttrName
+toolIconAttr    = attrName "toolIcon"
+toolNameAttr    = attrName "toolName"
+toolTargetAttr  = attrName "toolTarget"
+toolSuccessAttr = attrName "toolSuccess"
+toolErrorAttr   = attrName "toolError"
+
+shortcutKeyAttr, activeBorderAttr, inactiveBorderAttr :: AttrName
+shortcutKeyAttr    = attrName "shortcutKey"
+activeBorderAttr   = attrName "activeBorder"
+inactiveBorderAttr = attrName "inactiveBorder"
 
 tuiAttrMap :: AttrMap
 tuiAttrMap = attrMap Vty.defAttr
-  [ (titleAttr,          Vty.withStyle (fg Vty.cyan) Vty.bold)
-  , (modelAttr,          Vty.withStyle (fg Vty.magenta) Vty.bold)
-  , (turnAttr,           fg Vty.yellow)
-  , (statusIdleAttr,     Vty.withStyle (fg Vty.green) Vty.bold)
-  , (statusThinkingAttr, Vty.withStyle (fg Vty.yellow) Vty.bold)
-  , (statusRunningAttr,  Vty.withStyle (fg Vty.cyan) Vty.bold)
-  , (statusErrorAttr,    Vty.withStyle (fg Vty.red) Vty.bold)
-  , (userAttr,           Vty.withStyle (fg Vty.cyan) Vty.bold)
-  , (asstAttr,           Vty.withStyle (fg Vty.green) Vty.bold)
-  , (sysAttr,            fg Vty.yellow)
-  , (noticeAttr,         fg Vty.red)
-  , (toolNameAttr,       Vty.withStyle (fg Vty.blue) Vty.bold)
-  , (shortcutAttr,       fg (Vty.rgbColor (120 :: Int) (120 :: Int) (120 :: Int)))
-  , (activeBorderAttr,   Vty.withStyle (fg Vty.cyan) Vty.bold)
+  [ (brandAttr,          Vty.withStyle (fg (Vty.rgbColor (249 :: Int) (115 :: Int) (22 :: Int))) Vty.bold)  -- Claude Warm Amber/Orange
+  , (modelAttr,          Vty.withStyle (fg (Vty.rgbColor (192 :: Int) (132 :: Int) (252 :: Int))) Vty.bold)  -- Lavender / Purple
+  , (turnAttr,           fg (Vty.rgbColor (251 :: Int) (191 :: Int) (36 :: Int)))                            -- Gold
+  , (dimAttr,            fg (Vty.rgbColor (100 :: Int) (116 :: Int) (139 :: Int)))                           -- Slate Gray
+  , (statusIdleAttr,     Vty.withStyle (fg (Vty.rgbColor (52 :: Int) (211 :: Int) (153 :: Int))) Vty.bold)  -- Mint Green
+  , (statusThinkingAttr, Vty.withStyle (fg (Vty.rgbColor (251 :: Int) (191 :: Int) (36 :: Int))) Vty.bold)  -- Amber
+  , (statusRunningAttr,  Vty.withStyle (fg (Vty.rgbColor (56 :: Int) (189 :: Int) (248 :: Int))) Vty.bold)  -- Sky Blue
+  , (statusErrorAttr,    Vty.withStyle (fg (Vty.rgbColor (248 :: Int) (113 :: Int) (113 :: Int))) Vty.bold)  -- Coral Red
+  , (userPromptAttr,     Vty.withStyle (fg (Vty.rgbColor (56 :: Int) (189 :: Int) (248 :: Int))) Vty.bold)  -- Vibrant Cyan
+  , (userAttr,           Vty.withStyle (fg (Vty.rgbColor (241 :: Int) (245 :: Int) (249 :: Int))) Vty.bold)  -- Crisp White
+  , (userTextAttr,       fg (Vty.rgbColor (248 :: Int) (250 :: Int) (252 :: Int)))                            -- High Contrast White
+  , (asstAttr,           Vty.withStyle (fg (Vty.rgbColor (249 :: Int) (115 :: Int) (22 :: Int))) Vty.bold)  -- Warm Claude Accent
+  , (asstTextAttr,       fg (Vty.rgbColor (226 :: Int) (232 :: Int) (240 :: Int)))                            -- Soft Off-White
+  , (codeBlockAttr,      fg (Vty.rgbColor (148 :: Int) (163 :: Int) (184 :: Int)))                           -- Code Slate
+  , (sysAttr,            fg (Vty.rgbColor (251 :: Int) (191 :: Int) (36 :: Int)))                            -- Amber Notice
+  , (noticeAttr,         Vty.withStyle (fg (Vty.rgbColor (248 :: Int) (113 :: Int) (113 :: Int))) Vty.bold)  -- Alert Red
+  , (toolIconAttr,       Vty.withStyle (fg (Vty.rgbColor (129 :: Int) (140 :: Int) (248 :: Int))) Vty.bold)  -- Electric Violet
+  , (toolNameAttr,       Vty.withStyle (fg (Vty.rgbColor (199 :: Int) (210 :: Int) (254 :: Int))) Vty.bold)  -- Soft Indigo
+  , (toolTargetAttr,     fg (Vty.rgbColor (253 :: Int) (224 :: Int) (71 :: Int)))                            -- Soft Yellow
+  , (toolSuccessAttr,    Vty.withStyle (fg (Vty.rgbColor (52 :: Int) (211 :: Int) (153 :: Int))) Vty.bold)  -- Emerald
+  , (toolErrorAttr,      Vty.withStyle (fg (Vty.rgbColor (248 :: Int) (113 :: Int) (113 :: Int))) Vty.bold)  -- Coral
+  , (shortcutKeyAttr,    Vty.withStyle (fg (Vty.rgbColor (241 :: Int) (245 :: Int) (249 :: Int))) Vty.bold)  -- White
+  , (activeBorderAttr,   Vty.withStyle (fg (Vty.rgbColor (56 :: Int) (189 :: Int) (248 :: Int))) Vty.bold)  -- Glowing Cyan
+  , (inactiveBorderAttr, fg (Vty.rgbColor (51 :: Int) (65 :: Int) (85 :: Int)))                            -- Muted Slate
   ]
+
+--------------------------------------------------------------------------------
+-- Main Layout
+--------------------------------------------------------------------------------
 
 -- | Draw the full TUI layout.
 drawUI :: TuiState -> [Widget Name]
@@ -68,169 +108,338 @@ drawUI state@TuiState{..} =
     then [helpOverlay, baseLayout state]
     else [baseLayout state]
 
--- | The core dashboard layout.
+-- | The core dashboard layout with Claude Code / AGY CLI proportions.
 baseLayout :: TuiState -> Widget Name
 baseLayout state =
   vBox
     [ renderHeader state
-    , vLimitPercent 75 (hBox [renderHistoryPanel state, vBorder, renderToolsPanel state])
+    , vLimitPercent 78 (hBox [hLimitPercent 62 (renderHistoryPanel state), vBorder, renderToolsPanel state])
     , renderInputPanel state
     , renderFooter
     ]
 
--- | Header bar showing app title, model, turns, and live status.
+--------------------------------------------------------------------------------
+-- Header
+--------------------------------------------------------------------------------
+
+-- | Modern, sleek status bar (Claude Code / AGY CLI style).
 renderHeader :: TuiState -> Widget Name
 renderHeader TuiState{..} =
   withBorderStyle unicodeRounded $
   border $
   hBox
-    [ withAttr titleAttr (txt " 🤖 Haskell Coding Agent ")
-    , padLeft Max (txt "Model: ")
+    [ withAttr brandAttr (txt " ✻ antigravity ")
+    , withAttr dimAttr (txt "│ ")
+    , withAttr dimAttr (txt "model: ")
     , withAttr modelAttr (txt tsModelName)
-    , txt "  │ Turn: "
+    , withAttr dimAttr (txt "  │  turn: ")
     , withAttr turnAttr (txt (T.pack (show tsCurrentTurn) <> "/" <> T.pack (show tsMaxTurns)))
-    , txt "  │ Status: "
+    , withAttr dimAttr (txt "  │  ")
     , renderStatus tsStatus
-    , txt " "
+    , padLeft Max (withAttr dimAttr (txt "press ? for help "))
     ]
 
 renderStatus :: TuiStatus -> Widget Name
 renderStatus = \case
-  StatusIdle            -> withAttr statusIdleAttr (txt "IDLE")
-  StatusThinking        -> withAttr statusThinkingAttr (txt "THINKING...")
-  StatusRunningTool t   -> withAttr statusRunningAttr (txt ("RUNNING TOOL: " <> t))
-  StatusFinished        -> withAttr statusIdleAttr (txt "FINISHED")
-  StatusError err       -> withAttr statusErrorAttr (txt ("ERROR: " <> T.take 30 err))
+  StatusIdle          -> withAttr statusIdleAttr (txt "● idle")
+  StatusThinking      -> withAttr statusThinkingAttr (txt "● thinking...")
+  StatusRunningTool t -> withAttr statusRunningAttr (txt ("● running " <> t <> "..."))
+  StatusFinished      -> withAttr statusIdleAttr (txt "✔ ready")
+  StatusError err     -> withAttr statusErrorAttr (txt ("✖ error: " <> T.take 25 err))
 
--- | Left panel showing the dialogue history.
+--------------------------------------------------------------------------------
+-- Dialogue History Panel
+--------------------------------------------------------------------------------
+
+-- | Left panel showing conversation dialogue with markdown code styling.
 renderHistoryPanel :: TuiState -> Widget Name
 renderHistoryPanel TuiState{..} =
   let isFocused = tsFocus == FocusHistory
-      borderMod = if isFocused then withAttr activeBorderAttr else id
+      borderMod = if isFocused then withAttr activeBorderAttr else withAttr inactiveBorderAttr
+      borderGlyph = if isFocused then unicodeBold else unicodeRounded
+      headerText = if isFocused
+                     then " [ 💬 Dialogue History (Active) ] "
+                     else " 💬 Dialogue History "
       items = if null tsHistory
-                then [txtWrap "No dialogue yet. Type a task below and press Enter."]
+                then [padAll 1 (withAttr dimAttr (txtWrap "No dialogue yet. Type a prompt below and press Enter to start."))]
                 else map renderDialogue tsHistory
   in borderMod $
-     withBorderStyle unicodeRounded $
-     borderWithLabel (txt (if isFocused then " [ Dialogue History (Active) ] " else " Dialogue History ")) $
+     withBorderStyle borderGlyph $
+     borderWithLabel (txt headerText) $
      viewport VpHistory Vertical (vBox items)
 
 renderDialogue :: DialogueItem -> Widget Name
 renderDialogue = \case
   DiUser u ->
     padBottom (Pad 1) $
-    vBox [ withAttr userAttr (txt "👤 User:")
-         , padLeft (Pad 2) (txtWrap u)
-         ]
+    vBox
+      [ hBox
+          [ withAttr userPromptAttr (txt "❯ ")
+          , withAttr userAttr (txt "You")
+          ]
+      , padLeft (Pad 2) $
+        withAttr userTextAttr (txtWrap u)
+      ]
+
   DiAssistant a ->
     padBottom (Pad 1) $
-    vBox [ withAttr asstAttr (txt "🤖 Assistant:")
-         , padLeft (Pad 2) (txtWrap a)
-         ]
+    vBox
+      [ hBox
+          [ withAttr asstAttr (txt "✦ ")
+          , withAttr asstAttr (txt "Assistant")
+          ]
+      , padLeft (Pad 2) $
+        renderAssistantBody a
+      ]
+
   DiSystem s ->
     padBottom (Pad 1) $
-    vBox [ withAttr sysAttr (txt "⚙️ System:")
-         , padLeft (Pad 2) (txtWrap s)
-         ]
+    padLeft (Pad 2) $
+    withAttr sysAttr (txtWrap ("⚙ " <> s))
+
   DiNotice n ->
     padBottom (Pad 1) $
-    withAttr noticeAttr (txtWrap ("⚠️ " <> n))
+    padLeft (Pad 2) $
+    withAttr noticeAttr (txtWrap ("! " <> n))
 
--- | Right panel showing the active/past tool calls.
+-- | Render assistant response text, formatting code blocks cleanly.
+renderAssistantBody :: Text -> Widget Name
+renderAssistantBody content =
+  let lns = T.lines content
+      blocks = groupCodeBlocks lns
+  in vBox (map renderBlock blocks)
+  where
+    renderBlock (Left textLines) =
+      withAttr asstTextAttr (txtWrap (T.unlines textLines))
+    renderBlock (Right (lang, codeLines)) =
+      padTop (Pad 1) $
+      padBottom (Pad 1) $
+      withBorderStyle unicodeRounded $
+      borderWithLabel (withAttr dimAttr (txt (if T.null lang then " code " else " " <> lang <> " "))) $
+      padLeftRight 1 $
+      withAttr codeBlockAttr (vBox (map (\l -> if T.null l then txt " " else txt l) codeLines))
+
+-- | Group text lines into prose and fenced code blocks.
+groupCodeBlocks :: [Text] -> [Either [Text] (Text, [Text])]
+groupCodeBlocks = go []
+  where
+    go acc [] = case reverse acc of
+      [] -> []
+      xs -> [Left xs]
+    go acc (l:ls)
+      | "```" `T.isPrefixOf` T.stripStart l =
+          let before = case reverse acc of
+                [] -> []
+                xs -> [Left xs]
+              lang = T.strip (T.drop 3 (T.stripStart l))
+              (code, rest) = break (\x -> "```" `T.isPrefixOf` T.stripStart x) ls
+              after = case rest of
+                (_:remLines) -> remLines
+                []           -> []
+          in before ++ [Right (lang, code)] ++ go [] after
+      | otherwise =
+          go (l:acc) ls
+
+--------------------------------------------------------------------------------
+-- Tool Activity Panel (Claude Code Activity Stream)
+--------------------------------------------------------------------------------
+
+-- | Right panel showing active and past tool calls.
 renderToolsPanel :: TuiState -> Widget Name
 renderToolsPanel TuiState{..} =
   let isFocused = tsFocus == FocusTools
-      borderMod = if isFocused then withAttr activeBorderAttr else id
+      borderMod = if isFocused then withAttr activeBorderAttr else withAttr inactiveBorderAttr
+      borderGlyph = if isFocused then unicodeBold else unicodeRounded
       total = length tsTools
-      headerText = " Tool Activity (" <> T.pack (show total) <> ")" <> (if isFocused then " (Active) " else " ")
+      headerText = if isFocused
+                     then " [ ⚡ Tool Activity (" <> T.pack (show total) <> ") (Active) ] "
+                     else " ⚡ Tool Activity (" <> T.pack (show total) <> ") "
       cards = if null tsTools
-                then [txtWrap "No tools executed yet."]
+                then [padAll 1 (withAttr dimAttr (txtWrap "No tools executed yet. Tool calls will stream here."))]
                 else zipWith (renderToolCard tsSelectedToolIndex isFocused) [0..] tsTools
   in borderMod $
-     withBorderStyle unicodeRounded $
+     withBorderStyle borderGlyph $
      borderWithLabel (txt headerText) $
      viewport VpTools Vertical (vBox cards)
+
+-- | Extract a clean, human-readable summary of tool arguments (Claude Code style).
+formatToolTarget :: Text -> Text -> Text
+formatToolTarget name rawArgs =
+  case Aeson.decodeStrict (TE.encodeUtf8 rawArgs) :: Maybe Value of
+    Just (Aeson.Object o) ->
+      case name of
+        "read_file" ->
+          case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
+            Just (p :: Text) -> p
+            Nothing          -> truncateText 30 rawArgs
+        "write_file" ->
+          case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
+            Just (p :: Text) -> p
+            Nothing          -> truncateText 30 rawArgs
+        "run_command" ->
+          case AesonTypes.parseMaybe (\obj -> obj .: "cmd") o of
+            Just (c :: Text) -> c
+            Nothing          -> truncateText 30 rawArgs
+        "list_dir" ->
+          case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
+            Just (p :: Text) -> p
+            Nothing          -> "."
+        _ -> truncateText 30 rawArgs
+    _ -> truncateText 30 rawArgs
+
+truncateText :: Int -> Text -> Text
+truncateText maxLen t
+  | T.length t > maxLen = T.take maxLen t <> "..."
+  | otherwise           = t
+
+formatResultSummary :: Maybe ToolResult -> (Text, AttrName)
+formatResultSummary = \case
+  Nothing ->
+    ("◌ running...", statusThinkingAttr)
+  Just (ToolSuccess out) ->
+    let chars = T.length out
+        linesCount = length (T.lines out)
+        tag = if linesCount > 1
+                then "✓ success (" <> T.pack (show linesCount) <> " lines)"
+                else "✓ success (" <> T.pack (show chars) <> " chars)"
+    in (tag, toolSuccessAttr)
+  Just (ToolError err) ->
+    ("✖ failed (" <> T.take 25 err <> ")", toolErrorAttr)
 
 renderToolCard :: Int -> Bool -> Int -> ToolItem -> Widget Name
 renderToolCard selectedIdx isToolsFocused idx ToolItem{..} =
   let isSelected = isToolsFocused && selectedIdx == idx
-      cardStyle  = if isSelected then unicodeBold else unicodeRounded
-      statusTag  = case tiResult of
-        Nothing                 -> withAttr statusRunningAttr (txt " [RUNNING]")
-        Just (ToolSuccess _)    -> withAttr statusIdleAttr (txt " [SUCCESS]")
-        Just (ToolError _)      -> withAttr statusErrorAttr (txt " [FAILED]")
-      header = hBox [withAttr toolNameAttr (txt (" " <> tiName <> " ")), statusTag]
-      body = if tiExpanded
-        then vBox
-          [ txt ("Arguments: " <> tiArgs)
-          , case tiResult of
-              Nothing -> emptyWidget
-              Just (ToolSuccess out) ->
-                padTop (Pad 1) $
-                vBox [withAttr statusIdleAttr (txt "Output:"), padLeft (Pad 2) (txtWrap out)]
-              Just (ToolError err) ->
-                padTop (Pad 1) $
-                vBox [withAttr statusErrorAttr (txt "Error:"), padLeft (Pad 2) (txtWrap err)]
-          ]
-        else vBox
-          [ txt ("Args: " <> if T.length tiArgs > 35 then T.take 35 tiArgs <> "..." else tiArgs)
-          , withAttr shortcutAttr (txt "(Press Enter/Space to expand)")
-          ]
+      cursorMark = if isSelected then withAttr userPromptAttr (txt "▸ ") else txt "  "
+      icon = withAttr toolIconAttr (txt "⏺ ")
+      nameWidget = withAttr toolNameAttr (txt tiName)
+      targetText = formatToolTarget tiName tiArgs
+      targetWidget = if T.null targetText
+                       then emptyWidget
+                       else withAttr toolTargetAttr (txt (" " <> targetText))
+      (statusTxt, statusAttr) = formatResultSummary tiResult
+      statusWidget = withAttr statusAttr (txt statusTxt)
+
+      headerLine = hBox [cursorMark, icon, nameWidget, targetWidget]
+      subLine = padLeft (Pad 4) $
+                hBox
+                  [ withAttr dimAttr (txt "⎿  ")
+                  , statusWidget
+                  , if tiExpanded
+                      then withAttr dimAttr (txt "  (expanded)")
+                      else withAttr dimAttr (txt "  (↵ details)")
+                  ]
+
+      expandedBody = if tiExpanded
+        then padLeft (Pad 4) $
+             padTop (Pad 1) $
+             vBox
+               [ withBorderStyle unicodeRounded $
+                 borderWithLabel (withAttr dimAttr (txt " Arguments ")) $
+                 padLeftRight 1 (withAttr codeBlockAttr (txtWrap tiArgs))
+               , case tiResult of
+                   Nothing ->
+                     padTop (Pad 1) (withAttr statusThinkingAttr (txt "Waiting for execution output..."))
+                   Just (ToolSuccess out) ->
+                     padTop (Pad 1) $
+                     withBorderStyle unicodeRounded $
+                     borderWithLabel (withAttr toolSuccessAttr (txt " Output ")) $
+                     padLeftRight 1 (withAttr codeBlockAttr (txtWrap (if T.null out then "(empty output)" else out)))
+                   Just (ToolError err) ->
+                     padTop (Pad 1) $
+                     withBorderStyle unicodeRounded $
+                     borderWithLabel (withAttr toolErrorAttr (txt " Error ")) $
+                     padLeftRight 1 (withAttr toolErrorAttr (txtWrap err))
+               ]
+        else emptyWidget
+
       cardWidget =
         padBottom (Pad 1) $
-        withBorderStyle cardStyle $
-        borderWithLabel header $
-        padAll 1 body
+        vBox [headerLine, subLine, expandedBody]
+
   in if isSelected then visible cardWidget else cardWidget
 
--- | Bottom panel for user prompt typing.
+--------------------------------------------------------------------------------
+-- Task Input Panel
+--------------------------------------------------------------------------------
+
+-- | Modern prompt input bar.
 renderInputPanel :: TuiState -> Widget Name
 renderInputPanel TuiState{..} =
   let isFocused = tsFocus == FocusInput
-      borderMod = if isFocused then withAttr activeBorderAttr else id
-      content = if T.null tsInputBuffer
-                  then withAttr shortcutAttr (txt "Type a task prompt and press Enter...")
-                  else txt tsInputBuffer
+      borderMod = if isFocused then withAttr activeBorderAttr else withAttr inactiveBorderAttr
+      borderGlyph = if isFocused then unicodeBold else unicodeRounded
+      promptLabel = if isFocused then " [ ❯ Prompt (Active) ] " else " ❯ Prompt "
+      prefix = withAttr userPromptAttr (txt "❯ ")
+      body = if T.null tsInputBuffer
+               then prefix <+> withAttr dimAttr (txt "Type a task prompt and press Enter...")
+               else prefix <+> withAttr userTextAttr (txt tsInputBuffer)
       cursor = if isFocused
-                 then showCursor VpInput (Location (T.length tsInputBuffer, 0))
+                 then showCursor VpInput (Location (T.length tsInputBuffer + 2, 0))
                  else id
   in borderMod $
-     withBorderStyle unicodeRounded $
-     borderWithLabel (txt (if isFocused then " [ Task Input (Focused) ] " else " Task Input ")) $
-     padAll 1 $
-     cursor content
+     withBorderStyle borderGlyph $
+     borderWithLabel (txt promptLabel) $
+     padLeftRight 1 $
+     cursor body
 
--- | Footer line showing key shortcuts.
+--------------------------------------------------------------------------------
+-- Footer & Help
+--------------------------------------------------------------------------------
+
+-- | Quiet, minimalist shortcut bar.
 renderFooter :: Widget Name
 renderFooter =
   hCenter $
-  withAttr shortcutAttr $
-  txt "[Enter] Send  │  [Tab] Switch Panel  │  [Esc/Ctrl+C] Cancel  │  [?] Help  │  [Ctrl+Q] Quit"
+  hBox
+    [ withAttr shortcutKeyAttr (txt "⇥ tab")
+    , withAttr dimAttr (txt " panels  •  ")
+    , withAttr shortcutKeyAttr (txt "↵ enter")
+    , withAttr dimAttr (txt " send  •  ")
+    , withAttr shortcutKeyAttr (txt "esc")
+    , withAttr dimAttr (txt " cancel  •  ")
+    , withAttr shortcutKeyAttr (txt "c")
+    , withAttr dimAttr (txt " clear  •  ")
+    , withAttr shortcutKeyAttr (txt "?")
+    , withAttr dimAttr (txt " help  •  ")
+    , withAttr shortcutKeyAttr (txt "^q")
+    , withAttr dimAttr (txt " quit")
+    ]
 
 -- | Help dialog overlay.
 helpOverlay :: Widget Name
 helpOverlay =
   center $
   withBorderStyle unicodeBold $
-  borderWithLabel (txt " Keyboard Shortcuts ") $
+  withAttr activeBorderAttr $
+  borderWithLabel (withAttr brandAttr (txt " ✻ Antigravity & Claude Keyboard Guide ")) $
   padAll 2 $
   vBox
-    [ withAttr titleAttr (txt "Navigation & Global:")
-    , txt "  Tab / BackTab   Switch focus between panels (Input, History, Tools)"
-    , txt "  Ctrl+Q          Quit the application"
-    , txt "  Esc / Ctrl+C    Cancel ongoing agent turn or close help"
-    , txt "  ?               Toggle this help dialog"
+    [ withAttr brandAttr (txt "Navigation & Global:")
+    , padLeft (Pad 2) $ vBox
+        [ hBox [withAttr shortcutKeyAttr (txt "Tab / Shift+Tab   "), withAttr dimAttr (txt "Switch panel focus (Input ⇄ History ⇄ Tools)")]
+        , hBox [withAttr shortcutKeyAttr (txt "Ctrl+Q            "), withAttr dimAttr (txt "Quit the application immediately")]
+        , hBox [withAttr shortcutKeyAttr (txt "Esc / Ctrl+C      "), withAttr dimAttr (txt "Cancel running agent turn or dismiss help")]
+        , hBox [withAttr shortcutKeyAttr (txt "? / F1            "), withAttr dimAttr (txt "Toggle this help overlay")]
+        ]
     , txt " "
-    , withAttr titleAttr (txt "Input Panel:")
-    , txt "  Enter           Submit task prompt to the agent"
-    , txt "  Ctrl+U          Clear input buffer"
+    , withAttr brandAttr (txt "Task Input:")
+    , padLeft (Pad 2) $ vBox
+        [ hBox [withAttr shortcutKeyAttr (txt "Enter             "), withAttr dimAttr (txt "Submit prompt to the autonomous agent")]
+        , hBox [withAttr shortcutKeyAttr (txt "Ctrl+U            "), withAttr dimAttr (txt "Clear current input line")]
+        ]
     , txt " "
-    , withAttr titleAttr (txt "History Panel:")
-    , txt "  Up / Down       Scroll conversation lines"
-    , txt "  PageUp / PageDn Scroll conversation pages"
-    , txt "  c               Clear conversation history"
+    , withAttr brandAttr (txt "Dialogue History:")
+    , padLeft (Pad 2) $ vBox
+        [ hBox [withAttr shortcutKeyAttr (txt "Up / Down         "), withAttr dimAttr (txt "Scroll conversation 1 line")]
+        , hBox [withAttr shortcutKeyAttr (txt "PgUp / PgDn       "), withAttr dimAttr (txt "Scroll conversation 5 lines")]
+        , hBox [withAttr shortcutKeyAttr (txt "c                 "), withAttr dimAttr (txt "Clear conversation history")]
+        , hBox [withAttr shortcutKeyAttr (txt "q                 "), withAttr dimAttr (txt "Quit application (when idle)")]
+        ]
     , txt " "
-    , withAttr titleAttr (txt "Tools Panel:")
-    , txt "  Up / Down       Select tool card"
-    , txt "  Enter / Space   Expand or collapse tool output details"
+    , withAttr brandAttr (txt "Tool Activity:")
+    , padLeft (Pad 2) $ vBox
+        [ hBox [withAttr shortcutKeyAttr (txt "Up / Down         "), withAttr dimAttr (txt "Navigate tool execution cards")]
+        , hBox [withAttr shortcutKeyAttr (txt "Enter / Space     "), withAttr dimAttr (txt "Expand / collapse tool arguments & outputs")]
+        , hBox [withAttr shortcutKeyAttr (txt "q                 "), withAttr dimAttr (txt "Quit application (when idle)")]
+        ]
     ]
