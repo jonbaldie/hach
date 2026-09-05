@@ -89,7 +89,7 @@ runTui ioEnv initialPrompt = do
         , appStartEvent   = do
             -- If an initial prompt was provided on CLI, trigger its execution
             case initialPrompt of
-              Just p  -> triggerAgentRun eventChan workerVar ioEnv p
+              Just p  -> triggerAgentRun eventChan workerVar ioEnv [DiUser p]
               Nothing -> pure ()
         , appAttrMap      = const tuiAttrMap
         }
@@ -102,14 +102,25 @@ runTui ioEnv initialPrompt = do
   mWorker <- atomically $ readTVar workerVar
   mapM_ cancel mWorker
 
+-- | Convert dialogue history into LLM messages for multi-turn context.
+dialogueToMessages :: Text -> [DialogueItem] -> [Message]
+dialogueToMessages sysPrompt items =
+  SystemMsg sysPrompt : concatMap itemToMessages items
+  where
+    itemToMessages = \case
+      DiUser u      -> [UserMsg u]
+      DiAssistant a -> [AssistantMsg (Just a) []]
+      DiSystem s    -> [SystemMsg s]
+      DiNotice _    -> []
+
 -- | Trigger background agent task execution.
 triggerAgentRun
   :: BChan AgentEvent
   -> TVar (Maybe (Async ()))
   -> IOEnv
-  -> Text
+  -> [DialogueItem]
   -> EventM Name TuiState ()
-triggerAgentRun eventChan workerVar ioEnv prompt = liftIO $ do
+triggerAgentRun eventChan workerVar ioEnv historyItems = liftIO $ do
   -- Cancel existing worker if any
   mOldWorker <- atomically $ do
     w <- readTVar workerVar
@@ -128,10 +139,7 @@ triggerAgentRun eventChan workerVar ioEnv prompt = liftIO $ do
           , cfgSystemPrompt = Just sysPrompt
           , cfgMaxTurns     = 10
           }
-        initHistory =
-          [ SystemMsg sysPrompt
-          , UserMsg prompt
-          ]
+        initHistory = dialogueToMessages sysPrompt historyItems
 
     res <- try (foldAgentProgram (tuiAlgebra eventChan ioEnv) (agentLoop agentConfig allToolDefs initHistory))
     case res of
@@ -172,8 +180,8 @@ handleBrickEvent eventChan workerVar ioEnv = \case
               writeTVar workerVar Nothing
               pure w
             mapM_ cancel mWorker
-          ActionRunAgent prompt ->
-            triggerAgentRun eventChan workerVar ioEnv prompt
+          ActionRunAgent _prompt ->
+            triggerAgentRun eventChan workerVar ioEnv (tsHistory nextState)
       Nothing ->
         pure ()
 

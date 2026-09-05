@@ -131,3 +131,28 @@ spec = do
         let s1 = fst $ updateTui (EvHarness (EvError "API timeout")) baseState
         tsStatus s1 `shouldBe` StatusError "API timeout"
         last (tsHistory s1) `shouldBe` DiNotice "Error: API timeout"
+
+    describe "Multi-Turn Dialogue User Flow" $ do
+      it "allows typing into input box after receiving assistant response to first user message" $ do
+        let s0 = baseState { tsInputBuffer = "First question" }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+            s2 = fst $ updateTui (EvHarness (EvDone "First answer")) s1
+        tsFocus s2 `shouldBe` FocusInput
+        let (s3, _) = updateTui (EvUserKey (KeyChar 'a')) s2
+        tsInputBuffer s3 `shouldBe` "a"
+
+      it "restores FocusInput on EvError so user can retry" $ do
+        let s0 = baseState { tsInputBuffer = "Failing task" }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+            s2 = fst $ updateTui (EvHarness (EvError "Network failed")) s1
+        tsFocus s2 `shouldBe` FocusInput
+
+      it "accumulates full conversation history across multiple turns" $ do
+        let s0 = baseState { tsInputBuffer = "First question" }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+            s2 = fst $ updateTui (EvHarness (EvDone "First answer")) s1
+            (s3, _) = updateTui (EvUserKey (KeyChar 'M')) s2
+            (s4, _) = updateTui (EvUserKey (KeyChar '2')) s3
+            (s5, actions) = updateTui (EvUserKey KeyEnter) s4
+        tsHistory s5 `shouldBe` [DiUser "First question", DiAssistant "First answer", DiUser "M2"]
+        actions `shouldBe` [ActionRunAgent "M2"]

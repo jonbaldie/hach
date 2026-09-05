@@ -211,12 +211,13 @@ handleAgentEvent event state@TuiState{..} = case event of
           if not (null tsHistory) && last tsHistory == DiAssistant ans
             then tsHistory
             else tsHistory ++ [DiAssistant ans]
-    in state { tsHistory = finalHistory, tsStatus = StatusFinished }
+    in state { tsHistory = finalHistory, tsStatus = StatusFinished, tsFocus = FocusInput }
 
   EvError err ->
     state
       { tsHistory = tsHistory ++ [DiNotice ("Error: " <> err)]
       , tsStatus  = StatusError err
+      , tsFocus   = FocusInput
       }
 
   EvTurnComplete _ ->
