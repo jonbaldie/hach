@@ -8,7 +8,7 @@ module Agent.TUI.State
   , toggleToolExpanded
   ) where
 
-import Agent.Skills (Skill(..), injectSkillsIntoPrompt, parseSkillInvocations)
+import Agent.Skills (Skill(..), injectSkillsIntoPrompt, parseSkillInvocations, skillInvocationCompletion)
 import Agent.TUI.Types
 import Agent.TUI.UI (formatTokens)
 import Agent.Types (AgentEvent(..), GoalState(..), GoalStatus(..), GoalVerdict(..), TokenUsage(..), ToolResult, initialGoalState)
@@ -37,12 +37,22 @@ maxGoalConditionLength = 4000
 goalClearAliases :: [T.Text]
 goalClearAliases = ["clear", "stop", "off", "reset", "none", "cancel"]
 
+-- | Whether the agent harness is currently busy running an inference turn or tool.
+isBusy :: TuiStatus -> Bool
+isBusy = \case
+  StatusThinking      -> True
+  StatusRunningTool _ -> True
+  _                   -> False
+
 -- | Handle submitting a user task prompt.
 handleSubmitPrompt :: T.Text -> TuiState -> (TuiState, [TuiAction])
 handleSubmitPrompt rawPrompt state
   | T.null trimmed = (state, [])
   | trimmed == "/clear" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          busy = isBusy (tsStatus state)
+          actions = if busy then [ActionCancelAgent] else []
+          newStatus = if busy then StatusIdle else tsStatus state
       in ( state { tsHistory            = []
                  , tsHistoryScroll      = 0
                  , tsInputBuffer        = ""
@@ -50,8 +60,10 @@ handleSubmitPrompt rawPrompt state
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
                  , tsGoalState          = Nothing
+                 , tsStatus             = newStatus
+                 , tsCancelRequested    = if busy then True else tsCancelRequested state
                  }
-         , []
+         , actions
          )
   | trimmed == "/help" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
@@ -228,7 +240,14 @@ handleUserKey key state@TuiState{..} =
           (state { tsShowHelp = not tsShowHelp }, [])
 
     KeyTab ->
-      (state { tsFocus = nextFocus tsFocus }, [])
+      -- Accept the inline skill-completion ghost text when the user is
+      -- typing a slash-command prefix in the input box; otherwise cycle
+      -- panel focus as usual.
+      case skillInvocationCompletion tsSkills tsInputBuffer of
+        Just suffix | tsFocus == FocusInput ->
+          (state { tsInputBuffer = tsInputBuffer `T.append` suffix }, [])
+        _ ->
+          (state { tsFocus = nextFocus tsFocus }, [])
 
     KeyBackTab ->
       (state { tsFocus = prevFocus tsFocus }, [])
@@ -251,11 +270,6 @@ handleUserKey key state@TuiState{..} =
 
       FocusTools ->
         handleToolsKey key state
-  where
-    isBusy = \case
-      StatusThinking      -> True
-      StatusRunningTool _ -> True
-      _                   -> False
 
 -- | Key handling inside the input text area.
 handleInputKey :: UserKey -> TuiState -> (TuiState, [TuiAction])
@@ -302,6 +316,9 @@ handleInputKey key state@TuiState{..} = case key of
     (state { tsInputBuffer = tsInputBuffer `T.snoc` c }, [])
 
   KeyBackspace ->
+    (state { tsInputBuffer = if T.null tsInputBuffer then "" else T.init tsInputBuffer }, [])
+
+  KeyDelete ->
     (state { tsInputBuffer = if T.null tsInputBuffer then "" else T.init tsInputBuffer }, [])
 
   KeyCtrl 'u' ->

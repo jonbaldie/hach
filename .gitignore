@@ -3,3 +3,4 @@ dist-newstyle/
 .DS_Store
 *.o
 *.hi
+.claude/

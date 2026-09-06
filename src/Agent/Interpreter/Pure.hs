@@ -6,6 +6,7 @@ module Agent.Interpreter.Pure
   , emptyMockEnv
   , runPure
   , pureAlgebra
+  , pureStep
   ) where
 
 import Agent.Core
@@ -21,7 +22,7 @@ import System.FilePath (takeDirectory)
 
 -- | State environment for pure simulation and testing of the agent.
 data MockEnv = MockEnv
-  { mockLLMSteps          :: ![[Message] -> [ToolDef] -> AssistantResponse]
+  { mockLLMSteps          :: ![[Message] -> [ToolDef] -> Either Text AssistantResponse]
   , mockFiles             :: !(Map FilePath Text)
   , mockCommandOutputs    :: !(Map Text (Int, Text, Text)) -- ^ (exitCode, stdout, stderr)
   , mockEvents            :: ![AgentEvent]
@@ -37,6 +38,10 @@ emptyMockEnv = MockEnv
   , mockEvents          = []
   , mockGoalEvaluations = []
   }
+
+-- | Helper to lift a successful pure assistant response function into 'Either Text AssistantResponse'.
+pureStep :: ([Message] -> [ToolDef] -> AssistantResponse) -> ([Message] -> [ToolDef] -> Either Text AssistantResponse)
+pureStep f msgs tools = Right (f msgs tools)
 
 -- Simple state monad for pure interpretation
 newtype PureM a = PureM { runPureM :: MockEnv -> (a, MockEnv) }
@@ -75,7 +80,7 @@ pureAlgebra = AgentAlgebra
           putEnv env { mockLLMSteps = rest }
           pure (stepFn msgs tools)
         [] ->
-          pure $ AssistantResponse (Just "Mock finished.") [] Nothing
+          pure $ Right (AssistantResponse (Just "Mock finished.") [] Nothing)
 
   , interpTool = \call -> do
       case functionName call of

@@ -153,13 +153,7 @@ ioAlgebra IOEnv{..} = AgentAlgebra
             , reqTools      = tools
             , reqToolChoice = Just "auto"
             }
-      res <- sendChatCompletion ioManager ioApiKey req
-      case res of
-        Right asstResp -> pure asstResp
-        Left err       -> do
-          TIO.putStrLn ("[API Error]: " <> err)
-          -- Yield an empty assistant message indicating failure so harness loop can conclude
-          pure $ AssistantResponse (Just ("[API Error]: " <> err)) [] Nothing
+      sendChatCompletion ioManager ioApiKey req
 
   , interpTool = \call ->
       executeCodingTool ioWorkspace call

@@ -119,6 +119,14 @@ spec = do
           ToolError err -> err `shouldSatisfy` ("multiple" `T.isInfixOf`)
           ToolSuccess _ -> expectationFailure "Expected error when target content occurs multiple times"
 
+      it "returns ToolError and does not crash when old_content is empty" $ do
+        let targetFile = testSandbox </> "sample.txt"
+        _ <- executeWriteFile "." (WriteFileArgs targetFile "foo bar baz")
+        res <- executeReplaceFileContent "." (ReplaceFileContentArgs targetFile "" "qux")
+        case res of
+          ToolError err -> err `shouldSatisfy` ("cannot be empty" `T.isInfixOf`)
+          ToolSuccess _ -> expectationFailure "Expected error when old_content is empty"
+
       it "finds files matching glob/extension pattern" $ do
         _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "A.hs") "module A where")
         _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "B.txt") "notes")

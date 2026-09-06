@@ -3,11 +3,11 @@
 module Agent.TUISpec (spec) where
 
 import Agent.Skills (Skill(..), SkillSource(..))
-import Agent.TUI.App (vtyToUserKey)
+import Agent.TUI.App (dialogueToMessages, vtyToUserKey)
 import Agent.TUI.State
 import Agent.TUI.Types
 import Agent.TUI.UI (formatTokens)
-import Agent.Types (AgentEvent(..), GoalState(..), GoalStatus(..), GoalVerdict(..), TokenUsage(..), ToolResult(..), initialGoalState)
+import Agent.Types (AgentEvent(..), GoalState(..), GoalStatus(..), GoalVerdict(..), Message(..), TokenUsage(..), ToolResult(..), initialGoalState)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Graphics.Vty as Vty
@@ -27,6 +27,11 @@ spec = do
       it "handles backspace correctly" $ do
         let s1 = baseState { tsInputBuffer = "Hello" }
             s2 = fst $ updateTui (EvUserKey KeyBackspace) s1
+        tsInputBuffer s2 `shouldBe` "Hell"
+
+      it "handles delete key in input buffer" $ do
+        let s1 = baseState { tsInputBuffer = "Hello" }
+            s2 = fst $ updateTui (EvUserKey KeyDelete) s1
         tsInputBuffer s2 `shouldBe` "Hell"
 
       it "handles Ctrl+U to clear the input buffer" $ do
@@ -338,6 +343,14 @@ spec = do
         tsInputBuffer s1 `shouldBe` ""
         actions `shouldBe` []
 
+      it "cancels running agent turn when /clear is submitted while busy" $ do
+        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
+            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
+        tsHistory s1 `shouldBe` []
+        tsInputBuffer s1 `shouldBe` ""
+        tsStatus s1 `shouldBe` StatusIdle
+        actions `shouldBe` [ActionCancelAgent]
+
       it "handles /help locally by toggling help dialog without running agent" $ do
         let s0 = baseState { tsShowHelp = False, tsInputBuffer = "/help" }
             (s1, actions) = updateTui (EvUserKey KeyEnter) s0
@@ -371,6 +384,11 @@ spec = do
             "<skill name=\"to-spec\">" `T.isInfixOf` prompt && "create auth" `T.isInfixOf` prompt
           _ -> False
         tsHistory s1 `shouldSatisfy` \h -> any (\case DiUser u -> "/to-spec create auth" `T.isInfixOf` u; _ -> False) h
+
+      it "does not duplicate user message in dialogueToMessages when skills or notices are in history" $ do
+        let items = [DiUser "/to-spec auth", DiNotice "Activated skill: to-spec"]
+            msgs = dialogueToMessages "system prompt" "expanded <skill> auth" items
+        msgs `shouldBe` [SystemMsg "system prompt", UserMsg "expanded <skill> auth"]
 
     describe "/goal command" $ do
       it "sets a goal and emits ActionRunGoal with the condition" $ do
@@ -539,3 +557,43 @@ spec = do
             s0 = baseState { tsGoalState = Just gs }
             s1 = fst $ updateTui (EvHarness (EvGoalCleared "tests pass")) s0
         tsGoalState s1 `shouldBe` Nothing
+
+    describe "Skill Invocation Autocomplete (Tab accepts ghost text)" $ do
+      let goal = Skill "goal" "Goal skill" "body" "/p" SkillGlobal
+          skillState = baseState { tsSkills = Map.fromList [("goal", goal)] }
+
+      it "accepts the inline completion on Tab when a skill prefix is being typed" $ do
+        let s0 = skillState { tsInputBuffer = "/go" }
+            (s1, actions) = updateTui (EvUserKey KeyTab) s0
+        tsInputBuffer s1 `shouldBe` "/goal"
+        actions `shouldBe` []
+
+      it "keeps focus on the input box when Tab accepts a completion" $ do
+        let s0 = skillState { tsInputBuffer = "/go" }
+            (s1, _) = updateTui (EvUserKey KeyTab) s0
+        tsFocus s1 `shouldBe` FocusInput
+
+      it "falls back to cycling focus on Tab when no completion is available" $ do
+        let s0 = skillState { tsInputBuffer = "ordinary text" }
+            (s1, _) = updateTui (EvUserKey KeyTab) s0
+        tsFocus s1 `shouldBe` FocusHistory
+
+      it "falls back to cycling focus on Tab when the slash-command is fully typed" $ do
+        let s0 = skillState { tsInputBuffer = "/goal" }
+            (s1, _) = updateTui (EvUserKey KeyTab) s0
+        tsFocus s1 `shouldBe` FocusHistory
+        tsInputBuffer s1 `shouldBe` "/goal"
+
+      it "falls back to cycling focus on Tab when the input buffer is empty" $ do
+        let (s1, _) = updateTui (EvUserKey KeyTab) skillState
+        tsFocus s1 `shouldBe` FocusHistory
+
+      it "preserves leading prompt text when accepting a completion" $ do
+        let s0 = skillState { tsInputBuffer = "please run /go" }
+            (s1, _) = updateTui (EvUserKey KeyTab) s0
+        tsInputBuffer s1 `shouldBe` "please run /goal"
+
+      it "cycles focus on Tab from non-input panels even with skills present" $ do
+        let s0 = skillState { tsFocus = FocusHistory, tsInputBuffer = "/go" }
+            (s1, _) = updateTui (EvUserKey KeyTab) s0
+        tsFocus s1 `shouldBe` FocusTools

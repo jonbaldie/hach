@@ -466,31 +466,33 @@ executeWriteFile root (WriteFileArgs path content) = do
           pure $ ToolSuccess ("Successfully wrote " <> T.pack (show (T.length content)) <> " characters to " <> T.pack path)
 
 executeReplaceFileContent :: FilePath -> ReplaceFileContentArgs -> IO ToolResult
-executeReplaceFileContent root (ReplaceFileContentArgs path oldContent newContent) = do
-  pathRes <- resolveWorkspacePath root path
-  case pathRes of
-    Left err -> pure $ ToolError (T.pack err)
-    Right fullPath -> do
-      exists <- doesFileExist fullPath
-      if not exists
-        then pure $ ToolError ("File not found: " <> T.pack path)
-        else do
-          readRes <- try (BS.readFile fullPath) :: IO (Either SomeException BS.ByteString)
-          case readRes of
-            Left ex -> pure $ ToolError ("Read error: " <> T.pack (show ex))
-            Right bytes -> do
-              let txt = TE.decodeUtf8With TE.lenientDecode bytes
-                  matches = T.count oldContent txt
-              if matches == 0
-                then pure $ ToolError ("Target content not found in '" <> T.pack path <> "'.")
-                else if matches > 1
-                  then pure $ ToolError ("Target content found multiple (" <> T.pack (show matches) <> ") times in '" <> T.pack path <> "'; replacement requires a unique match.")
-                  else do
-                    let updated = T.replace oldContent newContent txt
-                    writeRes <- try (BS.writeFile fullPath (TE.encodeUtf8 updated)) :: IO (Either SomeException ())
-                    case writeRes of
-                      Left ex -> pure $ ToolError ("Write error: " <> T.pack (show ex))
-                      Right () -> pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
+executeReplaceFileContent root (ReplaceFileContentArgs path oldContent newContent)
+  | T.null oldContent = pure $ ToolError "The 'old_content' parameter cannot be empty."
+  | otherwise = do
+      pathRes <- resolveWorkspacePath root path
+      case pathRes of
+        Left err -> pure $ ToolError (T.pack err)
+        Right fullPath -> do
+          exists <- doesFileExist fullPath
+          if not exists
+            then pure $ ToolError ("File not found: " <> T.pack path)
+            else do
+              readRes <- try (BS.readFile fullPath) :: IO (Either SomeException BS.ByteString)
+              case readRes of
+                Left ex -> pure $ ToolError ("Read error: " <> T.pack (show ex))
+                Right bytes -> do
+                  let txt = TE.decodeUtf8With TE.lenientDecode bytes
+                      matches = T.count oldContent txt
+                  if matches == 0
+                    then pure $ ToolError ("Target content not found in '" <> T.pack path <> "'.")
+                    else if matches > 1
+                      then pure $ ToolError ("Target content found multiple (" <> T.pack (show matches) <> ") times in '" <> T.pack path <> "'; replacement requires a unique match.")
+                      else do
+                        let updated = T.replace oldContent newContent txt
+                        writeRes <- try (BS.writeFile fullPath (TE.encodeUtf8 updated)) :: IO (Either SomeException ())
+                        case writeRes of
+                          Left ex -> pure $ ToolError ("Write error: " <> T.pack (show ex))
+                          Right () -> pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
 
 executeRunCommand :: FilePath -> RunCommandArgs -> IO ToolResult
 executeRunCommand root (RunCommandArgs cmd) = do

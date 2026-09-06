@@ -24,7 +24,7 @@ spec = do
 
   describe "agentLoop with Pure Interpreter" $ do
     it "completes immediately when model returns direct answer" $ do
-      let step1 _ _ = AssistantResponse (Just "Hello world!") [] Nothing
+      let step1 _ _ = Right $ AssistantResponse (Just "Hello world!") [] Nothing
           env = emptyMockEnv { mockLLMSteps = [step1] }
           initHist = [UserMsg "Hi"]
           ((result, finalHist), endEnv) = runPure env (agentLoop baseConfig [] initHist)
@@ -42,14 +42,14 @@ spec = do
             , callArgsRaw = "{\"path\":\"hello.txt\"}"
             }
           -- Turn 1: model calls read_file
-          step1 _ _ = AssistantResponse Nothing [toolCall1] Nothing
+          step1 _ _ = Right $ AssistantResponse Nothing [toolCall1] Nothing
           -- Turn 2: model sees file content and completes
           step2 hist _ =
             case last hist of
               ToolMsg "call_1" "read_file" content ->
-                AssistantResponse (Just ("The file says: " <> content)) [] Nothing
+                Right $ AssistantResponse (Just ("The file says: " <> content)) [] Nothing
               _ ->
-                AssistantResponse (Just "Failed to get tool output") [] Nothing
+                Right $ AssistantResponse (Just "Failed to get tool output") [] Nothing
 
           env = emptyMockEnv
             { mockLLMSteps = [step1, step2]
@@ -80,8 +80,8 @@ spec = do
             , functionName = "write_file"
             , callArgsRaw = "{\"path\":\"out.txt\",\"content\":\"Pearls in Haskell\"}"
             }
-          step1 _ _ = AssistantResponse Nothing [writeCall] Nothing
-          step2 _ _ = AssistantResponse (Just "Wrote successfully!") [] Nothing
+          step1 _ _ = Right $ AssistantResponse Nothing [writeCall] Nothing
+          step2 _ _ = Right $ AssistantResponse (Just "Wrote successfully!") [] Nothing
           env = emptyMockEnv { mockLLMSteps = [step1, step2] }
           initHist = [UserMsg "Write out.txt"]
           ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
@@ -91,7 +91,7 @@ spec = do
 
     it "propagates token usage metadata in EvLLMResponse" $ do
       let usage = TokenUsage 150 40 190
-          step1 _ _ = AssistantResponse (Just "Tokens measured") [] (Just usage)
+          step1 _ _ = Right $ AssistantResponse (Just "Tokens measured") [] (Just usage)
           env = emptyMockEnv { mockLLMSteps = [step1] }
           initHist = [UserMsg "Check tokens"]
           (_, endEnv) = runPure env (agentLoop baseConfig [] initHist)
@@ -100,12 +100,12 @@ spec = do
 
     it "terminates when maximum turns are reached" $ do
       let loopConfig = baseConfig { cfgMaxTurns = 2 }
-          infiniteToolCall = ToolCall
+      let infiniteToolCall = ToolCall
             { callId = "loop_call"
             , functionName = "read_file"
             , callArgsRaw = "{\"path\":\"hello.txt\"}"
             }
-          stepLoop _ _ = AssistantResponse Nothing [infiniteToolCall] Nothing
+          stepLoop _ _ = Right $ AssistantResponse Nothing [infiniteToolCall] Nothing
           -- Model keeps calling the tool infinitely
           env = emptyMockEnv
             { mockLLMSteps = repeat stepLoop
@@ -115,13 +115,23 @@ spec = do
 
       result `shouldBe` AgentMaxTurnsReached 2
 
+    it "terminates with AgentFailed when model returns an error" $ do
+      let stepError _ _ = Left "401 Unauthorized"
+          env = emptyMockEnv { mockLLMSteps = [stepError] }
+          initHist = [UserMsg "Fail please"]
+          ((result, finalHist), endEnv) = runPure env (agentLoop baseConfig [] initHist)
+
+      result `shouldBe` AgentFailed "401 Unauthorized"
+      finalHist `shouldBe` initHist
+      mockEvents endEnv `shouldContain` [EvError "401 Unauthorized"]
+
   describe "goalLoop with Pure Interpreter" $ do
     let goalConfig = baseConfig { cfgMaxTurns = 20 }
         condition = "All tests pass"
 
     it "continues when evaluator says not yet met, then stops when met" $ do
-      let step1 _ _ = AssistantResponse (Just "Working on it.") [] Nothing
-          step2 _ _ = AssistantResponse (Just "All tests pass now.") [] Nothing
+      let step1 _ _ = Right $ AssistantResponse (Just "Working on it.") [] Nothing
+          step2 _ _ = Right $ AssistantResponse (Just "All tests pass now.") [] Nothing
           eval1 _ _ = GoalEvaluation GoalNotYetMet "Tests not run yet."
           eval2 _ _ = GoalEvaluation GoalMet "Tests pass."
           env = emptyMockEnv
@@ -138,7 +148,7 @@ spec = do
       mockEvents endEnv `shouldContain` [EvGoalAchieved condition]
 
     it "stops and marks goal failed when evaluator says impossible" $ do
-      let step1 _ _ = AssistantResponse (Just "I cannot do this.") [] Nothing
+      let step1 _ _ = Right $ AssistantResponse (Just "I cannot do this.") [] Nothing
           eval1 _ _ = GoalEvaluation GoalImpossible "The test framework is missing."
           env = emptyMockEnv
             { mockLLMSteps = [step1]
@@ -154,7 +164,7 @@ spec = do
       mockEvents endEnv `shouldContain` [EvGoalFailed condition "The test framework is missing."]
 
     it "stops with block cap warning when agent makes no progress for consecutive turns" $ do
-      let step _ _ = AssistantResponse (Just "Thinking...") [] Nothing
+      let step _ _ = Right $ AssistantResponse (Just "Thinking...") [] Nothing
           eval _ _ = GoalEvaluation GoalNotYetMet "Not done yet."
           cap = 2
           env = emptyMockEnv
@@ -177,13 +187,13 @@ spec = do
             , callArgsRaw = "{\"path\":\"hello.txt\"}"
             }
           -- Turn 1: agent completes without tools (no progress)
-          step1 _ _ = AssistantResponse (Just "Thinking.") [] Nothing
+          step1 _ _ = Right $ AssistantResponse (Just "Thinking.") [] Nothing
           -- Turn 2: agent calls a tool (progress — resets counter)
-          step2 _ _ = AssistantResponse Nothing [toolCall] Nothing
+          step2 _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
           -- Turn 3: agent completes without tools (no progress again)
-          step3 _ _ = AssistantResponse (Just "Done reading.") [] Nothing
+          step3 _ _ = Right $ AssistantResponse (Just "Done reading.") [] Nothing
           -- Turn 4: agent completes without tools, goal met
-          step4 _ _ = AssistantResponse (Just "All done.") [] Nothing
+          step4 _ _ = Right $ AssistantResponse (Just "All done.") [] Nothing
           eval1 _ _ = GoalEvaluation GoalNotYetMet "Keep going."
           eval2 _ _ = GoalEvaluation GoalNotYetMet "Almost there."
           eval3 _ _ = GoalEvaluation GoalMet "Done."
@@ -204,7 +214,7 @@ spec = do
       gsStatus goalState `shouldBe` GoalAchieved
 
     it "clears the goal when a turn fails with an authentication error" $ do
-      let step1 _ _ = AssistantResponse (Just "[API Error]: 401 Unauthorized") [] Nothing
+      let step1 _ _ = Right $ AssistantResponse (Just "[API Error]: 401 Unauthorized") [] Nothing
           env = emptyMockEnv
             { mockLLMSteps = [step1]
             , mockGoalEvaluations = []
@@ -219,7 +229,7 @@ spec = do
         [EvGoalFailed condition "[API Error]: 401 Unauthorized"]
 
     it "clears the goal when a turn fails with a credit balance error" $ do
-      let step1 _ _ = AssistantResponse (Just "[API Error]: 402 Payment required, credit balance exhausted") [] Nothing
+      let step1 _ _ = Right $ AssistantResponse (Just "[API Error]: 402 Payment required, credit balance exhausted") [] Nothing
           env = emptyMockEnv
             { mockLLMSteps = [step1]
             , mockGoalEvaluations = []
@@ -231,7 +241,7 @@ spec = do
       gsStatus goalState `shouldBe` GoalFailed
 
     it "keeps the goal active when a turn fails with a transient error" $ do
-      let step1 _ _ = AssistantResponse (Just "[API Error]: 429 Too many requests") [] Nothing
+      let step1 _ _ = Right $ AssistantResponse (Just "[API Error]: 429 Too many requests") [] Nothing
           env = emptyMockEnv
             { mockLLMSteps = [step1]
             , mockGoalEvaluations = []
@@ -243,7 +253,7 @@ spec = do
       gsStatus goalState `shouldBe` GoalActive
 
     it "logs EvGoalSet when the goal loop starts" $ do
-      let step1 _ _ = AssistantResponse (Just "Done.") [] Nothing
+      let step1 _ _ = Right $ AssistantResponse (Just "Done.") [] Nothing
           eval1 _ _ = GoalEvaluation GoalMet "Done."
           env = emptyMockEnv
             { mockLLMSteps = [step1]
@@ -256,10 +266,10 @@ spec = do
       mockEvents endEnv `shouldContain` [EvGoalSet condition]
 
     it "logs EvGoalEvaluated for each evaluation" $ do
-      let step1 _ _ = AssistantResponse (Just "Working.") [] Nothing
+      let step1 _ _ = Right $ AssistantResponse (Just "Working.") [] Nothing
           eval1 _ _ = GoalEvaluation GoalNotYetMet "Not done."
           eval2 _ _ = GoalEvaluation GoalMet "Done."
-          step2 _ _ = AssistantResponse (Just "Done.") [] Nothing
+          step2 _ _ = Right $ AssistantResponse (Just "Done.") [] Nothing
           env = emptyMockEnv
             { mockLLMSteps = [step1, step2]
             , mockGoalEvaluations = [eval1, eval2]
@@ -272,13 +282,13 @@ spec = do
       mockEvents endEnv `shouldContain` [EvGoalEvaluated GoalMet "Done."]
 
     it "injects evaluator reason as guidance for the next turn" $ do
-      let step1 _ _ = AssistantResponse (Just "Working.") [] Nothing
+      let step1 _ _ = Right $ AssistantResponse (Just "Working.") [] Nothing
           step2 hist _ =
             case last hist of
               UserMsg guidance ->
-                AssistantResponse (Just ("Received: " <> guidance)) [] Nothing
+                Right $ AssistantResponse (Just ("Received: " <> guidance)) [] Nothing
               _ ->
-                AssistantResponse (Just "No guidance received.") [] Nothing
+                Right $ AssistantResponse (Just "No guidance received.") [] Nothing
           eval1 _ _ = GoalEvaluation GoalNotYetMet "Run the tests."
           eval2 _ _ = GoalEvaluation GoalMet "Tests pass."
           env = emptyMockEnv

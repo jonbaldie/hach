@@ -4,6 +4,7 @@
 module Agent.TUI.App
   ( runTui
   , vtyToUserKey
+  , dialogueToMessages
   ) where
 
 import Agent.Core
@@ -62,12 +63,7 @@ tuiAlgebra chan IOEnv{..} = AgentAlgebra
             , reqTools      = tools
             , reqToolChoice = Just "auto"
             }
-      res <- sendChatCompletion ioManager ioApiKey req
-      case res of
-        Right asstResp -> pure asstResp
-        Left err       -> do
-          writeBChan chan (EvError err)
-          pure $ AssistantResponse (Just ("[API Error]: " <> err)) [] Nothing
+      sendChatCompletion ioManager ioApiKey req
 
   , interpTool = \call ->
       executeCodingTool ioWorkspace call
@@ -125,12 +121,12 @@ runTui ioEnv initialPrompt = do
         , appStartEvent   = do
             -- If an initial prompt was provided on CLI, trigger its execution
             case initialPrompt of
-              Just p  -> do
+              Just p | not (T.null (T.strip p)) -> do
                 currentState <- get
                 let (cleaned, invoked) = parseSkillInvocations (tsSkills currentState) (T.strip p)
                     finalP = injectSkillsIntoPrompt invoked (if T.null cleaned then p else cleaned)
                 triggerAgentRun eventChan workerVar ioEnv sysPrompt finalP [DiUser p]
-              Nothing -> pure ()
+              _ -> pure ()
         , appAttrMap      = const tuiAttrMap
         }
 
@@ -157,14 +153,11 @@ dialogueToMessages sysPrompt currentPrompt items =
   where
     dropLastUser [] = []
     dropLastUser xs =
-      -- Skip trailing DiNotice items (e.g. "Goal set:", "Activated skill:")
-      -- then drop the last DiUser so it isn't sent twice (once from history,
-      -- once as currentPrompt).
-      case dropWhile isNotice (reverse xs) of
-        (DiUser _ : rest) -> reverse rest
-        _                 -> xs
-    isNotice (DiNotice _) = True
-    isNotice _            = False
+      let rev = reverse xs
+          (notices, rest) = span (\case DiNotice _ -> True; _ -> False) rev
+      in case rest of
+           (DiUser _ : prior) -> reverse (notices ++ prior)
+           _                  -> xs
 
     itemToMessages = \case
       DiUser u      -> [UserMsg u]
