@@ -280,7 +280,7 @@ renderTranscriptPanel state@TuiState{..} =
 
 -- | Render all items in the transcript in chronological emission order.
 renderTranscriptItems :: TuiState -> [Widget Name]
-renderTranscriptItems state@TuiState{..} =
+renderTranscriptItems TuiState{..} =
   let isFocused = tsFocus == FocusTranscript
       step (toolIdx, acc) item = case item of
         TiUser u ->
