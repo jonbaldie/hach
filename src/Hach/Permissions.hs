@@ -132,7 +132,11 @@ matchStarGlob pat str = go pat str Nothing
       , Just (sc, s') <- T.uncons s
       , pc == sc =
           go p' s' star
+      -- Resume only while the current string still has characters, matching
+      -- the original "j < slen && star >= 0" guard.  An exhausted string
+      -- falls through to the leftover-stars check instead of replaying s0.
       | Just (p', s0) <- star
+      , not (T.null s)
       , Just (_, s') <- T.uncons s0 =
           go p' s' (Just (p', s'))
       | T.null s =
