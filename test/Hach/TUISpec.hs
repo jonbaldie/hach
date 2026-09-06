@@ -40,6 +40,7 @@ import Hach.Types
   , modelContextLimit
   )
 import qualified Brick.Main as M
+import Control.Monad (forM_)
 import Data.IORef
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -459,14 +460,11 @@ spec = do
         let mUserRow = findRow "Show me foo.txt"
             mAsstRow = findRow "Here is the file"
             mToolRow = findRow "read_file"
-        mUserRow `shouldSatisfy` (/= Nothing)
-        mAsstRow `shouldSatisfy` (/= Nothing)
-        mToolRow `shouldSatisfy` (/= Nothing)
-        let Just userRow = mUserRow
-            Just asstRow = mAsstRow
-            Just toolRow = mToolRow
-        userRow `shouldSatisfy` (< asstRow)
-        asstRow `shouldSatisfy` (< toolRow)
+        case (mUserRow, mAsstRow, mToolRow) of
+          (Just userRow, Just asstRow, Just toolRow) -> do
+            userRow `shouldSatisfy` (< asstRow)
+            asstRow `shouldSatisfy` (< toolRow)
+          _ -> expectationFailure "Expected user, assistant, and tool card rows in order"
 
       it "shows output when tool card is expanded and only summary when collapsed" $ do
         let cardCollapsed = ToolCard "c1" "read_file" "{\"path\":\"a\"}" (Finished (ToolSuccess "SECRET_PAYLOAD_12345")) False
@@ -939,6 +937,100 @@ spec = do
           , ToolMsg "call_g1" "read_file" "sample goal data"
           , UserMsg "All conditions satisfied"
           ]
+
+    describe "Transcript Auto-Scroll Policy and Thinking Indicator (Issue #25)" $ do
+      describe "Auto-Scroll Policy (shouldAutoScroll)" $ do
+        it "produces a scroll-to-end for appending events when focus is on the prompt input" $ do
+          let inputState = baseState { tsFocus = FocusInput }
+              appendingEvents =
+                [ EvLLMResponse (Just "hello") [] Nothing
+                , EvDone "finished answer"
+                , EvError "fatal error"
+                , EvToolCall "bash" "ls -la"
+                , EvPermissionDenied "write_file" "protected path"
+                , EvGoalEvaluated GoalMet "condition met"
+                , EvGoalAchieved "all tests pass"
+                , EvGoalFailed "condition" "failure"
+                , EvGoalBlocked "blocked"
+                ]
+          forM_ appendingEvents $ \ev -> do
+            isTranscriptAppendingEvent ev `shouldBe` True
+            shouldAutoScroll inputState ev `shouldBe` True
+
+        it "does not produce a scroll-to-end for appending events when focus is on the transcript" $ do
+          let transcriptState = baseState { tsFocus = FocusTranscript }
+              appendingEvents =
+                [ EvLLMResponse (Just "hello") [] Nothing
+                , EvDone "finished answer"
+                , EvError "fatal error"
+                , EvToolCall "bash" "ls -la"
+                , EvPermissionDenied "write_file" "protected path"
+                , EvGoalEvaluated GoalMet "condition met"
+                , EvGoalAchieved "all tests pass"
+                , EvGoalFailed "condition" "failure"
+                , EvGoalBlocked "blocked"
+                ]
+          forM_ appendingEvents $ \ev -> do
+            isTranscriptAppendingEvent ev `shouldBe` True
+            shouldAutoScroll transcriptState ev `shouldBe` False
+
+        it "does not produce a scroll-to-end for non-appending events in either focus mode" $ do
+          let inputState = baseState { tsFocus = FocusInput }
+              transcriptState = baseState { tsFocus = FocusTranscript }
+              nonAppendingEvents =
+                [ EvTurnComplete 1
+                , EvGoalSet "condition"
+                , EvToolCallDelta "delta"
+                ]
+          forM_ nonAppendingEvents $ \ev -> do
+            isTranscriptAppendingEvent ev `shouldBe` False
+            shouldAutoScroll inputState ev `shouldBe` False
+            shouldAutoScroll transcriptState ev `shouldBe` False
+
+      describe "Thinking Indicator Headless Render" $ do
+        it "renders the thinking line under the last item when status is thinking" $ do
+          let thinkingState = baseState
+                { tsStatus = StatusThinking
+                , tsTranscript =
+                    [ TiUser "analyze repo"
+                    , TiAssistant "I am analyzing."
+                    ]
+                }
+              rows = renderTestRows thinkingState (120, 40)
+          any ("Thinking..." `T.isInfixOf`) rows `shouldBe` True
+
+          let findRow needle = case [idx | (idx, r) <- zip [0..] rows, needle `T.isInfixOf` r] of
+                (i:_) -> Just i
+                []    -> Nothing
+              mUserRow = findRow "analyze repo"
+              mAsstRow = findRow "I am analyzing."
+              mThinkingRow = findRow "Thinking..."
+          case (mUserRow, mAsstRow, mThinkingRow) of
+            (Just uRow, Just aRow, Just tRow) -> do
+              uRow `shouldSatisfy` (< aRow)
+              aRow `shouldSatisfy` (< tRow)
+            _ ->
+              expectationFailure "Expected User, Assistant, and Thinking line in rows in order"
+
+        it "does not render the thinking line when status is idle or finished" $ do
+          let idleState = baseState
+                { tsStatus = StatusIdle
+                , tsTranscript = [TiUser "hello", TiAssistant "world"]
+                }
+              finishedState = baseState
+                { tsStatus = StatusFinished
+                , tsTranscript = [TiUser "hello", TiAssistant "world"]
+                }
+          any ("Thinking..." `T.isInfixOf`) (renderTestRows idleState (120, 40)) `shouldBe` False
+          any ("Thinking..." `T.isInfixOf`) (renderTestRows finishedState (120, 40)) `shouldBe` False
+
+        it "renders the thinking line even when transcript has no items yet" $ do
+          let emptyThinkingState = baseState
+                { tsStatus = StatusThinking
+                , tsTranscript = []
+                }
+              rows = renderTestRows emptyThinkingState (120, 40)
+          any ("Thinking..." `T.isInfixOf`) rows `shouldBe` True
 
     describe "/goal command" $ do
       it "sets a goal and emits ActionRunGoal with the condition" $ do

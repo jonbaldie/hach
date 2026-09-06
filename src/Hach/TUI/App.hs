@@ -8,6 +8,8 @@ module Hach.TUI.App
   , transcriptToMessages
   , transcriptItemsToMessages
   , cancelledToolCallPlaceholder
+  , shouldAutoScroll
+  , isTranscriptAppendingEvent
   , runGoalWorker
   , goalAgentConfig
   , initialTuiLaunch
@@ -27,7 +29,7 @@ import Brick.BChan (BChan, newBChan, writeBChan)
 import Control.Concurrent.Async (Async, async, cancel)
 import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, writeTVar)
 import Control.Exception (SomeException, try)
-import Control.Monad (forM_)
+import Control.Monad (forM_, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -101,8 +103,6 @@ runTui ioEnv initialPrompt = do
                 vScrollToEnd (viewportScroll VpTranscript)
               ActionScrollTranscript delta ->
                 vScrollBy (viewportScroll VpTranscript) delta
-              ActionScrollTranscriptToBottom ->
-                vScrollToEnd (viewportScroll VpTranscript)
         , appAttrMap      = const tuiAttrMap
         }
 
@@ -314,17 +314,10 @@ handleBrickEvent
   -> EventM Name TuiState ()
 handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
   AppEvent agentEv -> do
+    currentState <- get
     modify (handleAgentEvent agentEv)
-    case agentEv of
-      EvLLMResponse _ _ _ -> vScrollToEnd (viewportScroll VpTranscript)
-      EvDone _            -> vScrollToEnd (viewportScroll VpTranscript)
-      EvError _           -> vScrollToEnd (viewportScroll VpTranscript)
-      EvToolCall _ _      -> vScrollToEnd (viewportScroll VpTranscript)
-      EvGoalEvaluated{}   -> vScrollToEnd (viewportScroll VpTranscript)
-      EvGoalAchieved{}    -> vScrollToEnd (viewportScroll VpTranscript)
-      EvGoalFailed{}      -> vScrollToEnd (viewportScroll VpTranscript)
-      EvGoalBlocked{}     -> vScrollToEnd (viewportScroll VpTranscript)
-      _                   -> pure ()
+    when (shouldAutoScroll currentState agentEv) $
+      vScrollToEnd (viewportScroll VpTranscript)
 
   VtyEvent vtyEv -> do
     case vtyToUserKey vtyEv of
@@ -349,8 +342,6 @@ handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
             vScrollToEnd (viewportScroll VpTranscript)
           ActionScrollTranscript delta ->
             vScrollBy (viewportScroll VpTranscript) delta
-          ActionScrollTranscriptToBottom ->
-            vScrollToEnd (viewportScroll VpTranscript)
       Nothing ->
         pure ()
 

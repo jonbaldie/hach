@@ -7,6 +7,8 @@ module Hach.TUI.State
   , handleAgentEvent
   , toggleToolExpanded
   , builtinCommands
+  , shouldAutoScroll
+  , isTranscriptAppendingEvent
   ) where
 
 import Hach.Skills (Skill(..), injectSkillsIntoPrompt, parseSkillInvocations, skillInvocationCompletion)
@@ -921,3 +923,25 @@ goalStatusText (Just gs) =
     GoalCleared ->
       ( "Goal cleared: " <> gsCondition gs
       , Just gs )
+
+-- | Check whether an agent event appends items to the transcript.
+isTranscriptAppendingEvent :: AgentEvent -> Bool
+isTranscriptAppendingEvent = \case
+  EvLLMResponse{}          -> True
+  EvDone{}                 -> True
+  EvError{}                -> True
+  EvToolCall{}             -> True
+  EvPermissionDenied{}     -> True
+  EvGoalEvaluated{}        -> True
+  EvGoalAchieved{}         -> True
+  EvGoalFailed{}           -> True
+  EvGoalBlocked{}          -> True
+  _                        -> False
+
+-- | Determine whether the transcript viewport should automatically scroll to the bottom.
+-- Auto-scroll policy: when focus is on the prompt input, every transcript-appending
+-- Harness event scrolls the transcript viewport to the end.
+-- When focus is on the transcript, incoming events leave the viewport alone.
+shouldAutoScroll :: TuiState -> AgentEvent -> Bool
+shouldAutoScroll state ev =
+  tsFocus state == FocusInput && isTranscriptAppendingEvent ev

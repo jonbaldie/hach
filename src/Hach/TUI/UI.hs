@@ -270,7 +270,7 @@ renderTranscriptPanel state@TuiState{..} =
       headerText = if isFocused
                      then " [ 💬 Transcript (Active) ] "
                      else " 💬 Transcript "
-      items = if null tsTranscript
+      items = if null tsTranscript && tsStatus /= StatusThinking
                 then [padAll 1 (withAttr dimAttr (txtWrap "No dialogue yet. Type a prompt below and press Enter to start."))]
                 else renderTranscriptItems state
   in borderMod $
@@ -280,7 +280,7 @@ renderTranscriptPanel state@TuiState{..} =
 
 -- | Render all items in the transcript in chronological emission order.
 renderTranscriptItems :: TuiState -> [Widget Name]
-renderTranscriptItems TuiState{..} =
+renderTranscriptItems state@TuiState{..} =
   let isFocused = tsFocus == FocusTranscript
       step (toolIdx, acc) item = case item of
         TiUser u ->
@@ -294,7 +294,16 @@ renderTranscriptItems TuiState{..} =
         TiToolCard tc ->
           (toolIdx + 1, renderToolCard tsSelectedToolIndex isFocused toolIdx tc : acc)
       (_, revWidgets) = foldl' step (0, []) tsTranscript
-  in reverse revWidgets
+      thinkingWidget = [renderThinkingLine | tsStatus == StatusThinking]
+  in reverse revWidgets ++ thinkingWidget
+
+-- | Ephemeral thinking indicator drawn under the last transcript item
+-- while the Harness is waiting on the model.
+renderThinkingLine :: Widget Name
+renderThinkingLine =
+  padBottom (Pad 1) $
+  padLeft (Pad 2) $
+  withAttr statusThinkingAttr (txt "✻ Thinking...")
 
 renderUser :: Text -> Widget Name
 renderUser u =

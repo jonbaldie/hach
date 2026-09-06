@@ -34,7 +34,6 @@ module Hach.TUI.Types
   , TuiEvent(..)
   , TuiAction(..)
   , pattern ActionScrollHistory
-  , pattern ActionScrollHistoryToBottom
   ) where
 
 import Hach.Skills (SkillCatalog)
@@ -222,14 +221,10 @@ data TuiAction
   | ActionCancelAgent
   | ActionQuit
   | ActionScrollTranscript !Int
-  | ActionScrollTranscriptToBottom
   deriving (Show, Eq)
 
 pattern ActionScrollHistory :: Int -> TuiAction
 pattern ActionScrollHistory delta = ActionScrollTranscript delta
 
-pattern ActionScrollHistoryToBottom :: TuiAction
-pattern ActionScrollHistoryToBottom = ActionScrollTranscriptToBottom
-
-{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionScrollTranscriptToBottom #-}
-{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionScrollHistoryToBottom #-}
+{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript #-}
+{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory #-}
