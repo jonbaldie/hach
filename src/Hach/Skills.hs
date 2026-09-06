@@ -13,6 +13,8 @@ module Hach.Skills
   , parseSkillInvocations
   , injectSkillsIntoPrompt
   , skillInvocationCompletion
+  , slashCommandCompletion
+  , inputSlashCompletion
   , substituteArguments
   , injectDynamicContext
   ) where
@@ -261,22 +263,41 @@ injectSkillsIntoPrompt skills prompt =
        else T.strip formattedSkills <> "\n\n" <> prompt
 
 -- | Compute the inline completion suffix for the slash-command currently being typed.
+-- Only user-invocable skills participate.
 skillInvocationCompletion :: SkillCatalog -> Text -> Maybe Text
-skillInvocationCompletion catalog input =
+skillInvocationCompletion catalog =
+  slashCommandCompletion (skillSlashNames catalog)
+
+-- | Completion suffix against an explicit list of full slash tokens
+-- (e.g. @"/clear"@, @"/goal"@).  The typed token must already start with
+-- @\'/'@ and have at least one character after it; the result is the
+-- remainder of the lexicographically smallest strictly-longer candidate.
+slashCommandCompletion :: [Text] -> Text -> Maybe Text
+slashCommandCompletion candidates input =
   case trailingWord input of
     Nothing -> Nothing
     Just word
       | not ("/" `T.isPrefixOf` word) -> Nothing
-      | T.null partial                -> Nothing
+      | T.null (T.drop 1 word)        -> Nothing
       | null longer                   -> Nothing
-      | otherwise                     -> Just (T.drop (T.length partial) (minimum longer))
+      | otherwise                     -> Just (T.drop (T.length word) (minimum longer))
       where
-        partial = T.drop 1 word
-        longer  = [ m | m <- Map.keys catalog
-                     , skillUserInvocable (catalog Map.! m)
-                     , partial `T.isPrefixOf` m
-                     , T.length m > T.length partial
-                     ]
+        longer = [ c | c <- candidates
+                    , word `T.isPrefixOf` c
+                    , T.length c > T.length word
+                    ]
+
+-- | Union of built-in slash commands and user-invocable skill names.
+inputSlashCompletion :: SkillCatalog -> [Text] -> Text -> Maybe Text
+inputSlashCompletion catalog builtins =
+  slashCommandCompletion (builtins ++ skillSlashNames catalog)
+
+skillSlashNames :: SkillCatalog -> [Text]
+skillSlashNames catalog =
+  [ "/" <> m
+  | m <- Map.keys catalog
+  , skillUserInvocable (catalog Map.! m)
+  ]
 
 trailingWord :: Text -> Maybe Text
 trailingWord t

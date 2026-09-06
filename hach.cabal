@@ -125,6 +125,7 @@ test-suite hach-test
         Hach.GoalFuzzSpec
         Hach.CampaignSpec
         Hach.Campaign2Spec
+        Hach.Campaign3Spec
         Hach.SkillsSpec
         Hach.PermissionsSpec
         Hach.SettingsSpec

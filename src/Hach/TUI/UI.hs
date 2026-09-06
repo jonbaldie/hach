@@ -15,7 +15,7 @@ module Hach.TUI.UI
   , installWideGlyphWidths
   ) where
 
-import Hach.Skills (skillInvocationCompletion)
+import Hach.Skills (inputSlashCompletion)
 import Hach.TUI.Types
 import Hach.Types (SessionTokenUsage(..), ToolResult(..), modelContextLimit)
 import Brick
@@ -524,7 +524,7 @@ renderInputPanel TuiState{..} =
         | T.null tsInputBuffer =
             prefix <+> withAttr dimAttr (txt "Type a task prompt and press Enter...")
         | otherwise =
-            case skillInvocationCompletion tsSkills tsInputBuffer of
+            case inputSlashCompletion tsSkills builtinCommands tsInputBuffer of
               Just suffix ->
                 prefix <+> hBox
                   [ withAttr userTextAttr (txt tsInputBuffer)

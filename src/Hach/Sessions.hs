@@ -136,13 +136,16 @@ estimateCostUsd model promptTokens completionTokens =
       completionCost = (fromIntegral completionTokens / 1000000.0) * completionRate
   in promptCost + completionCost
   where
-    -- Rates in USD per million tokens
+    -- Rates in USD per million tokens.  More specific families are
+    -- matched first so "claude-3-opus" is not billed as generic Claude.
     lookupRates m
       | "opus" `T.isInfixOf` m        = (15.0, 75.0)
       | "sonnet" `T.isInfixOf` m      = (3.0, 15.0)
       | "haiku" `T.isInfixOf` m       = (0.25, 1.25)
       | "gpt-4o-mini" `T.isInfixOf` m = (0.15, 0.6)
       | "gpt-4o" `T.isInfixOf` m      = (5.0, 15.0)
+      | "claude" `T.isInfixOf` m      = (3.0, 15.0)
+      | "deepseek" `T.isInfixOf` m    = (0.27, 1.1)
       | otherwise                     = (1.0, 3.0)
 
 -- | Generate a unique session identifier.
