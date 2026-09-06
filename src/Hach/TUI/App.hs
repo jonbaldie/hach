@@ -133,11 +133,17 @@ dialogueToMessages sysPrompt currentPrompt items =
   where
     -- A prior user turn with no assistant reply plus the new prompt would
     -- otherwise emit two adjoining UserMsg values, which OpenRouter rejects.
+    -- Collect a whole run and intercalate once so the copy is linear in
+    -- the total text rather than quadratic in the run length.
     collapseAdjacentUserMsgs [] = []
-    collapseAdjacentUserMsgs (UserMsg a : UserMsg b : rest) =
-      collapseAdjacentUserMsgs (UserMsg (a <> "\n\n" <> b) : rest)
+    collapseAdjacentUserMsgs (UserMsg a : rest) =
+      let (more, remaining) = spanUser rest
+      in UserMsg (T.intercalate "\n\n" (a : more)) : collapseAdjacentUserMsgs remaining
     collapseAdjacentUserMsgs (x : xs) =
       x : collapseAdjacentUserMsgs xs
+
+    spanUser (UserMsg u : xs) = let (us, rest) = spanUser xs in (u : us, rest)
+    spanUser xs               = ([], xs)
 
     dropLastUser [] = []
     dropLastUser xs =
@@ -165,13 +171,22 @@ transcriptItemsToMessages = go . collapseAdjacentTextItems . filter (not . isNot
     isNotice (TiNotice _) = True
     isNotice _            = False
 
+    -- Collect a whole run and intercalate once (linear in total text).
     collapseAdjacentTextItems [] = []
-    collapseAdjacentTextItems (TiAssistant a1 : TiAssistant a2 : rest) =
-      collapseAdjacentTextItems (TiAssistant (a1 <> "\n\n" <> a2) : rest)
-    collapseAdjacentTextItems (TiUser u1 : TiUser u2 : rest) =
-      collapseAdjacentTextItems (TiUser (u1 <> "\n\n" <> u2) : rest)
+    collapseAdjacentTextItems (TiAssistant a : rest) =
+      let (more, remaining) = spanAssist rest
+      in TiAssistant (T.intercalate "\n\n" (a : more)) : collapseAdjacentTextItems remaining
+    collapseAdjacentTextItems (TiUser u : rest) =
+      let (more, remaining) = spanUserItems rest
+      in TiUser (T.intercalate "\n\n" (u : more)) : collapseAdjacentTextItems remaining
     collapseAdjacentTextItems (x : xs) =
       x : collapseAdjacentTextItems xs
+
+    spanAssist (TiAssistant a : xs) = let (as, rest) = spanAssist xs in (a : as, rest)
+    spanAssist xs                   = ([], xs)
+
+    spanUserItems (TiUser u : xs) = let (us, rest) = spanUserItems xs in (u : us, rest)
+    spanUserItems xs              = ([], xs)
 
     extractCards (TiToolCard c : rest) =
       let (cs, remItems) = extractCards rest

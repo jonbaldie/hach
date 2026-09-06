@@ -6,6 +6,7 @@ module Hach.Permissions
   , isProtectedPath
   , extractPathArg
   , matchGlob
+  , matchStarGlob
   , matchRule
   , cyclePermissionMode
   ) where
@@ -13,6 +14,8 @@ module Hach.Permissions
 import Hach.Types
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KM
+import Data.List (foldl')
+import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -46,34 +49,94 @@ extractPathArg (Aeson.Object km) =
   in findVal
 extractPathArg _ = Nothing
 
--- | Simple glob matcher supporting '*' wildcard and '**' recursive wildcards.
--- '**/ matches zero or more directories.
--- '*' matches any characters within a directory segment (does not cross '/').
+-- | Glob tokens. Lexing order matches the original backtracking matcher:
+-- @**/@ first, then @**@, then @*@, then a literal character.
+data GlobTok
+  = Lit Char
+  | Star        -- ^ '*'  : any run of non-'/' characters (including empty)
+  | DStar       -- ^ '**' : any run of characters, including '/'
+  | DStarSlash  -- ^ '**/': zero or more complete directory segments
+  deriving (Eq, Show)
+
+tokenizeGlob :: String -> [GlobTok]
+tokenizeGlob []               = []
+tokenizeGlob ('*':'*':'/':xs) = DStarSlash : tokenizeGlob xs
+tokenizeGlob ('*':'*':xs)     = DStar : tokenizeGlob xs
+tokenizeGlob ('*':xs)         = Star : tokenizeGlob xs
+tokenizeGlob (c:xs)           = Lit c : tokenizeGlob xs
+
+-- | Glob matcher supporting '*' and '**'.
+--
+-- @**/@ matches zero or more complete directory segments.
+-- @**@ matches any characters, including @'/'@.
+-- @*@ matches any characters within a directory segment (does not cross @'/'@).
+--
+-- Implemented as a bottom-up DP table over (target offset, token index) so
+-- the work is O(|pattern| · |path|) instead of exponential backtracking.
 matchGlob :: Text -> FilePath -> Bool
-matchGlob pat fp =
-  let patStr = T.unpack pat
-      fpStr  = fp
-  in matchGlobStr patStr fpStr
+matchGlob pat fp = matchToks (tokenizeGlob (T.unpack pat)) fp
+
+matchToks :: [GlobTok] -> String -> Bool
+matchToks toks target =
+  let n = length toks
+      m = length target
+      -- Cells with greater j (more of the target consumed) or greater i
+      -- (more of the pattern consumed) are inserted first, so each
+      -- lookup reads an already-computed dependency.
+      keys = [ (j, i) | j <- [m, m-1 .. 0], i <- [n, n-1 .. 0] ]
+      table = foldl' insertCell Map.empty keys
+      insertCell acc (j, i) = Map.insert (j, i) (eval acc j i) acc
+      eval acc j i
+        | i == n = j == m
+        | otherwise = case toks !! i of
+            Lit c ->
+              j < m && (target !! j) == c
+                && Map.findWithDefault False (j + 1, i + 1) acc
+            Star ->
+              Map.findWithDefault False (j, i + 1) acc
+                || (j < m && (target !! j) /= '/'
+                      && Map.findWithDefault False (j + 1, i) acc)
+            DStar ->
+              Map.findWithDefault False (j, i + 1) acc
+                || (j < m && Map.findWithDefault False (j + 1, i) acc)
+            DStarSlash ->
+              Map.findWithDefault False (j, i + 1) acc
+                || case nextSlash j of
+                     Just k  -> Map.findWithDefault False (k + 1, i) acc
+                     Nothing -> False
+      nextSlash j
+        | j >= m = Nothing
+        | target !! j == '/' = Just j
+        | otherwise = nextSlash (j + 1)
+  in Map.findWithDefault False (0, 0) table
+
+-- | '*' matches any sequence of characters (including '/').
+--
+-- Linear in the combined length of pattern and string: only the most
+-- recent '*' is remembered, which is sufficient when a star may consume
+-- any character.
+matchStarGlob :: Text -> Text -> Bool
+matchStarGlob pat str = go 0 0 (-1) 0
   where
-    matchGlobStr [] [] = True
-    matchGlobStr ('*':'*':'/':rest) target =
-      matchGlobStr rest target || case break (== '/') target of
-        (_, '/':ts) -> matchGlobStr ('*':'*':'/':rest) ts
-        _           -> False
-    matchGlobStr ['*', '*'] _ = True
-    matchGlobStr ('*':'*':rest) target =
-      matchGlobStr rest target || case target of
-        []     -> False
-        (_:ts) -> matchGlobStr ('*':'*':rest) ts
-    matchGlobStr ('*':rest) target =
-      matchGlobStr rest target || case target of
-        (c:ts) | c /= '/' -> matchGlobStr ('*':rest) ts
-        _                 -> False
-    matchGlobStr (p:ps) (t:ts)
-      | p == t    = matchGlobStr ps ts
+    plen = T.length pat
+    slen = T.length str
+    pAt i = T.index pat i
+    sAt j = T.index str j
+
+    go i j star match
+      | j < slen && i < plen && pAt i == '*' =
+          go (i + 1) j i j
+      | j < slen && i < plen && pAt i == sAt j =
+          go (i + 1) (j + 1) star match
+      | j < slen && star >= 0 =
+          go (star + 1) (match + 1) star (match + 1)
+      | j == slen =
+          eatStars i == plen
       | otherwise = False
-    matchGlobStr [] (_:_) = False
-    matchGlobStr (_:_) [] = False
+
+    eatStars i
+      | i < plen && pAt i == '*' = eatStars (i + 1)
+      | otherwise = i
 
 -- | Check if a single rule matches the given tool and path.
 matchRule :: PermissionRule -> Text -> Maybe FilePath -> Maybe PermissionDecision
