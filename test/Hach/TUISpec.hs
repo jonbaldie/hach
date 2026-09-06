@@ -540,6 +540,16 @@ spec = do
         tsPromptHistoryIndex s2 `shouldBe` Nothing
         tsInputBuffer s3 `shouldBe` "betax"
 
+      it "accepting Tab completion after Up leaves history browse mode" $ do
+        let s0 = baseState { tsPromptHistory = ["alpha", "/cle"], tsInputBuffer = "draft" }
+            (s1, _) = updateTui (EvUserKey KeyUp) s0
+            (s2, _) = updateTui (EvUserKey KeyTab) s1
+        tsInputBuffer s1 `shouldBe` "/cle"
+        tsPromptHistoryIndex s1 `shouldBe` Just 1
+        tsInputBuffer s2 `shouldBe` "/clear"
+        tsPromptHistoryIndex s2 `shouldBe` Nothing
+        tsFocus s2 `shouldBe` FocusInput
+
       it "appends submitted prompt to tsPromptHistory on Enter and resets index" $ do
         let s0 = baseState { tsInputBuffer = "first query" }
             (s1, _) = updateTui (EvUserKey KeyEnter) s0

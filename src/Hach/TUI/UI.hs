@@ -510,9 +510,8 @@ renderToolCard selectedIdx isTranscriptFocused idx ToolCard{..} =
 --------------------------------------------------------------------------------
 
 -- | Modern prompt input bar.
--- When the trailing word is a slash-command prefix with a matching skill,
--- the completion suffix is shown as faded ghost text after the cursor
--- (press Tab to accept).
+-- Trailing slash-token completion (built-in commands and user-invocable
+-- skills) is shown as dim ghost text; Tab accepts.
 renderInputPanel :: TuiState -> Widget Name
 renderInputPanel TuiState{..} =
   let isFocused = tsFocus == FocusInput

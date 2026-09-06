@@ -13,7 +13,6 @@ module Hach.Skills
   , parseSkillInvocations
   , injectSkillsIntoPrompt
   , skillInvocationCompletion
-  , slashCommandCompletion
   , inputSlashCompletion
   , substituteArguments
   , injectDynamicContext
@@ -22,12 +21,13 @@ module Hach.Skills
 import Hach.Paths (resolveWorkspacePath)
 import Control.Applicative ((<|>))
 import Control.Exception (try, SomeException)
+import Control.Monad (guard)
 import qualified Data.ByteString as BS
 import Data.Char (isSpace, toLower)
-import Data.List (nubBy)
+import Data.List (nubBy, sort)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (catMaybes, fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -273,19 +273,15 @@ skillInvocationCompletion catalog =
 -- @\'/'@ and have at least one character after it; the result is the
 -- remainder of the lexicographically smallest strictly-longer candidate.
 slashCommandCompletion :: [Text] -> Text -> Maybe Text
-slashCommandCompletion candidates input =
-  case trailingWord input of
-    Nothing -> Nothing
-    Just word
-      | not ("/" `T.isPrefixOf` word) -> Nothing
-      | T.null (T.drop 1 word)        -> Nothing
-      | null longer                   -> Nothing
-      | otherwise                     -> Just (T.drop (T.length word) (minimum longer))
-      where
-        longer = [ c | c <- candidates
-                    , word `T.isPrefixOf` c
-                    , T.length c > T.length word
-                    ]
+slashCommandCompletion candidates input = do
+  word <- trailingWord input
+  guard ("/" `T.isPrefixOf` word && T.length word > 1)
+  best <- listToMaybe (sort
+    [ c | c <- candidates
+        , word `T.isPrefixOf` c
+        , T.length c > T.length word
+        ])
+  pure (T.drop (T.length word) best)
 
 -- | Union of built-in slash commands and user-invocable skill names.
 inputSlashCompletion :: SkillCatalog -> [Text] -> Text -> Maybe Text
@@ -294,9 +290,9 @@ inputSlashCompletion catalog builtins =
 
 skillSlashNames :: SkillCatalog -> [Text]
 skillSlashNames catalog =
-  [ "/" <> m
-  | m <- Map.keys catalog
-  , skillUserInvocable (catalog Map.! m)
+  [ "/" <> name
+  | (name, skill) <- Map.toList catalog
+  , skillUserInvocable skill
   ]
 
 trailingWord :: Text -> Maybe Text

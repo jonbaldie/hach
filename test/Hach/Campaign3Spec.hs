@@ -155,6 +155,10 @@ spec = do
     it "reproducer: gpt-4o-mini is not billed as generic gpt-4" $
       estimateCostUsd "openai/gpt-4o-mini" 1000000 1000000 `shouldBe` 0.75
 
+    it "reproducer: generic gpt-4 uses the folded-back $2.50/$10.00 table" $ do
+      estimateCostUsd "openai/gpt-4" 1000000 1000000 `shouldBe` 12.5
+      estimateCostUsd "openai/gpt-4o" 1000000 1000000 `shouldBe` 20.0
+
   describe "CGPT wave-3: slash-command completion" $ do
     it "a proper prefix of a built-in completes to a built-in" $ vigorous $
       forAll genBuiltinPrefix $ \(typed, _cmd) ->

@@ -6,7 +6,6 @@ module Hach.TUI.State
   , handleUserKey
   , handleAgentEvent
   , toggleToolExpanded
-  , builtinCommands
   , shouldAutoScroll
   , isTranscriptAppendingEvent
   ) where
@@ -533,7 +532,7 @@ handleUserKey key state@TuiState{..} =
       -- prefix in the input box; otherwise cycle panel focus as usual.
       case inputSlashCompletion tsSkills builtinCommands tsInputBuffer of
         Just suffix | tsFocus == FocusInput ->
-          (state { tsInputBuffer = tsInputBuffer `T.append` suffix }, [])
+          (editInputBuffer (<> suffix) state, [])
         _ ->
           (state { tsFocus = nextFocus tsFocus }, [])
 
@@ -553,6 +552,35 @@ handleUserKey key state@TuiState{..} =
 
       FocusTranscript ->
         handleTranscriptKey key state
+
+-- | Leave prompt-history browse mode so subsequent Up/Down does not
+-- overwrite an in-progress edit of a recalled prompt.
+abandonHistoryBrowse :: TuiState -> TuiState
+abandonHistoryBrowse state = state { tsPromptHistoryIndex = Nothing }
+
+-- | Apply a buffer edit and leave history browse mode.
+editInputBuffer :: (T.Text -> T.Text) -> TuiState -> TuiState
+editInputBuffer f state@TuiState{..} =
+  abandonHistoryBrowse state { tsInputBuffer = f tsInputBuffer }
+
+-- | True when a Harness event changes the transcript view — either by
+-- appending a Transcript Item or by updating a Tool Card in place.
+isTranscriptAppendingEvent :: AgentEvent -> Bool
+isTranscriptAppendingEvent = \case
+  EvLLMResponse{}          -> True
+  EvDone{}                 -> True
+  EvError{}                -> True
+  EvToolCall{}             -> True
+  EvToolResult{}           -> True
+  EvPermissionDenied{}     -> True
+  EvHookTriggered{}        -> True
+  EvSessionSaved{}         -> True
+  EvNotificationSent{}     -> True
+  EvGoalEvaluated{}        -> True
+  EvGoalAchieved{}         -> True
+  EvGoalFailed{}           -> True
+  EvGoalBlocked{}          -> True
+  _                        -> False
 
 -- | Key handling inside the input text area.
 handleInputKey :: UserKey -> TuiState -> (TuiState, [TuiAction])
@@ -596,26 +624,16 @@ handleInputKey key state@TuiState{..} = case key of
           )
 
   KeyChar c ->
-    ( abandonHistoryBrowse state { tsInputBuffer = tsInputBuffer `T.snoc` c }
-    , []
-    )
+    (editInputBuffer (`T.snoc` c) state, [])
 
   KeyBackspace ->
-    ( abandonHistoryBrowse state
-        { tsInputBuffer = if T.null tsInputBuffer then "" else T.init tsInputBuffer }
-    , []
-    )
+    (editInputBuffer (T.dropEnd 1) state, [])
 
   KeyDelete ->
-    ( abandonHistoryBrowse state
-        { tsInputBuffer = if T.null tsInputBuffer then "" else T.init tsInputBuffer }
-    , []
-    )
+    (editInputBuffer (T.dropEnd 1) state, [])
 
   KeyCtrl 'u' ->
-    ( abandonHistoryBrowse state { tsInputBuffer = "" }
-    , []
-    )
+    (editInputBuffer (const "") state, [])
 
   KeyPageUp ->
     (state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 5) }, [ActionScrollTranscript (-5)])
@@ -890,29 +908,6 @@ goalStatusText (Just gs) =
     GoalCleared ->
       ( "Goal cleared: " <> gsCondition gs
       , Just gs )
-
--- | Check whether an agent event appends items to the transcript.
--- | Leave prompt-history browse mode so subsequent Up/Down does not
--- overwrite an in-progress edit of a recalled prompt.
-abandonHistoryBrowse :: TuiState -> TuiState
-abandonHistoryBrowse state = state { tsPromptHistoryIndex = Nothing }
-
-isTranscriptAppendingEvent :: AgentEvent -> Bool
-isTranscriptAppendingEvent = \case
-  EvLLMResponse{}          -> True
-  EvDone{}                 -> True
-  EvError{}                -> True
-  EvToolCall{}             -> True
-  EvToolResult{}           -> True
-  EvPermissionDenied{}     -> True
-  EvHookTriggered{}        -> True
-  EvSessionSaved{}         -> True
-  EvNotificationSent{}     -> True
-  EvGoalEvaluated{}        -> True
-  EvGoalAchieved{}         -> True
-  EvGoalFailed{}           -> True
-  EvGoalBlocked{}          -> True
-  _                        -> False
 
 -- | Determine whether the transcript viewport should automatically scroll to the bottom.
 -- Auto-scroll policy: when focus is on the prompt input, every transcript-appending
