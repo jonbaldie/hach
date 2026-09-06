@@ -85,7 +85,7 @@ main = do
                 let agentConfig = AgentConfig
                       { cfgModel        = envModel
                       , cfgSystemPrompt = Just sysPrompt
-                      , cfgMaxTurns     = Just 20
+                      , cfgMaxTurns     = Nothing
                       }
                     initialHistory =
                       [ SystemMsg sysPrompt

@@ -2,12 +2,28 @@
 
 module Agent.TUISpec (spec) where
 
+import Agent.Core (AgentAlgebra(..))
+import Agent.Interpreter.IO (newIOEnv)
 import Agent.Skills (Skill(..), SkillSource(..))
-import Agent.TUI.App (dialogueToMessages, vtyToUserKey)
+import Agent.TUI.App (dialogueToMessages, goalAgentConfig, runGoalWorker, vtyToUserKey)
 import Agent.TUI.State
 import Agent.TUI.Types
 import Agent.TUI.UI (formatTokens, renderMaxTurns)
-import Agent.Types (AgentEvent(..), GoalState(..), GoalStatus(..), GoalVerdict(..), Message(..), TokenUsage(..), ToolResult(..), initialGoalState)
+import Agent.Types
+  ( AgentConfig(..)
+  , AgentEvent(..)
+  , AssistantResponse(..)
+  , GoalEvaluation(..)
+  , GoalState(..)
+  , GoalStatus(..)
+  , GoalVerdict(..)
+  , Message(..)
+  , TokenUsage(..)
+  , ToolCall(..)
+  , ToolResult(..)
+  , initialGoalState
+  )
+import Data.IORef
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Graphics.Vty as Vty
@@ -643,3 +659,34 @@ spec = do
         let s0 = skillState { tsFocus = FocusHistory, tsInputBuffer = "/go" }
             (s1, _) = updateTui (EvUserKey KeyTab) s0
         tsFocus s1 `shouldBe` FocusTools
+
+    describe "Goal Execution Unlimited Turns in TUI (Bug Repro)" $ do
+      it "defaults cfgMaxTurns to Nothing (infinity) in goalAgentConfig" $ do
+        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+        cfgMaxTurns (goalAgentConfig mockIOEnv "sys" Nothing) `shouldBe` Nothing
+
+      it "respects explicit turn cap when configured in goalAgentConfig" $ do
+        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+        cfgMaxTurns (goalAgentConfig mockIOEnv "sys" (Just 5)) `shouldBe` Just 5
+
+      it "does not terminate with 'Maximum turns reached (20)' on turn 20 when default turn limit is infinity" $ do
+        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+        eventsRef <- newIORef []
+        let mockTool = ToolCall "call_1" "read_file" "{}"
+            promptAction msgs _ = do
+              let toolTurns = length [() | ToolMsg{} <- msgs]
+              if toolTurns < 21
+                then pure $ Right (AssistantResponse Nothing [mockTool] Nothing)
+                else pure $ Right (AssistantResponse (Just "All tests pass.") [] Nothing)
+            evalAction _ _ = pure (GoalEvaluation GoalMet "Done.")
+            mockAlgebra = AgentAlgebra
+              { interpPrompt   = promptAction
+              , interpTool     = \_ -> pure (ToolSuccess "ok")
+              , interpLog      = \_ -> pure ()
+              , interpEvaluate = evalAction
+              }
+            config = goalAgentConfig mockIOEnv "sys" Nothing
+        runGoalWorker mockAlgebra config "All tests pass" [] (\ev -> modifyIORef' eventsRef (ev :))
+        events <- readIORef eventsRef
+        events `shouldNotContain` [EvError "Maximum turns reached (20)"]
+        events `shouldContain` [EvDone "All tests pass."]

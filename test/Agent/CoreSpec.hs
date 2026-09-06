@@ -340,6 +340,49 @@ spec = do
       finalHist `shouldSatisfy` \h ->
         any (\case UserMsg m -> "Run the tests." `T.isInfixOf` m; _ -> False) h
 
+    it "runs past the old default of 20 turns when cfgMaxTurns is Nothing (unlimited)" $ do
+      let toolCall = ToolCall
+            { callId = "call_loop"
+            , functionName = "read_file"
+            , callArgsRaw = "{\"path\":\"hello.txt\"}"
+            }
+          stepLoop _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
+          stepFinal _ _ = Right $ AssistantResponse (Just "Finally done!") [] Nothing
+          evalFinal _ _ = GoalEvaluation GoalMet "Done."
+          unlimitedConfig = baseConfig { cfgMaxTurns = Nothing }
+          -- 25 tool-calling turns, then completion on turn 26.
+          env = emptyMockEnv
+            { mockLLMSteps = replicate 25 stepLoop ++ [stepFinal]
+            , mockGoalEvaluations = [evalFinal]
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          ((result, _, gs), _) =
+            runPure env (goalLoop unlimitedConfig allToolDefs condition defaultBlockCap [UserMsg condition])
+
+      result `shouldBe` AgentCompleted "Finally done!"
+      gsStatus gs `shouldBe` GoalAchieved
+
+    it "never terminates with AgentMaxTurnsReached when cfgMaxTurns is Nothing in goalLoop" $ do
+      let toolCall = ToolCall
+            { callId = "call_loop"
+            , functionName = "read_file"
+            , callArgsRaw = "{\"path\":\"hello.txt\"}"
+            }
+          stepLoop _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
+          stepFinal _ _ = Right $ AssistantResponse (Just "Done") [] Nothing
+          evalFinal _ _ = GoalEvaluation GoalMet "Done."
+          unlimitedConfig = baseConfig { cfgMaxTurns = Nothing }
+          env = emptyMockEnv
+            { mockLLMSteps = replicate 50 stepLoop ++ [stepFinal]
+            , mockGoalEvaluations = [evalFinal]
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          ((result, _, _), _) =
+            runPure env (goalLoop unlimitedConfig allToolDefs condition defaultBlockCap [UserMsg condition])
+
+      result `shouldNotBe` AgentMaxTurnsReached 50
+      result `shouldBe` AgentCompleted "Done"
+
   describe "GoalEvaluation JSON Parsing" $ do
     it "parses a valid met verdict" $ do
       let json = "{\"verdict\":\"met\",\"reason\":\"Tests pass.\"}"

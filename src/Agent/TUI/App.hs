@@ -5,6 +5,8 @@ module Agent.TUI.App
   ( runTui
   , vtyToUserKey
   , dialogueToMessages
+  , runGoalWorker
+  , goalAgentConfig
   ) where
 
 import Agent.Core
@@ -125,7 +127,7 @@ runTui ioEnv initialPrompt = do
                 currentState <- get
                 let (cleaned, invoked) = parseSkillInvocations (tsSkills currentState) (T.strip p)
                     finalP = injectSkillsIntoPrompt invoked (if T.null cleaned then p else cleaned)
-                triggerAgentRun eventChan workerVar ioEnv sysPrompt finalP [DiUser p]
+                triggerAgentRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns currentState) finalP [DiUser p]
               _ -> pure ()
         , appAttrMap      = const tuiAttrMap
         }
@@ -175,10 +177,11 @@ triggerAgentRun
   -> TVar (Maybe (Async ()))
   -> IOEnv
   -> Text
+  -> Maybe Int
   -> Text
   -> [DialogueItem]
   -> EventM Name TuiState ()
-triggerAgentRun eventChan workerVar ioEnv sysPrompt currentPrompt historyItems = liftIO $ do
+triggerAgentRun eventChan workerVar ioEnv sysPrompt mMaxTurns currentPrompt historyItems = liftIO $ do
   -- Cancel existing worker if any
   mOldWorker <- atomically $ do
     w <- readTVar workerVar
@@ -190,7 +193,7 @@ triggerAgentRun eventChan workerVar ioEnv sysPrompt currentPrompt historyItems =
     let agentConfig = AgentConfig
           { cfgModel        = ioModel ioEnv
           , cfgSystemPrompt = Just sysPrompt
-          , cfgMaxTurns     = Nothing
+          , cfgMaxTurns     = mMaxTurns
           }
         initHistory = dialogueToMessages sysPrompt currentPrompt historyItems
 
@@ -207,16 +210,51 @@ triggerAgentRun eventChan workerVar ioEnv sysPrompt currentPrompt historyItems =
 
   atomically $ writeTVar workerVar (Just newWorker)
 
+-- | Construct the 'AgentConfig' for a goal-directed run in the TUI.
+goalAgentConfig :: IOEnv -> Text -> Maybe Int -> AgentConfig
+goalAgentConfig ioEnv sysPrompt mMaxTurns = AgentConfig
+  { cfgModel        = ioModel ioEnv
+  , cfgSystemPrompt = Just sysPrompt
+  , cfgMaxTurns     = mMaxTurns
+  }
+
+-- | Execute a goal-directed agent run using the given algebra and emit events.
+runGoalWorker
+  :: AgentAlgebra IO
+  -> AgentConfig
+  -> Text
+  -> [DialogueItem]
+  -> (AgentEvent -> IO ())
+  -> IO ()
+runGoalWorker algebra agentConfig condition historyItems emitEvent = do
+  let sysPrompt = fromMaybe "" (cfgSystemPrompt agentConfig)
+      initHistory = dialogueToMessages sysPrompt condition historyItems
+  res <- try (foldAgentProgram algebra
+              (goalLoop agentConfig allToolDefs condition defaultBlockCap initHistory))
+  case res of
+    Left (ex :: SomeException) ->
+      emitEvent (EvError (T.pack (show ex)))
+    Right (AgentCompleted ans, _, gs) ->
+      case gsStatus gs of
+        GoalFailed -> emitEvent (EvError ans)
+        GoalActive -> emitEvent (EvError ans)
+        _          -> emitEvent (EvDone ans)
+    Right (AgentMaxTurnsReached n, _, _) ->
+      emitEvent (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
+    Right (AgentFailed err, _, _) ->
+      emitEvent (EvError err)
+
 -- | Trigger background goal-directed agent execution.
 triggerGoalRun
   :: BChan AgentEvent
   -> TVar (Maybe (Async ()))
   -> IOEnv
   -> Text
+  -> Maybe Int
   -> Text          -- ^ goal condition (also used as the first-turn directive)
   -> [DialogueItem]
   -> EventM Name TuiState ()
-triggerGoalRun eventChan workerVar ioEnv sysPrompt condition historyItems = liftIO $ do
+triggerGoalRun eventChan workerVar ioEnv sysPrompt mMaxTurns condition historyItems = liftIO $ do
   mOldWorker <- atomically $ do
     w <- readTVar workerVar
     writeTVar workerVar Nothing
@@ -224,27 +262,8 @@ triggerGoalRun eventChan workerVar ioEnv sysPrompt condition historyItems = lift
   mapM_ cancel mOldWorker
 
   newWorker <- async $ do
-    let agentConfig = AgentConfig
-          { cfgModel        = ioModel ioEnv
-          , cfgSystemPrompt = Just sysPrompt
-          , cfgMaxTurns     = Just 20
-          }
-        initHistory = dialogueToMessages sysPrompt condition historyItems
-
-    res <- try (foldAgentProgram (tuiAlgebra eventChan ioEnv)
-                (goalLoop agentConfig allToolDefs condition defaultBlockCap initHistory))
-    case res of
-      Left (ex :: SomeException) ->
-        writeBChan eventChan (EvError (T.pack (show ex)))
-      Right (AgentCompleted ans, _, gs) ->
-        case gsStatus gs of
-          GoalFailed -> writeBChan eventChan (EvError ans)
-          GoalActive -> writeBChan eventChan (EvError ans)
-          _          -> writeBChan eventChan (EvDone ans)
-      Right (AgentMaxTurnsReached n, _, _) ->
-        writeBChan eventChan (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
-      Right (AgentFailed err, _, _) ->
-        writeBChan eventChan (EvError err)
+    let agentConfig = goalAgentConfig ioEnv sysPrompt mMaxTurns
+    runGoalWorker (tuiAlgebra eventChan ioEnv) agentConfig condition historyItems (writeBChan eventChan)
 
   atomically $ writeTVar workerVar (Just newWorker)
 
@@ -286,10 +305,10 @@ handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
               pure w
             mapM_ cancel mWorker
           ActionRunAgent prompt -> do
-            triggerAgentRun eventChan workerVar ioEnv sysPrompt prompt (tsHistory nextState)
+            triggerAgentRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns nextState) prompt (tsHistory nextState)
             vScrollToEnd (viewportScroll VpHistory)
           ActionRunGoal condition -> do
-            triggerGoalRun eventChan workerVar ioEnv sysPrompt condition (tsHistory nextState)
+            triggerGoalRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns nextState) condition (tsHistory nextState)
             vScrollToEnd (viewportScroll VpHistory)
           ActionScrollHistory delta ->
             vScrollBy (viewportScroll VpHistory) delta
