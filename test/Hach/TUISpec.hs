@@ -1,11 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Hach.TUISpec (spec) where
 
 import Hach.Core (AgentAlgebra(..))
 import Hach.Interpreter.IO (ioAlgebra, newIOEnv)
 import Hach.Skills (SkillSource(..), mkSkill)
-import Hach.TUI.App (dialogueToMessages, goalAgentConfig, initialTuiLaunch, runGoalWorker, vtyToUserKey)
+import Hach.TUI.App
+  ( cancelledToolCallPlaceholder
+  , dialogueToMessages
+  , goalAgentConfig
+  , initialTuiLaunch
+  , runGoalWorker
+  , transcriptItemsToMessages
+  , transcriptToMessages
+  , vtyToUserKey
+  )
+import Test.QuickCheck
 import Hach.TUI.State
 import Hach.TUI.Types
 import Hach.TUI.UI (drawUI, formatCompactLimit, formatTokens, renderMaxTurns, tuiAttrMap)
@@ -49,6 +60,34 @@ renderTestRows st region =
       Span.TextSpan _ _ _ t -> acc <> TL.toStrict t
       Span.Skip n           -> acc <> T.replicate n " "
       Span.RowEnd n         -> acc <> T.replicate n " "
+
+instance Arbitrary ToolLifecycle where
+  arbitrary = oneof
+    [ pure Pending
+    , pure Running
+    , Finished <$> oneof [ToolSuccess <$> genText, ToolError <$> genText]
+    , Denied <$> genText
+    , pure Cancelled
+    ]
+    where
+      genText = T.pack <$> listOf1 (elements ['a'..'z'])
+
+instance Arbitrary ToolCard where
+  arbitrary = ToolCard
+    <$> (T.pack <$> listOf1 (elements ['a'..'z']))
+    <*> (T.pack <$> listOf1 (elements ['a'..'z']))
+    <*> (T.pack <$> listOf (elements ['a'..'z']))
+    <*> arbitrary
+    <*> arbitrary
+
+instance Arbitrary TranscriptItem where
+  arbitrary = oneof
+    [ TiUser <$> (T.pack <$> listOf (elements ['a'..'z']))
+    , TiAssistant <$> (T.pack <$> listOf (elements ['a'..'z']))
+    , TiSystem <$> (T.pack <$> listOf (elements ['a'..'z']))
+    , TiNotice <$> (T.pack <$> listOf (elements ['a'..'z']))
+    , TiToolCard <$> arbitrary
+    ]
 
 spec :: Spec
 spec = do
@@ -734,6 +773,172 @@ spec = do
         let items = [DiUser "/to-spec auth", DiNotice "Activated skill: to-spec"]
             msgs = dialogueToMessages "system prompt" "expanded <skill> auth" items
         msgs `shouldBe` [SystemMsg "system prompt", UserMsg "expanded <skill> auth"]
+
+    describe "Transcript Context Round-Tripping (Issue #24)" $ do
+      it "rebuilds messages from transcript with user text, assistant text, cards in every lifecycle state and notices" $ do
+        let cFinished = ToolCard "call_1" "read_file" "{\"path\":\"foo.txt\"}" (Finished (ToolSuccess "file contents")) False
+            cDenied   = ToolCard "call_2" "write_file" "{\"path\":\"bar.txt\"}" (Denied "Permission denied by policy") False
+            cPending  = ToolCard "call_3" "bash" "{\"cmd\":\"ls\"}" Pending False
+            cRunning  = ToolCard "call_4" "bash" "{\"cmd\":\"pwd\"}" Running False
+            cCancelled = ToolCard "call_5" "browser" "{}" Cancelled False
+            items =
+              [ TiUser "first user message"
+              , TiNotice "Notice: skill activated"
+              , TiAssistant "Let me check that for you."
+              , TiToolCard cFinished
+              , TiNotice "Notice: tool running"
+              , TiToolCard cDenied
+              , TiToolCard cPending
+              , TiToolCard cRunning
+              , TiToolCard cCancelled
+              , TiNotice "Notice: turn complete"
+              ]
+            msgs = dialogueToMessages "system prompt" "follow-up prompt" items
+            expected =
+              [ SystemMsg "system prompt"
+              , UserMsg "first user message"
+              , AssistantMsg (Just "Let me check that for you.")
+                  [ ToolCall "call_1" "read_file" "{\"path\":\"foo.txt\"}"
+                  , ToolCall "call_2" "write_file" "{\"path\":\"bar.txt\"}"
+                  , ToolCall "call_3" "bash" "{\"cmd\":\"ls\"}"
+                  , ToolCall "call_4" "bash" "{\"cmd\":\"pwd\"}"
+                  , ToolCall "call_5" "browser" "{}"
+                  ]
+              , ToolMsg "call_1" "read_file" "file contents"
+              , ToolMsg "call_2" "write_file" "Permission denied by policy"
+              , ToolMsg "call_3" "bash" cancelledToolCallPlaceholder
+              , ToolMsg "call_4" "bash" cancelledToolCallPlaceholder
+              , ToolMsg "call_5" "browser" cancelledToolCallPlaceholder
+              , UserMsg "follow-up prompt"
+              ]
+        msgs `shouldBe` expected
+        transcriptToMessages "system prompt" "follow-up prompt" items `shouldBe` expected
+
+      it "yields an assistant message with calls when tool cards stand alone with assistant text blank" $ do
+        let c1 = ToolCard "call_1" "read_file" "{\"path\":\"a.txt\"}" (Finished (ToolSuccess "alpha")) False
+            c2 = ToolCard "call_2" "read_file" "{\"path\":\"b.txt\"}" (Finished (ToolSuccess "beta")) False
+            itemsStandalone =
+              [ TiUser "read files"
+              , TiToolCard c1
+              , TiToolCard c2
+              ]
+            msgsStandalone = dialogueToMessages "sys" "next turn" itemsStandalone
+            expectedStandalone =
+              [ SystemMsg "sys"
+              , UserMsg "read files"
+              , AssistantMsg Nothing
+                  [ ToolCall "call_1" "read_file" "{\"path\":\"a.txt\"}"
+                  , ToolCall "call_2" "read_file" "{\"path\":\"b.txt\"}"
+                  ]
+              , ToolMsg "call_1" "read_file" "alpha"
+              , ToolMsg "call_2" "read_file" "beta"
+              , UserMsg "next turn"
+              ]
+        msgsStandalone `shouldBe` expectedStandalone
+
+        let itemsBlankAssistant =
+              [ TiUser "read files"
+              , TiAssistant ""
+              , TiToolCard c1
+              ]
+            msgsBlankAssistant = dialogueToMessages "sys" "next turn" itemsBlankAssistant
+            expectedBlankAssistant =
+              [ SystemMsg "sys"
+              , UserMsg "read files"
+              , AssistantMsg Nothing [ToolCall "call_1" "read_file" "{\"path\":\"a.txt\"}"]
+              , ToolMsg "call_1" "read_file" "alpha"
+              , UserMsg "next turn"
+              ]
+        msgsBlankAssistant `shouldBe` expectedBlankAssistant
+
+      it "produces placeholder tool message for unresolved cards and denial text for denied cards" $ do
+        let cPending   = ToolCard "c_p" "bash" "ls" Pending False
+            cRunning   = ToolCard "c_r" "bash" "pwd" Running False
+            cCancelled = ToolCard "c_c" "bash" "top" Cancelled False
+            cDenied    = ToolCard "c_d" "rm" "rf" (Denied "Policy violation: forbidden command") False
+            cFinishedErr = ToolCard "c_fe" "grep" "foo" (Finished (ToolError "file not found")) False
+            items =
+              [ TiToolCard cPending
+              , TiToolCard cRunning
+              , TiToolCard cCancelled
+              , TiToolCard cDenied
+              , TiToolCard cFinishedErr
+              ]
+            msgs = dialogueToMessages "sys" "prompt" items
+            expected =
+              [ SystemMsg "sys"
+              , AssistantMsg Nothing
+                  [ ToolCall "c_p" "bash" "ls"
+                  , ToolCall "c_r" "bash" "pwd"
+                  , ToolCall "c_c" "bash" "top"
+                  , ToolCall "c_d" "rm" "rf"
+                  , ToolCall "c_fe" "grep" "foo"
+                  ]
+              , ToolMsg "c_p" "bash" "Tool call was cancelled before completion."
+              , ToolMsg "c_r" "bash" "Tool call was cancelled before completion."
+              , ToolMsg "c_c" "bash" "Tool call was cancelled before completion."
+              , ToolMsg "c_d" "rm" "Policy violation: forbidden command"
+              , ToolMsg "c_fe" "grep" "Error: file not found"
+              , UserMsg "prompt"
+              ]
+        msgs `shouldBe` expected
+
+      it "never contains an assistant tool call without a following tool message with the same id (property test)" $
+        property $ \items (NonEmpty sysPrompt) (NonEmpty currentPrompt) ->
+          let msgs = dialogueToMessages (T.pack sysPrompt) (T.pack currentPrompt) items
+              checkCallsAnswered [] = True
+              checkCallsAnswered (AssistantMsg _ calls : rest) =
+                let subsequentToolIds = [cid | ToolMsg cid _ _ <- rest]
+                    allPresent = all (\tc -> callId tc `elem` subsequentToolIds) calls
+                in allPresent && checkCallsAnswered rest
+              checkCallsAnswered (_ : rest) = checkCallsAnswered rest
+          in checkCallsAnswered msgs
+
+      it "builds context via dialogueToMessages for normal run and preserves prior tool results" $ do
+        let cFinished = ToolCard "c1" "read_file" "{\"path\":\"README.md\"}" (Finished (ToolSuccess "Project documentation")) False
+            priorHistory =
+              [ TiUser "read README.md"
+              , TiAssistant "I will read the file."
+              , TiToolCard cFinished
+              ]
+            msgs = dialogueToMessages "system prompt" "summarise what you just read" priorHistory
+        msgs `shouldBe`
+          [ SystemMsg "system prompt"
+          , UserMsg "read README.md"
+          , AssistantMsg (Just "I will read the file.") [ToolCall "c1" "read_file" "{\"path\":\"README.md\"}"]
+          , ToolMsg "c1" "read_file" "Project documentation"
+          , UserMsg "summarise what you just read"
+          ]
+
+      it "builds context via dialogueToMessages for goal run and passes tool results to loop" $ do
+        historySeenRef <- newIORef ([] :: [Message])
+        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+        let promptAction msgs _ = do
+              writeIORef historySeenRef msgs
+              pure (Right (AssistantResponse (Just "Goal achieved successfully.") [] Nothing))
+            evalAction _ _ = pure (GoalEvaluation GoalMet "All conditions satisfied")
+            mockAlgebra = (ioAlgebra mockIOEnv)
+              { interpPrompt   = promptAction
+              , interpTool     = \_ -> pure (ToolSuccess "ok")
+              , interpLog      = \_ -> pure ()
+              , interpEvaluate = evalAction
+              }
+            config = goalAgentConfig mockIOEnv "system prompt" Nothing
+            cFinished = ToolCard "call_g1" "read_file" "{}" (Finished (ToolSuccess "sample goal data")) False
+            historyItems =
+              [ TiUser "fetch information"
+              , TiAssistant "fetching"
+              , TiToolCard cFinished
+              ]
+        runGoalWorker mockAlgebra config "All conditions satisfied" historyItems (\_ -> pure ())
+        historySeen <- readIORef historySeenRef
+        historySeen `shouldBe`
+          [ SystemMsg "system prompt"
+          , UserMsg "fetch information"
+          , AssistantMsg (Just "fetching") [ToolCall "call_g1" "read_file" "{}"]
+          , ToolMsg "call_g1" "read_file" "sample goal data"
+          , UserMsg "All conditions satisfied"
+          ]
 
     describe "/goal command" $ do
       it "sets a goal and emits ActionRunGoal with the condition" $ do
