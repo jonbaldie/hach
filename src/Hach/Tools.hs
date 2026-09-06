@@ -1259,7 +1259,7 @@ executeFindFiles root (FindFilesArgs pat searchPath) = do
     -- '*' matches any sequence of characters (including empty).
     -- Uses backtracking: for each '*', try matching the rest of the
     -- pattern against progressively longer suffixes of the string.
-    globMatch pat str = go (T.unpack pat) (T.unpack str)
+    globMatch gpat str = go (T.unpack gpat) (T.unpack str)
       where
         go []     []      = True
         go []     _       = False
@@ -1340,7 +1340,7 @@ executeWebFetch (WebFetchArgs url) = do
       case reqRes of
         Left ex -> pure $ ToolError ("Invalid URL '" <> url <> "': " <> T.pack (show ex))
         Right req -> do
-          let req' = req { requestHeaders = [("User-Agent", "hach/0.1.2.0")] }
+          let req' = req { requestHeaders = [("User-Agent", "hach/0.1.3.0")] }
           respRes <- try (httpLbs req' mgr) :: IO (Either SomeException (Response BSL.ByteString))
           case respRes of
             Left ex -> pure $ ToolError ("HTTP fetch error: " <> T.pack (show ex))
