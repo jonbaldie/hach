@@ -246,9 +246,9 @@ spec = do
 
   describe "CGPT wave-3: CLI print/exec/permission-mode" $ do
     it "--print always implies --no-tui and optPrint" $ vigorous $
-      forAll (listOf (elements ["foo", "bar", "x"])) $ \before ->
-      forAll (listOf (elements ["foo", "bar", "y"])) $ \after ->
-        case parseCliArgs (before ++ ["--print"] ++ after) of
+      forAll (listOf (elements ["foo", "bar", "x"])) $ \wordsBefore ->
+      forAll (listOf (elements ["foo", "bar", "y"])) $ \wordsAfter ->
+        case parseCliArgs (wordsBefore ++ ["--print"] ++ wordsAfter) of
           Right opts -> optPrint opts && optNoTui opts
           Left _     -> True
 
