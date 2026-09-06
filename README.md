@@ -16,8 +16,7 @@ The harness implements an autonomous interaction loop between an LLM policy (via
 Install pre-built native binaries via the official tap:
 
 ```bash
-brew tap jonbaldie/tap
-brew install hach
+brew install jonbaldie/tap/hach
 ```
 
 ### Build from Source (Cabal)

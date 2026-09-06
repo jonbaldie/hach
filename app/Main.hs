@@ -15,7 +15,9 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (getCurrentDirectory)
 import System.Environment (getArgs)
-import System.Exit (exitFailure)
+import Data.Version (showVersion)
+import qualified Paths_hach as Paths
+import System.Exit (exitFailure, exitSuccess)
 
 main :: IO ()
 main = do
@@ -28,6 +30,10 @@ main = do
       putStrLn "Usage: hach [--model <model_name>] [--no-tui] [task prompt...]"
       exitFailure
     Right opts -> pure opts
+
+  when optVersion $ do
+    putStrLn ("hach " <> showVersion Paths.version)
+    exitSuccess
 
   envRes <- resolveEnvConfig optModel (Just ".env")
   EnvConfig{..} <- case envRes of

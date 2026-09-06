@@ -65,6 +65,7 @@ data CliOptions = CliOptions
   , optExec                 :: !(Maybe Text)
   , optPermissionMode       :: !(Maybe PermissionMode)
   , optDangerouslySkipPerms :: !Bool
+  , optVersion              :: !Bool
   } deriving (Show, Eq)
 
 -- | Default empty CLI options.
@@ -87,6 +88,7 @@ defaultCliOptions = CliOptions
   , optExec                 = Nothing
   , optPermissionMode       = Nothing
   , optDangerouslySkipPerms = False
+  , optVersion              = False
   }
 
 -- | Parse output format string.
@@ -151,6 +153,11 @@ parseCliArgs args = go args defaultCliOptions []
 
     go ("--dangerously-skip-permissions" : rest) opts promptWords =
       go rest opts { optDangerouslySkipPerms = True } promptWords
+
+    go ("--version" : rest) opts promptWords =
+      go rest opts { optVersion = True } promptWords
+    go ("-v" : rest) opts promptWords =
+      go rest opts { optVersion = True } promptWords
 
     go (arg : rest) opts promptWords
       | arg `elem` ["--model", "-m"] =

@@ -1,0 +1,199 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: darwin_arm64
+            ghc: "9.12.1"
+          - os: macos-13
+            platform: darwin_amd64
+            ghc: "9.12.1"
+          - os: ubuntu-latest
+            platform: linux_amd64
+            ghc: "9.12.1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Haskell
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: ${{ matrix.ghc }}
+          cabal-version: "latest"
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cabal/store
+            dist-newstyle
+          key: ${{ matrix.platform }}-ghc-${{ matrix.ghc }}-cabal-${{ hashFiles('**/*.cabal') }}
+          restore-keys: |
+            ${{ matrix.platform }}-ghc-${{ matrix.ghc }}-cabal-
+
+      - name: Build executable
+        run: |
+          cabal update
+          cabal build exe:hach --enable-optimization=2
+
+      - name: Package archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw_tag="${{ github.ref_name }}"
+          version="${raw_tag#v}"
+          bin_path="$(cabal list-bin exe:hach)"
+
+          mkdir -p staging
+          cp "$bin_path" staging/hach
+          cp LICENSE staging/LICENSE
+          chmod +x staging/hach
+          (cd staging && (command -v sha256sum >/dev/null && sha256sum hach LICENSE > checksums.txt || shasum -a 256 hach LICENSE > checksums.txt))
+
+          archive="hach_${version}_${{ matrix.platform }}.tar.gz"
+          tar -czvf "$archive" -C staging hach LICENSE checksums.txt
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$archive" > "${archive}.sha256"
+          else
+            shasum -a 256 "$archive" > "${archive}.sha256"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: |
+            hach_*_${{ matrix.platform }}.tar.gz
+            hach_*_${{ matrix.platform }}.tar.gz.sha256
+
+  publish:
+    name: Publish Release & Tap Formula
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Prepare checksums and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          cat *.sha256 | sort -u > checksums.txt
+          echo "=== Checksums ==="
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          version="${tag#v}"
+          cd dist
+          gh release create "$tag" \
+            --title "hach $version" \
+            --generate-notes \
+            hach_*.tar.gz checksums.txt
+
+      - name: Render and Publish Homebrew Formula
+        shell: bash
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          version="${tag#v}"
+
+          arm64_archive="hach_${version}_darwin_arm64.tar.gz"
+          amd64_archive="hach_${version}_darwin_amd64.tar.gz"
+          linux_archive="hach_${version}_linux_amd64.tar.gz"
+
+          arm64_sha=$(awk -v f="$arm64_archive" '$2 == f {print $1}' dist/checksums.txt)
+          amd64_sha=$(awk -v f="$amd64_archive" '$2 == f {print $1}' dist/checksums.txt)
+          linux_sha=$(awk -v f="$linux_archive" '$2 == f {print $1}' dist/checksums.txt || true)
+
+          cat << EOF > Formula_hach.rb
+class Hach < Formula
+  desc "Minimalist, principled agentic coding harness in Haskell (Functional Pearl)"
+  homepage "https://github.com/jonbaldie/hach"
+  license "MIT"
+  version_scheme 1
+
+  on_macos do
+    on_arm do
+      url "https://github.com/jonbaldie/hach/releases/download/v\${version}/\${arm64_archive}"
+      sha256 "\${arm64_sha}"
+    end
+
+    on_intel do
+      url "https://github.com/jonbaldie/hach/releases/download/v\${version}/\${amd64_archive}"
+      sha256 "\${amd64_sha}"
+    end
+  end
+
+  on_linux do
+    on_intel do
+      url "https://github.com/jonbaldie/hach/releases/download/v\${version}/\${linux_archive}"
+      sha256 "\${linux_sha}"
+    end
+  end
+
+  def install
+    bin.install "hach"
+    prefix.install "LICENSE"
+  end
+
+  test do
+    assert_match "\${version}", shell_output("\#{bin}/hach --version")
+  end
+end
+EOF
+
+          echo "Generated Homebrew Formula:"
+          cat Formula_hach.rb
+
+          if [[ -n "$TAP_TOKEN" ]]; then
+            echo "Pushing formula update to jonbaldie/homebrew-tap..."
+            git clone "https://x-access-token:${TAP_TOKEN}@github.com/jonbaldie/homebrew-tap.git" tap_repo
+            mkdir -p tap_repo/Formula
+            cp Formula_hach.rb tap_repo/Formula/hach.rb
+            cd tap_repo
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add Formula/hach.rb
+            if git diff --staged --quiet; then
+              echo "No changes in Formula/hach.rb"
+            else
+              git commit -m "Update hach formula to v${version}"
+              git push origin main
+            fi
+          else
+            echo "HOMEBREW_TAP_TOKEN not set; skipping automated tap push. Formula printed above."
+          fi
