@@ -23,6 +23,46 @@ cd hach
 cabal build exe:hach
 ```
 
+### Docker
+
+Build the production Docker image:
+
+```bash
+docker build -t hach .
+```
+
+Run interactively in your current directory:
+
+```bash
+docker run -it --rm \
+  -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
+  -v "$(pwd)":/workspace \
+  hach
+```
+
+Or run headless:
+
+```bash
+docker run --rm \
+  -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
+  -v "$(pwd)":/workspace \
+  hach --no-tui "Run the test suite and fix any errors"
+```
+
+### Development container
+
+Build the development Docker image:
+
+```bash
+docker build -f dev.Dockerfile -t hach:dev .
+```
+
+Start an interactive shell or run tests inside the container:
+
+```bash
+docker run -it --rm -v "$(pwd)":/workspace hach:dev
+```
+
 ## Quickstart
 
 Start the interactive terminal interface:

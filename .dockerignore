@@ -1,0 +1,11 @@
+.git
+.github
+.agents
+.claude
+.env
+.env.*
+dist-newstyle
+.ghc.environment.*
+*.log
+result
+.direnv
