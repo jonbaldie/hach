@@ -24,6 +24,7 @@ import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, writeTVar)
 import Control.Exception (SomeException, try)
 import Control.Monad (forM_)
 import Control.Monad.IO.Class (liftIO)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Graphics.Vty as Vty
@@ -69,7 +70,33 @@ tuiAlgebra chan IOEnv{..} = AgentAlgebra
 
   , interpLog = \ev ->
       writeBChan chan ev
+
+  , interpEvaluate = \condition transcript -> do
+      let evalMsgs = [ SystemMsg evaluatorSystemPrompt
+                     , UserMsg ("Condition: " <> condition <> "\n\nTranscript:\n" <> transcriptToText transcript)
+                     ]
+          req = ChatRequest
+            { reqModel      = ioModel
+            , reqMessages   = evalMsgs
+            , reqTools      = []
+            , reqToolChoice = Nothing
+            }
+      res <- sendChatCompletion ioManager ioApiKey req
+      case res of
+        Right asstResp ->
+          case respContent asstResp of
+            Just content -> pure (parseGoalEvaluation content)
+            Nothing      -> pure (GoalEvaluation GoalNotYetMet "Empty evaluator response.")
+        Left err ->
+          pure (GoalEvaluation GoalNotYetMet ("Evaluator error: " <> err))
   }
+  where
+    transcriptToText = T.unlines . map msgToText
+    msgToText = \case
+      SystemMsg c       -> "[System] " <> c
+      UserMsg c         -> "[User] " <> c
+      AssistantMsg mc _ -> "[Assistant] " <> fromMaybe "" mc
+      ToolMsg _ name c  -> "[Tool " <> name <> "] " <> c
 
 -- | Run the full modern TUI application.
 runTui :: IOEnv -> Maybe Text -> IO ()
@@ -176,6 +203,47 @@ triggerAgentRun eventChan workerVar ioEnv sysPrompt currentPrompt historyItems =
 
   atomically $ writeTVar workerVar (Just newWorker)
 
+-- | Trigger background goal-directed agent execution.
+triggerGoalRun
+  :: BChan AgentEvent
+  -> TVar (Maybe (Async ()))
+  -> IOEnv
+  -> Text
+  -> Text          -- ^ goal condition (also used as the first-turn directive)
+  -> [DialogueItem]
+  -> EventM Name TuiState ()
+triggerGoalRun eventChan workerVar ioEnv sysPrompt condition historyItems = liftIO $ do
+  mOldWorker <- atomically $ do
+    w <- readTVar workerVar
+    writeTVar workerVar Nothing
+    pure w
+  mapM_ cancel mOldWorker
+
+  newWorker <- async $ do
+    let agentConfig = AgentConfig
+          { cfgModel        = ioModel ioEnv
+          , cfgSystemPrompt = Just sysPrompt
+          , cfgMaxTurns     = 20
+          }
+        initHistory = dialogueToMessages sysPrompt condition historyItems
+
+    res <- try (foldAgentProgram (tuiAlgebra eventChan ioEnv)
+                (goalLoop agentConfig allToolDefs condition defaultBlockCap initHistory))
+    case res of
+      Left (ex :: SomeException) ->
+        writeBChan eventChan (EvError (T.pack (show ex)))
+      Right (AgentCompleted ans, _, gs) ->
+        case gsStatus gs of
+          GoalFailed -> writeBChan eventChan (EvError ans)
+          GoalActive -> writeBChan eventChan (EvError ans)
+          _          -> writeBChan eventChan (EvDone ans)
+      Right (AgentMaxTurnsReached n, _, _) ->
+        writeBChan eventChan (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
+      Right (AgentFailed err, _, _) ->
+        writeBChan eventChan (EvError err)
+
+  atomically $ writeTVar workerVar (Just newWorker)
+
 -- | Handle Brick UI events.
 handleBrickEvent
   :: BChan AgentEvent
@@ -192,6 +260,10 @@ handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
       EvDone _            -> vScrollToEnd (viewportScroll VpHistory)
       EvError _         -> vScrollToEnd (viewportScroll VpHistory)
       EvToolCall _ _    -> vScrollToEnd (viewportScroll VpTools)
+      EvGoalEvaluated{}   -> vScrollToEnd (viewportScroll VpHistory)
+      EvGoalAchieved{}    -> vScrollToEnd (viewportScroll VpHistory)
+      EvGoalFailed{}      -> vScrollToEnd (viewportScroll VpHistory)
+      EvGoalBlocked{}     -> vScrollToEnd (viewportScroll VpHistory)
       _                 -> pure ()
 
   VtyEvent vtyEv -> do
@@ -211,6 +283,9 @@ handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
             mapM_ cancel mWorker
           ActionRunAgent prompt -> do
             triggerAgentRun eventChan workerVar ioEnv sysPrompt prompt (tsHistory nextState)
+            vScrollToEnd (viewportScroll VpHistory)
+          ActionRunGoal condition -> do
+            triggerGoalRun eventChan workerVar ioEnv sysPrompt condition (tsHistory nextState)
             vScrollToEnd (viewportScroll VpHistory)
           ActionScrollHistory delta ->
             vScrollBy (viewportScroll VpHistory) delta

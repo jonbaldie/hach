@@ -16,6 +16,15 @@ module Agent.Types
   , ToolResult(..)
   , toolResultToText
 
+    -- * Goal Evaluation
+  , GoalVerdict(..)
+  , GoalEvaluation(..)
+  , GoalStatus(..)
+  , GoalState(..)
+  , initialGoalState
+  , GoalErrorKind(..)
+  , classifyCompletion
+
     -- * Agent Configuration & Results
   , AgentConfig(..)
   , AgentResult(..)
@@ -27,6 +36,7 @@ import Data.Aeson
   )
 import qualified Data.Aeson as Aeson
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
 
@@ -204,6 +214,95 @@ toolResultToText :: ToolResult -> Text
 toolResultToText (ToolSuccess t) = t
 toolResultToText (ToolError err) = "Error: " <> err
 
+-- | Verdict returned by the goal evaluator LLM.
+data GoalVerdict
+  = GoalMet
+  | GoalNotYetMet
+  | GoalImpossible
+  deriving (Show, Eq, Generic)
+
+instance ToJSON GoalVerdict where
+  toJSON = \case
+    GoalMet         -> "met"
+    GoalNotYetMet   -> "not_yet_met"
+    GoalImpossible  -> "impossible"
+
+instance FromJSON GoalVerdict where
+  parseJSON = Aeson.withText "GoalVerdict" $ \v ->
+    case v of
+      "met"          -> pure GoalMet
+      "not_yet_met"  -> pure GoalNotYetMet
+      "impossible"   -> pure GoalImpossible
+      other          -> fail ("Unknown goal verdict: " <> show other)
+
+-- | Full evaluation result: verdict plus a short reason.
+data GoalEvaluation = GoalEvaluation
+  { geVerdict :: !GoalVerdict
+  , geReason  :: !Text
+  } deriving (Show, Eq, Generic)
+
+instance FromJSON GoalEvaluation where
+  parseJSON = withObject "GoalEvaluation" $ \o ->
+    GoalEvaluation
+      <$> o .: "verdict"
+      <*> o .:? "reason" .!= ""
+
+-- | Lifecycle status of a session goal.
+data GoalStatus
+  = GoalActive
+  | GoalAchieved
+  | GoalFailed
+  | GoalCleared
+  deriving (Show, Eq)
+
+-- | Per-session goal condition store.
+-- Holds one active condition at a time, plus evaluation metadata.
+data GoalState = GoalState
+  { gsCondition       :: !Text
+  , gsStatus          :: !GoalStatus
+  , gsTurnCount       :: !Int
+  , gsLastReason      :: !(Maybe Text)
+  , gsLastVerdict     :: !(Maybe GoalVerdict)
+  , gsNoProgressCount :: !Int
+  } deriving (Show, Eq)
+
+-- | Construct an active goal state from a condition.
+initialGoalState :: Text -> GoalState
+initialGoalState cond = GoalState
+  { gsCondition       = cond
+  , gsStatus          = GoalActive
+  , gsTurnCount       = 0
+  , gsLastReason      = Nothing
+  , gsLastVerdict     = Nothing
+  , gsNoProgressCount = 0
+  }
+
+-- | Classification of a completed turn's content for goal error handling.
+data GoalErrorKind = GoalErrUnrecoverable | GoalErrTransient | GoalNoError
+  deriving (Show, Eq)
+
+-- | Classify the text returned by a completed agent turn.
+-- Returns 'GoalErrUnrecoverable' for auth, credit, context-overflow,
+-- and model-unavailable errors; 'GoalErrTransient' for other errors;
+-- 'GoalNoError' for normal completions.
+classifyCompletion :: Text -> GoalErrorKind
+classifyCompletion content
+  | not (errPrefix `T.isPrefixOf` content) = GoalNoError
+  | otherwise =
+      let lower = T.toLower (T.drop (T.length errPrefix) content)
+          hasAny = any (`T.isInfixOf` lower)
+      in if hasAny ["401", "unauthorized", "authentication", "api key"]
+           then GoalErrUnrecoverable
+         else if hasAny ["402", "payment", "credit", "balance", "quota", "billing"]
+           then GoalErrUnrecoverable
+         else if hasAny ["context", "overflow", "too long", "maximum context", "token limit"]
+           then GoalErrUnrecoverable
+         else if hasAny ["404", "model", "not found", "unavailable", "does not exist"]
+           then GoalErrUnrecoverable
+         else GoalErrTransient
+  where
+    errPrefix = "[API Error]: "
+
 -- | Configuration parameters for the agent.
 data AgentConfig = AgentConfig
   { cfgModel        :: !Text
@@ -228,4 +327,10 @@ data AgentEvent
   | EvTurnComplete !Int
   | EvDone !Text
   | EvError !Text
+  | EvGoalSet !Text
+  | EvGoalEvaluated !GoalVerdict !Text
+  | EvGoalAchieved !Text
+  | EvGoalFailed !Text !Text
+  | EvGoalCleared !Text
+  | EvGoalBlocked !Text
   deriving (Show, Eq)

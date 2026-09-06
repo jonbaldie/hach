@@ -6,7 +6,12 @@ import Agent.Core
 import Agent.Interpreter.Pure
 import Agent.Tools
 import Agent.Types
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import Test.Hspec
 
 spec :: Spec
@@ -14,7 +19,7 @@ spec = do
   let baseConfig = AgentConfig
         { cfgModel = "test-model"
         , cfgSystemPrompt = Just "You are an assistant."
-        , cfgMaxTurns = 5
+        , cfgMaxTurns = 20
         }
 
   describe "agentLoop with Pure Interpreter" $ do
@@ -119,3 +124,226 @@ spec = do
       result `shouldBe` AgentFailed "401 Unauthorized"
       finalHist `shouldBe` initHist
       mockEvents endEnv `shouldContain` [EvError "401 Unauthorized"]
+
+  describe "goalLoop with Pure Interpreter" $ do
+    let goalConfig = baseConfig { cfgMaxTurns = 20 }
+        condition = "All tests pass"
+
+    it "continues when evaluator says not yet met, then stops when met" $ do
+      let step1 _ _ = Right $ AssistantResponse (Just "Working on it.") [] Nothing
+          step2 _ _ = Right $ AssistantResponse (Just "All tests pass now.") [] Nothing
+          eval1 _ _ = GoalEvaluation GoalNotYetMet "Tests not run yet."
+          eval2 _ _ = GoalEvaluation GoalMet "Tests pass."
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockGoalEvaluations = [eval1, eval2]
+            }
+          initHist = [UserMsg condition]
+          ((result, _, goalState), endEnv) =
+            runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
+
+      result `shouldBe` AgentCompleted "All tests pass now."
+      gsStatus goalState `shouldBe` GoalAchieved
+      gsTurnCount goalState `shouldBe` 2
+      mockEvents endEnv `shouldContain` [EvGoalAchieved condition]
+
+    it "stops and marks goal failed when evaluator says impossible" $ do
+      let step1 _ _ = Right $ AssistantResponse (Just "I cannot do this.") [] Nothing
+          eval1 _ _ = GoalEvaluation GoalImpossible "The test framework is missing."
+          env = emptyMockEnv
+            { mockLLMSteps = [step1]
+            , mockGoalEvaluations = [eval1]
+            }
+          initHist = [UserMsg condition]
+          ((result, _, goalState), endEnv) =
+            runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
+
+      result `shouldBe` AgentCompleted "I cannot do this."
+      gsStatus goalState `shouldBe` GoalFailed
+      gsTurnCount goalState `shouldBe` 1
+      mockEvents endEnv `shouldContain` [EvGoalFailed condition "The test framework is missing."]
+
+    it "stops with block cap warning when agent makes no progress for consecutive turns" $ do
+      let step _ _ = Right $ AssistantResponse (Just "Thinking...") [] Nothing
+          eval _ _ = GoalEvaluation GoalNotYetMet "Not done yet."
+          cap = 2
+          env = emptyMockEnv
+            { mockLLMSteps = repeat step
+            , mockGoalEvaluations = repeat eval
+            }
+          initHist = [UserMsg condition]
+          ((result, _, goalState), endEnv) =
+            runPure env (goalLoop goalConfig [] condition cap initHist)
+
+      result `shouldBe` AgentCompleted "Thinking..."
+      gsStatus goalState `shouldBe` GoalActive
+      gsNoProgressCount goalState `shouldBe` cap
+      mockEvents endEnv `shouldContain` [EvGoalBlocked condition]
+
+    it "resets no-progress counter when agent uses tools between completions" $ do
+      let toolCall = ToolCall
+            { callId = "call_1"
+            , functionName = "read_file"
+            , callArgsRaw = "{\"path\":\"hello.txt\"}"
+            }
+          -- Turn 1: agent completes without tools (no progress)
+          step1 _ _ = Right $ AssistantResponse (Just "Thinking.") [] Nothing
+          -- Turn 2: agent calls a tool (progress — resets counter)
+          step2 _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
+          -- Turn 3: agent completes without tools (no progress again)
+          step3 _ _ = Right $ AssistantResponse (Just "Done reading.") [] Nothing
+          -- Turn 4: agent completes without tools, goal met
+          step4 _ _ = Right $ AssistantResponse (Just "All done.") [] Nothing
+          eval1 _ _ = GoalEvaluation GoalNotYetMet "Keep going."
+          eval2 _ _ = GoalEvaluation GoalNotYetMet "Almost there."
+          eval3 _ _ = GoalEvaluation GoalMet "Done."
+          cap = 2
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2, step3, step4]
+            , mockGoalEvaluations = [eval1, eval2, eval3]
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          initHist = [UserMsg condition]
+          ((result, _, goalState), _) =
+            runPure env (goalLoop goalConfig allToolDefs condition cap initHist)
+
+      -- Without the tool call in turn 2 resetting the counter, turns 1 and 3
+      -- would hit cap=2 and block.  With the reset, turn 3 only reaches
+      -- no-progress=1, so turn 4 runs and the evaluator says met.
+      result `shouldBe` AgentCompleted "All done."
+      gsStatus goalState `shouldBe` GoalAchieved
+
+    it "clears the goal when a turn fails with an authentication error" $ do
+      let step1 _ _ = Right $ AssistantResponse (Just "[API Error]: 401 Unauthorized") [] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = [step1]
+            , mockGoalEvaluations = []
+            }
+          initHist = [UserMsg condition]
+          ((result, _, goalState), endEnv) =
+            runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
+
+      result `shouldBe` AgentCompleted "[API Error]: 401 Unauthorized"
+      gsStatus goalState `shouldBe` GoalFailed
+      mockEvents endEnv `shouldContain`
+        [EvGoalFailed condition "[API Error]: 401 Unauthorized"]
+
+    it "clears the goal when a turn fails with a credit balance error" $ do
+      let step1 _ _ = Right $ AssistantResponse (Just "[API Error]: 402 Payment required, credit balance exhausted") [] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = [step1]
+            , mockGoalEvaluations = []
+            }
+          initHist = [UserMsg condition]
+          ((_, _, goalState), _) =
+            runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
+
+      gsStatus goalState `shouldBe` GoalFailed
+
+    it "keeps the goal active when a turn fails with a transient error" $ do
+      let step1 _ _ = Right $ AssistantResponse (Just "[API Error]: 429 Too many requests") [] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = [step1]
+            , mockGoalEvaluations = []
+            }
+          initHist = [UserMsg condition]
+          ((_, _, goalState), _) =
+            runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
+
+      gsStatus goalState `shouldBe` GoalActive
+
+    it "logs EvGoalSet when the goal loop starts" $ do
+      let step1 _ _ = Right $ AssistantResponse (Just "Done.") [] Nothing
+          eval1 _ _ = GoalEvaluation GoalMet "Done."
+          env = emptyMockEnv
+            { mockLLMSteps = [step1]
+            , mockGoalEvaluations = [eval1]
+            }
+          initHist = [UserMsg condition]
+          (_, endEnv) =
+            runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
+
+      mockEvents endEnv `shouldContain` [EvGoalSet condition]
+
+    it "logs EvGoalEvaluated for each evaluation" $ do
+      let step1 _ _ = Right $ AssistantResponse (Just "Working.") [] Nothing
+          eval1 _ _ = GoalEvaluation GoalNotYetMet "Not done."
+          eval2 _ _ = GoalEvaluation GoalMet "Done."
+          step2 _ _ = Right $ AssistantResponse (Just "Done.") [] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockGoalEvaluations = [eval1, eval2]
+            }
+          initHist = [UserMsg condition]
+          (_, endEnv) =
+            runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
+
+      mockEvents endEnv `shouldContain` [EvGoalEvaluated GoalNotYetMet "Not done."]
+      mockEvents endEnv `shouldContain` [EvGoalEvaluated GoalMet "Done."]
+
+    it "injects evaluator reason as guidance for the next turn" $ do
+      let step1 _ _ = Right $ AssistantResponse (Just "Working.") [] Nothing
+          step2 hist _ =
+            case last hist of
+              UserMsg guidance ->
+                Right $ AssistantResponse (Just ("Received: " <> guidance)) [] Nothing
+              _ ->
+                Right $ AssistantResponse (Just "No guidance received.") [] Nothing
+          eval1 _ _ = GoalEvaluation GoalNotYetMet "Run the tests."
+          eval2 _ _ = GoalEvaluation GoalMet "Tests pass."
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockGoalEvaluations = [eval1, eval2]
+            }
+          initHist = [UserMsg condition]
+          ((result, finalHist, _), _) =
+            runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
+
+      result `shouldBe` AgentCompleted "Received: Goal not yet met. Run the tests. Continue working toward: All tests pass"
+      -- The guidance message should be in the history
+      finalHist `shouldSatisfy` \h ->
+        any (\case UserMsg m -> "Run the tests." `T.isInfixOf` m; _ -> False) h
+
+  describe "GoalEvaluation JSON Parsing" $ do
+    it "parses a valid met verdict" $ do
+      let json = "{\"verdict\":\"met\",\"reason\":\"Tests pass.\"}"
+      case Aeson.decodeStrict (TE.encodeUtf8 json) of
+        Just (GoalEvaluation v r) -> do
+          v `shouldBe` GoalMet
+          r `shouldBe` "Tests pass."
+        Nothing -> expectationFailure "Failed to parse GoalEvaluation"
+
+    it "parses a valid not_yet_met verdict" $ do
+      let json = "{\"verdict\":\"not_yet_met\",\"reason\":\"Still working.\"}"
+      case Aeson.decodeStrict (TE.encodeUtf8 json) of
+        Just (GoalEvaluation v _) -> v `shouldBe` GoalNotYetMet
+        Nothing -> expectationFailure "Failed to parse GoalEvaluation"
+
+    it "parses a valid impossible verdict" $ do
+      let json = "{\"verdict\":\"impossible\",\"reason\":\"Missing framework.\"}"
+      case Aeson.decodeStrict (TE.encodeUtf8 json) of
+        Just (GoalEvaluation v _) -> v `shouldBe` GoalImpossible
+        Nothing -> expectationFailure "Failed to parse GoalEvaluation"
+
+    it "parses with a missing reason field" $ do
+      let json = "{\"verdict\":\"met\"}"
+      case Aeson.decodeStrict (TE.encodeUtf8 json) of
+        Just (GoalEvaluation v r) -> do
+          v `shouldBe` GoalMet
+          r `shouldBe` ""
+        Nothing -> expectationFailure "Failed to parse GoalEvaluation"
+
+    it "fails on an unknown verdict" $ do
+      let json = "{\"verdict\":\"maybe\",\"reason\":\"Unsure.\"}"
+      Aeson.decodeStrict (TE.encodeUtf8 json :: BS.ByteString)
+        `shouldSatisfy` \case
+          Just (_ :: GoalEvaluation) -> False
+          Nothing -> True
+
+    it "ToJSON/FromJSON round-trips for GoalVerdict" $ do
+      Aeson.encode GoalMet `shouldBe` "\"met\""
+      Aeson.encode GoalNotYetMet `shouldBe` "\"not_yet_met\""
+      Aeson.encode GoalImpossible `shouldBe` "\"impossible\""
+      Aeson.decodeStrict "\"met\"" `shouldBe` Just GoalMet
+      Aeson.decodeStrict "\"not_yet_met\"" `shouldBe` Just GoalNotYetMet
+      Aeson.decodeStrict "\"impossible\"" `shouldBe` Just GoalImpossible
