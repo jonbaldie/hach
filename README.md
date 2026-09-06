@@ -3,158 +3,82 @@
 [![CI](https://github.com/jonbaldie/hach/actions/workflows/ci.yml/badge.svg)](https://github.com/jonbaldie/hach/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A minimalist, principled agentic coding harness written in idiomatic Haskell.
-
-The harness implements an autonomous interaction loop between an LLM policy (via the OpenRouter API) and a coding environment (file inspection, file creation/modification, directory listing, and shell command execution).
-
----
+Hach is a coding harness written in Haskell. It runs an autonomous loop between an LLM and your local workspace to read files, edit code, and run terminal commands.
 
 ## Installation
 
 ### Homebrew (macOS)
 
-Install pre-built native binaries via the official tap:
-
 ```bash
 brew install jonbaldie/tap/hach
 ```
 
-### Build from Source (Cabal)
+### Build from source
 
-Requires GHC 9.8+ and Cabal 3.10+:
+Clone the repository and build the binary with Cabal (requires GHC 9.8 or later and Cabal 3.10 or later):
 
 ```bash
 git clone https://github.com/jonbaldie/hach.git
 cd hach
 cabal build exe:hach
-cabal run hach
 ```
 
----
+## Quickstart
 
-## Architecture: Interaction as a Free Monad
+Start the interactive terminal interface:
 
-Most agent frameworks in Python rely on imperative callbacks, implicit mutable state, and complicated mocking frameworks. In this harness, an agent interaction is modeled as a free monad over an interaction signature functor:
-
-$$\text{AgentProgram } a \cong \text{Free } \text{AgentF } a$$
-
-```haskell
--- The atomic interaction signature
-data AgentF next
-  = PromptLLM   ![Message] ![ToolDef] (AssistantResponse -> next)
-  | ExecuteTool !ToolCall (ToolResult -> next)
-  | LogEvent    !AgentEvent next
-  deriving Functor
-
--- The Free Monad over AgentF
-data AgentProgram a
-  = Pure a
-  | Free (AgentF (AgentProgram a))
+```bash
+hach
 ```
 
-### The Algebra and Catamorphism
+You can pass a prompt directly:
 
-By separating the interaction structure from its execution semantics, any interpretation is simply an algebra fold:
-
-```haskell
-data AgentAlgebra m = AgentAlgebra
-  { interpPrompt :: [Message] -> [ToolDef] -> m AssistantResponse
-  , interpTool   :: ToolCall -> m ToolResult
-  , interpLog    :: AgentEvent -> m ()
-  }
-
-foldAgentProgram :: Monad m => AgentAlgebra m -> AgentProgram a -> m a
+```bash
+hach "Inspect the src directory and list all modules"
 ```
 
-1. **`Hach.Interpreter.Pure`**: Evaluates the entire agent dialogue against an in-memory mock environment (`MockEnv`), allowing fast, deterministic testing of multi-turn tool loops without touching the network or disk.
-2. **`Hach.Interpreter.IO`**: Connects the agent to the OpenRouter HTTP API and real workspace effects (`read_file`, `write_file`, `run_command`, `list_dir`).
+To run without the terminal user interface, add the --no-tui flag:
 
----
-
-## Available Tools
-
-The harness equips the model with four standard coding tools:
-
-- `read_file`: Reads UTF-8 file contents safely from the workspace.
-- `write_file`: Writes or overwrites a file, automatically creating parent directories.
-- `run_command`: Executes a shell command inside the workspace and captures exit code, stdout, and stderr.
-- `list_dir`: Lists directory contents.
-
----
+```bash
+hach --no-tui "Run the test suite and fix any errors"
+```
 
 ## Configuration
 
-Configuration resolution precedence:
+Hach connects to the OpenRouter API. You must set your API key and model before running the harness.
 
-1. **OpenRouter API Key**:
-   - Process environment variable `OPENROUTER_API_KEY`
-   - `.env` file (`OPENROUTER_API_KEY=<key>`)
+### API key
 
-2. **OpenRouter Model**:
-   - `--model <name>` or `--model=<name>` command-line flag
-   - Process environment variable `OPENROUTER_MODEL`
-   - Line 2 of `.env` (or `OPENROUTER_MODEL=<model>` in `.env`)
-
----
-
-## Running the Tests
-
-### Unit Tests (Pure Simulation & Wire Format)
-```bash
-cabal test hach:test:hach-test --test-show-details=always
-```
-
-### Live OpenRouter Integration Test
-Runs an end-to-end multi-turn loop against the real OpenRouter API using the `.env` configuration:
-```bash
-cabal run hach-integration-test
-```
-
----
-
-## Interactive Modern TUI
-
-The harness launches directly into a modern, full-screen **Terminal User Interface (TUI)** built with Brick:
-
-- **Header Bar**: Displays real-time operational status (`IDLE`, `THINKING...`, `RUNNING TOOL: <name>`, `ERROR`), active model, and current/maximum turns.
-- **Dialogue History Panel**: Scrollable conversation log with color-coded badges for user requests, assistant answers, and system notices.
-- **Tool Activity Panel**: Interactive cards for each tool execution (`read_file`, `write_file`, `run_command`, `list_dir`) with expandable inputs and outputs.
-- **Task Input Panel**: Multi-line prompt buffer with live cursor.
-
-### Keyboard Shortcuts
-
-| Shortcut | Action |
-|---|---|
-| `Tab` / `Shift+Tab` | Cycle focus between Input, History, and Tool Activity panels |
-| `Enter` | Submit prompt (in Input) or toggle expand/collapse (in Tools) |
-| `Ctrl+U` | Clear input buffer |
-| `Up` / `Down` | Scroll conversation (in History) or select tool card (in Tools) |
-| `PageUp` / `PageDown` | Fast-scroll conversation history |
-| `c` | Clear conversation history (in History panel) |
-| `Esc` / `Ctrl+C` | Cancel running agent turn, or close help dialog |
-| `?` | Toggle shortcut help overlay |
-| `Ctrl+Q` | Cleanly exit the application |
-
----
-
-## Running the Harness
+Set your OpenRouter API key as an environment variable or in a .env file:
 
 ```bash
-# Launch interactive full-screen TUI (default):
-hach
-
-# Or via Cabal in development:
-cabal run hach
-
-# Launch TUI with an initial prompt and model override:
-hach --model meta/muse-glimmer-30b "Inspect the src directory"
-
-# Run in headless streaming CLI mode (e.g. for scripting or non-TTY pipes):
-hach --no-tui --model meta/muse-glimmer-30b "Say hello"
+export OPENROUTER_API_KEY="your-api-key"
 ```
 
----
+In a .env file:
 
-## License
+```text
+OPENROUTER_API_KEY=your-api-key
+```
 
-This project is licensed under the [MIT License](LICENSE).
+### Model selection
+
+You can set the model in three ways:
+
+1. Pass the --model flag on the command line:
+
+```bash
+hach --model anthropic/claude-3.5-sonnet "Your prompt"
+```
+
+2. Set the OPENROUTER_MODEL environment variable:
+
+```bash
+export OPENROUTER_MODEL="anthropic/claude-3.5-sonnet"
+```
+
+3. Add the model to your .env file:
+
+```text
+OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
+```
