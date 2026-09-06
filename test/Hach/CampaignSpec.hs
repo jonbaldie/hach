@@ -472,7 +472,8 @@ spec = do
 
     it "--no-tui is sticky regardless of surrounding words" $ vigorous $
       \(wordsBefore :: [String]) (wordsAfter :: [String]) ->
-        let args = wordsBefore ++ ["--no-tui"] ++ wordsAfter
+        let cleanBefore = filter (/= "--") wordsBefore
+            args = cleanBefore ++ ["--no-tui"] ++ wordsAfter
         in case parseCliArgs args of
              Left _     -> True
              Right opts -> optNoTui opts

@@ -17,11 +17,10 @@ COPY app/ app/
 COPY src/ src/
 COPY LICENSE README.md ./
 
-# Build the executable
-RUN cabal build exe:hach
-
-# Install binary to /build/bin and strip symbols
-RUN mkdir -p /build/bin && \
+# Create directory stubs referenced by cabal, build, and strip executable
+RUN mkdir -p test test-integration && \
+    cabal build exe:hach && \
+    mkdir -p /build/bin && \
     cp "$(cabal list-bin exe:hach)" /build/bin/hach && \
     strip /build/bin/hach
 
@@ -30,16 +29,19 @@ RUN mkdir -p /build/bin && \
 # ------------------------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
 
-# Install runtime dependencies
+# Install runtime dependencies and system tools
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
-        libgmp10 \
-        libffi8 \
-        zlib1g \
-        git \
         curl \
-        netbase && \
+        gh \
+        git \
+        libffi8 \
+        libgmp10 \
+        libnotify-bin \
+        netbase \
+        tini \
+        zlib1g && \
     rm -rf /var/lib/apt/lists/*
 
 # UTF-8 locale and terminal settings for Haskell & Brick TUI
@@ -47,16 +49,17 @@ ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     TERM=xterm-256color
 
-# Create non-root user and workspace directory
-RUN useradd -m -u 1000 -s /bin/bash hach && \
+# Configure git safe.directory and set up non-root user and workspace
+RUN git config --system --add safe.directory '*' && \
+    useradd -m -u 1000 -U -s /bin/bash hach && \
     mkdir -p /workspace && \
     chown -R hach:hach /workspace
 
 # Copy compiled binary from builder
 COPY --from=builder /build/bin/hach /usr/local/bin/hach
 
-USER hach
+USER 1000:1000
 WORKDIR /workspace
 
-ENTRYPOINT ["hach"]
+ENTRYPOINT ["/usr/bin/tini", "--", "hach"]
 CMD []

@@ -108,7 +108,8 @@ spec = do
 
       it "always sets optNoTui = True when --no-tui is present" $
         withNumTests 2000 $ property $ \wordsBefore wordsAfter ->
-          let args = wordsBefore ++ ["--no-tui"] ++ wordsAfter
+          let cleanBefore = filter (/= "--") wordsBefore
+              args = cleanBefore ++ ["--no-tui"] ++ wordsAfter
           in case parseCliArgs args of
                Left _     -> True
                Right opts -> optNoTui opts == True
