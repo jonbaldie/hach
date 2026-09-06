@@ -11,7 +11,6 @@ import Agent.Tools
 import Agent.TUI.App (runTui)
 import Agent.Types
 import Control.Monad (when)
-import Data.Char (isSpace)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (getCurrentDirectory)
@@ -71,12 +70,11 @@ main = do
           let argText = if trimmedPrompt == "/goal"
                          then ""
                          else T.strip (T.drop (T.length ("/goal " :: T.Text)) trimmedPrompt)
-              argWord = T.toLower (T.takeWhile (not . isSpace) argText)
           if T.null argText
             then do
               putStrLn "Usage: /goal <condition> or /goal clear"
               putStrLn "Example: /goal all tests pass"
-            else if argWord `elem` goalClearAliases
+            else if goalArgIsClear argText
               then putStrLn "No active goal to clear (headless mode has no persistent goal state)."
             else if T.length argText > maxGoalConditionLength
               then do
@@ -132,14 +130,6 @@ main = do
               putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
             AgentFailed err -> do
               putStrLn ("\nAgent failed with error: " <> T.unpack err)
-
--- | Maximum length of a goal condition text.
-maxGoalConditionLength :: Int
-maxGoalConditionLength = 4000
-
--- | Aliases for clearing the goal.
-goalClearAliases :: [T.Text]
-goalClearAliases = ["clear", "stop", "off", "reset", "none", "cancel"]
 
 -- | Print a summary of the goal state after a headless goal run.
 printGoalSummary :: GoalState -> IO ()
