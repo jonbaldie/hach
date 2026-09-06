@@ -130,6 +130,10 @@ runTui ioEnv initialPrompt = do
         , appAttrMap      = const tuiAttrMap
         }
 
+  -- Vty's built-in width table under-measures the UI's double-width glyphs,
+  -- which shifts everything drawn after them and breaks border alignment.
+  installWideGlyphWidths
+
   let buildVty = do
         vty <- VtyCross.mkVty Vty.defaultConfig
         let output = Vty.outputIface vty

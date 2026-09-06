@@ -8,6 +8,7 @@ import qualified Agent.EnvSpec as EnvSpec
 import qualified Agent.OpenRouterSpec as OpenRouterSpec
 import qualified Agent.ToolsSpec as ToolsSpec
 import qualified Agent.TUISpec as TUISpec
+import qualified Agent.TUILayoutSpec as TUILayoutSpec
 import qualified Agent.PropertySpec as PropertySpec
 import qualified Agent.SkillsSpec as SkillsSpec
 
@@ -18,5 +19,6 @@ main = hspec $ do
   describe "Agent.Tools" ToolsSpec.spec
   describe "Agent.OpenRouter" OpenRouterSpec.spec
   describe "Agent.TUI (Pure Reducer Seam)" TUISpec.spec
+  describe "Agent.TUI (Layout / Border Alignment)" TUILayoutSpec.spec
   describe "Agent.Property (CGPT & Fuzzing)" PropertySpec.spec
   describe "Agent.Skills" SkillsSpec.spec

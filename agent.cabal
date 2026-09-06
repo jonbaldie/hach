@@ -104,6 +104,7 @@ test-suite agent-test
         Agent.EnvSpec
         Agent.OpenRouterSpec
         Agent.TUISpec
+        Agent.TUILayoutSpec
         Agent.PropertySpec
         Agent.SkillsSpec
     build-depends:
@@ -114,7 +115,9 @@ test-suite agent-test
         containers,
         aeson,
         hspec >= 2.10,
+        brick >= 2.0,
         vty >= 6.0,
+        vector,
         QuickCheck >= 2.14,
         directory,
         filepath

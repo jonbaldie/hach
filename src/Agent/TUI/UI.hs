@@ -6,6 +6,8 @@ module Agent.TUI.UI
   , tuiAttrMap
   , formatTokens
   , Name(..)
+  , wideGlyphs
+  , installWideGlyphWidths
   ) where
 
 import Agent.Skills (skillInvocationCompletion)
@@ -15,19 +17,58 @@ import Brick
 import Brick.Widgets.Border
 import Brick.Widgets.Border.Style
 import Brick.Widgets.Center
+import Control.Exception (handle)
 import Data.Aeson (Value, (.:))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonTypes
+import Data.Char (ord)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Graphics.Vty as Vty
+import Graphics.Vty.UnicodeWidthTable.Install (TableInstallException, installUnicodeWidthTable)
+import Graphics.Vty.UnicodeWidthTable.Types (UnicodeWidthTable(..), WidthTableRange(..))
 
 data Name
   = VpHistory
   | VpTools
   | VpInput
   deriving (Show, Eq, Ord)
+
+--------------------------------------------------------------------------------
+-- Glyph Widths
+--------------------------------------------------------------------------------
+
+-- | Glyphs used below that terminals draw two columns wide.
+--
+-- Vty 6.6 ships a character-width table predating Unicode 9, so it measures
+-- each of these as one column. Every widget vty places after one of them on the
+-- same row therefore lands one column left of where the terminal actually draws
+-- it, which knocks the panel borders out of alignment on exactly those rows.
+--
+-- Keep this list in sync with the glyphs used in this module: any character
+-- with East_Asian_Width W/F or Emoji_Presentation=Yes belongs here.
+wideGlyphs :: [Char]
+wideGlyphs =
+  [ '\x1F4AC'  -- SPEECH BALLOON, in the Dialogue History border label
+  , '\x26A1'   -- HIGH VOLTAGE SIGN, in the Tool Activity border label
+  , '\x23FA'   -- BLACK CIRCLE FOR RECORD, the tool card bullet
+  ]
+
+-- | Teach vty the real terminal width of 'wideGlyphs'. Must run before the
+-- first render. Characters absent from the override keep their built-in width.
+--
+-- Vty's width table is process-global and installable only once, so a repeat
+-- call throws; the first install has already taken effect, and a failure here
+-- costs alignment rather than correctness, so it must not take down the TUI.
+installWideGlyphWidths :: IO ()
+installWideGlyphWidths =
+  handle ignoreInstallFailure $
+    installUnicodeWidthTable $ UnicodeWidthTable
+      [ WidthTableRange (fromIntegral (ord c)) 1 2 | c <- wideGlyphs ]
+  where
+    ignoreInstallFailure :: TableInstallException -> IO ()
+    ignoreInstallFailure _ = pure ()
 
 --------------------------------------------------------------------------------
 -- Theme Attributes (Claude Code / AGY CLI Style)
