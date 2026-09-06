@@ -352,7 +352,8 @@ goalArgIsClear argText =
 data AgentConfig = AgentConfig
   { cfgModel        :: !Text
   , cfgSystemPrompt :: !(Maybe Text)
-  , cfgMaxTurns     :: !Int
+  -- | Maximum number of agent turns. 'Nothing' means unlimited.
+  , cfgMaxTurns     :: !(Maybe Int)
   } deriving (Show, Eq)
 
 -- | Final result of running the agent harness.

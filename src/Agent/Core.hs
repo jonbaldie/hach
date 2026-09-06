@@ -113,7 +113,7 @@ agentStep
   -> [Message]
   -> AgentProgram (Either (AgentResult, [Message]) [Message])
 agentStep cfg tools turn currentHistory
-  | turn > cfgMaxTurns cfg = do
+  | maybe False (turn >) (cfgMaxTurns cfg) = do
       logEvent (EvError "Maximum turns exceeded")
       pure $ Left (AgentMaxTurnsReached (turn - 1), currentHistory)
   | otherwise = do

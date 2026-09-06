@@ -74,7 +74,7 @@ data DialogueItem
 data TuiState = TuiState
   { tsModelName          :: !Text
   , tsCurrentTurn        :: !Int
-  , tsMaxTurns           :: !Int
+  , tsMaxTurns           :: !(Maybe Int)
   , tsStatus             :: !TuiStatus
   , tsFocus              :: !FocusArea
   , tsInputBuffer        :: !Text
@@ -95,7 +95,7 @@ data TuiState = TuiState
   } deriving (Show, Eq)
 
 -- | Initialize a clean TUI state.
-initialTuiState :: Text -> Int -> TuiState
+initialTuiState :: Text -> Maybe Int -> TuiState
 initialTuiState model maxTurns = TuiState
   { tsModelName          = model
   , tsCurrentTurn        = 0
