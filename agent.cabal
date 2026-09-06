@@ -130,6 +130,7 @@ test-suite agent-test
         Agent.MemorySpec
         Agent.GitSpec
         Agent.TasksSpec
+        Agent.NotificationsSpec
     build-depends:
         base >= 4.18 && < 5,
         agent,
@@ -144,4 +145,5 @@ test-suite agent-test
         QuickCheck >= 2.14,
         directory,
         filepath,
+        process,
         time

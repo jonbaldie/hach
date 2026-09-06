@@ -256,4 +256,35 @@ spec = do
         r <- executeCodingTool testSandbox (ToolCall "tw" "TodoWrite" "{\"tasks\":[\"Step 1\",\"Step 2\"]}")
         r `shouldSatisfy` \case ToolSuccess out -> "2 todo items" `T.isInfixOf` out; _ -> False
 
+      it "manages background tasks with consistent IDs and error handling (BUG-6)" $ do
+        r1 <- executeCodingTool "." (ToolCall "t1" "TaskCreate" "{\"name\":\"compile-bg\",\"command\":\"sleep 0.1\"}")
+        case r1 of
+          ToolSuccess out -> out `shouldSatisfy` ("Created background task bg-" `T.isInfixOf`)
+          ToolError err   -> expectationFailure ("TaskCreate failed: " ++ T.unpack err)
+
+        rList <- executeCodingTool "." (ToolCall "tl" "TaskList" "{}")
+        case rList of
+          ToolSuccess out -> out `shouldSatisfy` ("compile-bg" `T.isInfixOf`)
+          ToolError err   -> expectationFailure ("TaskList failed: " ++ T.unpack err)
+
+        rGet <- executeCodingTool "." (ToolCall "tg" "TaskGet" "{\"task_id\":\"bg-1\"}")
+        case rGet of
+          ToolSuccess out -> out `shouldSatisfy` ("compile-bg" `T.isInfixOf`)
+          ToolError err   -> expectationFailure ("TaskGet failed: " ++ T.unpack err)
+
+        rUpdate <- executeCodingTool "." (ToolCall "tu" "TaskUpdate" "{\"task_id\":\"bg-1\",\"status\":\"completed\"}")
+        case rUpdate of
+          ToolSuccess out -> out `shouldSatisfy` ("Updated task bg-1 status to completed" `T.isInfixOf`)
+          ToolError err   -> expectationFailure ("TaskUpdate failed: " ++ T.unpack err)
+
+        rUpdateMissing <- executeCodingTool "." (ToolCall "tu2" "TaskUpdate" "{\"task_id\":\"nonexistent-id\",\"status\":\"completed\"}")
+        case rUpdateMissing of
+          ToolError err   -> err `shouldSatisfy` ("Task not found: nonexistent-id" `T.isInfixOf`)
+          ToolSuccess out -> expectationFailure ("Expected error on nonexistent task update, got: " ++ T.unpack out)
+
+        rStop <- executeCodingTool "." (ToolCall "ts" "TaskStop" "{\"task_id\":\"bg-1\"}")
+        case rStop of
+          ToolSuccess out -> out `shouldSatisfy` ("Stopped task bg-1" `T.isInfixOf`)
+          ToolError err   -> expectationFailure ("TaskStop failed: " ++ T.unpack err)
+
 

@@ -7,6 +7,7 @@ module Agent.Tasks
   , TaskStore
   , emptyTaskStore
   , createTask
+  , createTaskWithId
   , getTask
   , listTasks
   , updateTask
@@ -29,6 +30,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import GHC.Generics (Generic)
+import System.Exit (ExitCode)
 import System.IO (Handle, hIsEOF)
 import System.Process
   ( CreateProcess(..)
@@ -37,6 +39,7 @@ import System.Process
   , createProcess
   , shell
   , terminateProcess
+  , waitForProcess
   )
 
 -- | Model task item for TodoWrite / TaskCreate / TaskList.
@@ -54,11 +57,15 @@ type TaskStore = Map Text Task
 emptyTaskStore :: TaskStore
 emptyTaskStore = Map.empty
 
+createTaskWithId :: TaskStore -> Text -> Text -> (Task, TaskStore)
+createTaskWithId store customId title =
+  let newTask = Task customId title "pending"
+  in (newTask, Map.insert customId newTask store)
+
 createTask :: TaskStore -> Text -> (Task, TaskStore)
 createTask store title =
   let nextId = "task-" <> T.pack (show (Map.size store + 1))
-      newTask = Task nextId title "pending"
-  in (newTask, Map.insert nextId newTask store)
+  in createTaskWithId store nextId title
 
 getTask :: TaskStore -> Text -> Maybe Task
 getTask store tid = Map.lookup tid store
@@ -110,6 +117,10 @@ spawnBackgroundProcess reg root cmd = do
       pure ()
     _ -> pure ()
 
+  _ <- forkIO $ do
+    _ <- try (waitForProcess pHandle) :: IO (Either SomeException ExitCode)
+    atomically $ writeTVar runVar False
+
   tId <- atomically $ do
     m <- readTVar reg
     let tid = TaskId ("bg-" <> T.pack (show (Map.size m + 1)))
@@ -153,5 +164,6 @@ stopBackgroundProcess reg tid = do
     Nothing -> pure False
     Just bp -> do
       res <- try (terminateProcess (bpHandle bp)) :: IO (Either SomeException ())
+      _ <- try (waitForProcess (bpHandle bp)) :: IO (Either SomeException ExitCode)
       atomically $ writeTVar (bpRunning bp) False
       pure (case res of Right () -> True; Left _ -> False)

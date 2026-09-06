@@ -138,12 +138,12 @@ estimateCostUsd model promptTokens completionTokens =
   where
     -- Rates in USD per million tokens
     lookupRates m
-      | "opus" `T.isInfixOf` m    = (15.0, 75.0)
-      | "sonnet" `T.isInfixOf` m  = (3.0, 15.0)
-      | "haiku" `T.isInfixOf` m   = (0.25, 1.25)
-      | "gpt-4o" `T.isInfixOf` m  = (5.0, 15.0)
+      | "opus" `T.isInfixOf` m        = (15.0, 75.0)
+      | "sonnet" `T.isInfixOf` m      = (3.0, 15.0)
+      | "haiku" `T.isInfixOf` m       = (0.25, 1.25)
       | "gpt-4o-mini" `T.isInfixOf` m = (0.15, 0.6)
-      | otherwise                 = (1.0, 3.0)
+      | "gpt-4o" `T.isInfixOf` m      = (5.0, 15.0)
+      | otherwise                     = (1.0, 3.0)
 
 -- | Generate a unique session identifier.
 generateSessionId :: IO Text

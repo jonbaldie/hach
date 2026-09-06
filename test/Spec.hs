@@ -21,6 +21,7 @@ import qualified Agent.MCPSpec as MCPSpec
 import qualified Agent.MemorySpec as MemorySpec
 import qualified Agent.GitSpec as GitSpec
 import qualified Agent.TasksSpec as TasksSpec
+import qualified Agent.NotificationsSpec as NotificationsSpec
 
 main :: IO ()
 main = hspec $ do
@@ -42,3 +43,4 @@ main = hspec $ do
   describe "Agent.Memory" MemorySpec.spec
   describe "Agent.Git" GitSpec.spec
   describe "Agent.Tasks" TasksSpec.spec
+  describe "Agent.Notifications" NotificationsSpec.spec

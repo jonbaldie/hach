@@ -79,6 +79,35 @@ spec = describe "Agent.Permissions" $ do
         PermDeny _ -> pure ()
         other      -> expectationFailure ("Expected PermDeny for .claude write, got " <> show other)
 
+    it "denies writes to .agents directory" $ do
+      let args = object ["path" .= (".agents/worktrees/feat" :: String), "content" .= ("" :: String)]
+      case evalPermission ModeAcceptEdits [] "write_file" args of
+        PermDeny _ -> pure ()
+        other      -> expectationFailure ("Expected PermDeny for .agents write, got " <> show other)
+
+    it "allows writes to standard repository files like .gitignore, .gitattributes, and .github (BUG-3)" $ do
+      isProtectedPath ".gitignore" `shouldBe` False
+      isProtectedPath ".gitattributes" `shouldBe` False
+      isProtectedPath ".gitmodules" `shouldBe` False
+      isProtectedPath ".github/workflows/ci.yml" `shouldBe` False
+      isProtectedPath ".gitlab-ci.yml" `shouldBe` False
+
+      let gitignoreArgs = object ["path" .= (".gitignore" :: String), "content" .= ("dist-newstyle\n" :: String)]
+      evalPermission ModeAcceptEdits [] "write_file" gitignoreArgs `shouldBe` PermAllow
+
+      let ciArgs = object ["path" .= (".github/workflows/ci.yml" :: String), "content" .= ("name: CI\n" :: String)]
+      evalPermission ModeAcceptEdits [] "write_file" ciArgs `shouldBe` PermAllow
+
+  describe "Glob matching (BUG-4)" $ do
+    it "matches zero or more directories with **/" $ do
+      matchGlob "src/**/*.hs" "src/foo.hs" `shouldBe` True
+      matchGlob "src/**/*.hs" "src/bar/foo.hs" `shouldBe` True
+      matchGlob "src/**/*.hs" "src/a/b/c/foo.hs" `shouldBe` True
+      matchGlob "**/*.hs" "foo.hs" `shouldBe` True
+      matchGlob "**/*.hs" "a/b/foo.hs" `shouldBe` True
+      matchGlob "src/*.hs" "src/foo.hs" `shouldBe` True
+      matchGlob "src/*.hs" "src/sub/foo.hs" `shouldBe` False
+
   describe "Explicit rules" $ do
     it "allow rule overrides default ask" $ do
       let rule = PermissionRule

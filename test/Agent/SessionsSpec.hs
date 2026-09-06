@@ -59,3 +59,10 @@ spec = describe "Agent.Sessions" $ do
         [ SystemMsg "System instructions"
         , UserMsg "[Context summary of earlier turns]:\nSummary of tasks 1 and 2 completed."
         ]
+
+  describe "Cost estimation (BUG-7)" $ do
+    it "correctly prices gpt-4o-mini without shadowing from gpt-4o" $ do
+      -- 1M prompt ($0.15) + 1M completion ($0.60) = $0.75
+      estimateCostUsd "openai/gpt-4o-mini" 1000000 1000000 `shouldBe` 0.75
+      -- 1M prompt ($5.00) + 1M completion ($15.00) = $20.00
+      estimateCostUsd "openai/gpt-4o" 1000000 1000000 `shouldBe` 20.0

@@ -124,6 +124,7 @@ import Agent.Tasks
   , TaskStore
   , emptyTaskStore
   , createTask
+  , createTaskWithId
   , getTask
   , listTasks
   , updateTask
@@ -1449,7 +1450,7 @@ executeTaskCreate root (TaskCreateArgs name mCmd) = do
   case mCmd of
     Just cmd | not (T.null (T.strip cmd)) -> do
       tid <- spawnBackgroundProcess globalBgRegistry root cmd
-      atomically $ modifyTVar' globalTaskStore (\s -> snd (createTask s (name <> " (" <> unTaskId tid <> ")")))
+      atomically $ modifyTVar' globalTaskStore (\s -> snd (createTaskWithId s (unTaskId tid) name))
       pure $ ToolSuccess ("Created background task " <> unTaskId tid <> " running: " <> cmd)
     _ -> do
       t <- atomically $ do
@@ -1474,14 +1475,24 @@ executeTaskList = do
 
 executeTaskUpdate :: TaskUpdateArgs -> IO ToolResult
 executeTaskUpdate (TaskUpdateArgs (TaskId tid) st) = do
-  atomically $ modifyTVar' globalTaskStore (\s -> updateTask s tid st)
-  pure $ ToolSuccess ("Updated task " <> tid <> " status to " <> st)
+  res <- atomically $ do
+    s <- readTVar globalTaskStore
+    case getTask s tid of
+      Nothing -> pure (Left ("Task not found: " <> tid))
+      Just _  -> do
+        writeTVar globalTaskStore (updateTask s tid st)
+        pure (Right ())
+  case res of
+    Left err -> pure $ ToolError err
+    Right () -> pure $ ToolSuccess ("Updated task " <> tid <> " status to " <> st)
 
 executeTaskStop :: TaskStopArgs -> IO ToolResult
 executeTaskStop (TaskStopArgs tid) = do
   ok <- stopBackgroundProcess globalBgRegistry tid
   if ok
-    then pure $ ToolSuccess ("Stopped task " <> unTaskId tid)
+    then do
+      atomically $ modifyTVar' globalTaskStore (\s -> updateTask s (unTaskId tid) "stopped")
+      pure $ ToolSuccess ("Stopped task " <> unTaskId tid)
     else pure $ ToolError ("Failed to stop task " <> unTaskId tid)
 
 executeMonitor :: MonitorArgs -> IO ToolResult
