@@ -17,6 +17,7 @@ module Hach.Skills
   , injectDynamicContext
   ) where
 
+import Hach.Paths (resolveWorkspacePath)
 import Control.Applicative ((<|>))
 import Control.Exception (try, SomeException)
 import qualified Data.ByteString as BS
@@ -206,16 +207,19 @@ injectDynamicContext root raw = do
           let afterPrefix = T.drop 7 rest
           case T.breakOn "}}" afterPrefix of
             (fpText, restAfter) | not (T.null restAfter) -> do
-              let targetFp = root </> T.unpack (T.strip fpText)
-                  trailing = T.drop 2 restAfter
-              exists <- doesFileExist targetFp
-              fileContent <- if exists
-                then do
-                  bRes <- try (BS.readFile targetFp) :: IO (Either SomeException BS.ByteString)
-                  case bRes of
-                    Right bs -> pure (TE.decodeUtf8With (\_ _ -> Just ' ') bs)
-                    Left _   -> pure ("{{file:" <> fpText <> "}}")
-                else pure ("{{file:" <> fpText <> "}}")
+              let trailing = T.drop 2 restAfter
+              pathRes <- resolveWorkspacePath root (T.unpack (T.strip fpText))
+              fileContent <- case pathRes of
+                Left _ -> pure ("{{file:" <> fpText <> "}}")
+                Right targetFp -> do
+                  exists <- doesFileExist targetFp
+                  if exists
+                    then do
+                      bRes <- try (BS.readFile targetFp) :: IO (Either SomeException BS.ByteString)
+                      case bRes of
+                        Right bs -> pure (TE.decodeUtf8With (\_ _ -> Just ' ') bs)
+                        Left _   -> pure ("{{file:" <> fpText <> "}}")
+                    else pure ("{{file:" <> fpText <> "}}")
               nextTrailing <- replaceFilePlaceholders trailing
               pure (before <> fileContent <> nextTrailing)
             _ -> pure line

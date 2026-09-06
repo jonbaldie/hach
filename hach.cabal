@@ -46,6 +46,7 @@ library
         Hach.Subagents
         Hach.MCP
         Hach.Memory
+        Hach.Paths
         Hach.Git
         Hach.Tasks
         Hach.Notifications
@@ -123,6 +124,7 @@ test-suite hach-test
         Hach.PropertySpec
         Hach.GoalFuzzSpec
         Hach.CampaignSpec
+        Hach.Campaign2Spec
         Hach.SkillsSpec
         Hach.PermissionsSpec
         Hach.SettingsSpec

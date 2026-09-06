@@ -64,8 +64,17 @@ createTaskWithId store customId title =
 
 createTask :: TaskStore -> Text -> (Task, TaskStore)
 createTask store title =
-  let nextId = "task-" <> T.pack (show (Map.size store + 1))
+  let nextId = unusedTaskId store 1
   in createTaskWithId store nextId title
+
+-- | First unused 'task-N' identifier. Size-based allocation collides when
+-- a custom id such as @task-2@ already occupies the generated namespace.
+unusedTaskId :: TaskStore -> Int -> Text
+unusedTaskId store n =
+  let cid = "task-" <> T.pack (show n)
+  in if Map.member cid store
+       then unusedTaskId store (n + 1)
+       else cid
 
 getTask :: TaskStore -> Text -> Maybe Task
 getTask store tid = Map.lookup tid store

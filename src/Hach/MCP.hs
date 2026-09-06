@@ -13,6 +13,7 @@ module Hach.MCP
   ) where
 
 import Hach.Types
+import Control.Monad (guard)
 import Control.Exception (SomeException, try)
 import Data.Aeson
   ( FromJSON(..), ToJSON(..), (.:?), (.!=), object, (.=), withObject
@@ -94,17 +95,19 @@ formatMcpToolName :: Text -> Text -> Text
 formatMcpToolName server tool = "mcp__" <> server <> "__" <> tool
 
 -- | Parse a qualified MCP tool name back into server name and tool name.
+--
+-- Splits on the first @__@ delimiter. A server name ending in @_@ or a
+-- tool name starting with @_@ fuses with the delimiter into @___@ and is
+-- rejected, as are extra @__@ segments in the tool name.
 parseMcpToolName :: Text -> Maybe (Text, Text)
-parseMcpToolName t =
-  case T.stripPrefix "mcp__" t of
-    Nothing   -> Nothing
-    Just rest ->
-      case T.breakOn "__" rest of
-        (srv, toolWithSep)
-          | not (T.null srv) && T.isPrefixOf "__" toolWithSep ->
-              let tool = T.drop 2 toolWithSep
-              in if T.null tool then Nothing else Just (srv, tool)
-        _ -> Nothing
+parseMcpToolName t = do
+  rest <- T.stripPrefix "mcp__" t
+  let (srv, after) = T.breakOn "__" rest
+  tool <- T.stripPrefix "__" after
+  guard (not (T.null srv) && not (T.null tool))
+  guard (not (T.isSuffixOf "_" srv) && not (T.isPrefixOf "_" tool))
+  guard (not ("__" `T.isInfixOf` tool))
+  pure (srv, tool)
 
 -- | Search tool definitions by substring matching.
 searchMcpTools :: Text -> [ToolDef] -> [ToolDef]
