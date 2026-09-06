@@ -175,34 +175,104 @@ spec = do
         tsHistory s1 `shouldBe` [DiAssistant "Working on it..."]
         tsStatus s1 `shouldBe` StatusFinished
 
-      it "creates a tool activity card on EvToolCall" $ do
-        let s1 = fst $ updateTui (EvHarness (EvToolCall "read_file" "{\"path\":\"foo.hs\"}")) baseState
-        tsStatus s1 `shouldBe` StatusRunningTool "read_file"
-        case tsTools s1 of
-          [card] -> do
-            tiName card `shouldBe` "read_file"
-            tiArgs card `shouldBe` "{\"path\":\"foo.hs\"}"
-            tiResult card `shouldBe` Nothing
-            tiExpanded card `shouldBe` False
-          _ -> expectationFailure "Expected exactly one tool card"
+      it "yields assistant text followed by N Pending cards in order on EvLLMResponse" $ do
+        let calls =
+              [ ToolCall "call-1" "read_file" "{\"path\":\"foo.hs\"}"
+              , ToolCall "call-2" "list_dir" "{\"path\":\".\"}"
+              ]
+            resp = EvHarness (EvLLMResponse (Just "Investigating the repo") calls Nothing)
+            (s1, _) = updateTui resp baseState
+        tsTranscript s1 `shouldBe`
+          [ TiAssistant "Investigating the repo"
+          , TiToolCard (ToolCard "call-1" "read_file" "{\"path\":\"foo.hs\"}" Pending False)
+          , TiToolCard (ToolCard "call-2" "list_dir" "{\"path\":\".\"}" Pending False)
+          ]
 
-      it "attaches result to latest tool card on EvToolResult" $ do
-        let s1 = fst $ updateTui (EvHarness (EvToolCall "read_file" "{\"path\":\"foo.hs\"}")) baseState
-            s2 = fst $ updateTui (EvHarness (EvToolResult "read_file" (ToolSuccess "file contents"))) s1
-        case tsTools s2 of
-          [card] -> tiResult card `shouldBe` Just (ToolSuccess "file contents")
-          _      -> expectationFailure "Expected exactly one tool card"
+      it "transitions Pending -> Running (with args replaced) on EvToolCall" $ do
+        let calls = [ToolCall "call-1" "read_file" "{\"path\":\"foo.hs\"}"]
+            s0 = fst $ updateTui (EvHarness (EvLLMResponse (Just "Starting") calls Nothing)) baseState
+            (s1, _) = updateTui (EvHarness (EvToolCall "read_file" "{\"path\":\"foo_rewritten.hs\"}")) s0
+        tsStatus s1 `shouldBe` StatusRunningTool "read_file"
+        tsTranscript s1 `shouldBe`
+          [ TiAssistant "Starting"
+          , TiToolCard (ToolCard "call-1" "read_file" "{\"path\":\"foo_rewritten.hs\"}" Running False)
+          ]
+        tsSelectedToolIndex s1 `shouldBe` 0
+
+      it "transitions Running -> Finished on EvToolResult" $ do
+        let calls = [ToolCall "call-1" "read_file" "{\"path\":\"foo.hs\"}"]
+            s0 = fst $ updateTui (EvHarness (EvLLMResponse (Just "Starting") calls Nothing)) baseState
+            s1 = fst $ updateTui (EvHarness (EvToolCall "read_file" "{\"path\":\"foo.hs\"}")) s0
+            (s2, _) = updateTui (EvHarness (EvToolResult "read_file" (ToolSuccess "file contents"))) s1
+        tsStatus s2 `shouldBe` StatusThinking
+        tsTranscript s2 `shouldBe`
+          [ TiAssistant "Starting"
+          , TiToolCard (ToolCard "call-1" "read_file" "{\"path\":\"foo.hs\"}" (Finished (ToolSuccess "file contents")) False)
+          ]
+
+      it "transitions Pending/Running -> Denied on permission-denied and appends notice" $ do
+        let calls =
+              [ ToolCall "call-1" "read_file" "{\"path\":\"secret.txt\"}"
+              , ToolCall "call-2" "run_command" "rm -rf /"
+              ]
+            s0 = fst $ updateTui (EvHarness (EvLLMResponse (Just "Checking") calls Nothing)) baseState
+            (s1, _) = updateTui (EvHarness (EvPermissionDenied "read_file" "Protected path")) s0
+        tsTranscript s1 `shouldBe`
+          [ TiAssistant "Checking"
+          , TiToolCard (ToolCard "call-1" "read_file" "{\"path\":\"secret.txt\"}" (Denied "Protected path") False)
+          , TiToolCard (ToolCard "call-2" "run_command" "rm -rf /" Pending False)
+          , TiNotice "Permission denied for read_file: Protected path"
+          ]
+
+      it "transitions all unresolved (Pending or Running) cards -> Cancelled on cancel" $ do
+        let calls =
+              [ ToolCall "call-1" "tool1" "arg1"
+              , ToolCall "call-2" "tool2" "arg2"
+              , ToolCall "call-3" "tool3" "arg3"
+              ]
+            s0 = fst $ updateTui (EvHarness (EvLLMResponse (Just "Running tools") calls Nothing)) baseState
+            s1 = fst $ updateTui (EvHarness (EvToolCall "tool1" "arg1")) s0
+            s2 = fst $ updateTui (EvHarness (EvToolResult "tool1" (ToolSuccess "done1"))) s1
+            s3 = fst $ updateTui (EvHarness (EvToolCall "tool2" "arg2")) s2
+            (s4, actions) = updateTui (EvUserKey KeyEsc) s3
+        actions `shouldBe` [ActionCancelAgent]
+        tsCancelRequested s4 `shouldBe` True
+        tsTranscript s4 `shouldBe`
+          [ TiAssistant "Running tools"
+          , TiToolCard (ToolCard "call-1" "tool1" "arg1" (Finished (ToolSuccess "done1")) False)
+          , TiToolCard (ToolCard "call-2" "tool2" "arg2" Cancelled False)
+          , TiToolCard (ToolCard "call-3" "tool3" "arg3" Cancelled False)
+          ]
+
+      it "interleaves text and tool cards across two turns in exact emission order" $ do
+        let (s1, _) = updateTui (EvSubmit "Read config") baseState
+            (s2, _) = updateTui (EvHarness (EvLLMResponse (Just "Reading config file") [ToolCall "c1" "read_file" "config.json"] Nothing)) s1
+            (s3, _) = updateTui (EvHarness (EvToolCall "read_file" "config.json")) s2
+            (s4, _) = updateTui (EvHarness (EvToolResult "read_file" (ToolSuccess "{\"port\":8080}"))) s3
+            (s5, _) = updateTui (EvHarness (EvLLMResponse (Just "Now starting server") [ToolCall "c2" "run_command" "serve"] Nothing)) s4
+            (s6, _) = updateTui (EvHarness (EvToolCall "run_command" "serve")) s5
+            (s7, _) = updateTui (EvHarness (EvToolResult "run_command" (ToolSuccess "Server started"))) s6
+            (s8, _) = updateTui (EvHarness (EvDone "All operations complete.")) s7
+        tsTranscript s8 `shouldBe`
+          [ TiUser "Read config"
+          , TiAssistant "Reading config file"
+          , TiToolCard (ToolCard "c1" "read_file" "config.json" (Finished (ToolSuccess "{\"port\":8080}")) False)
+          , TiAssistant "Now starting server"
+          , TiToolCard (ToolCard "c2" "run_command" "serve" (Finished (ToolSuccess "Server started")) False)
+          , TiAssistant "All operations complete."
+          ]
 
       it "toggles tool expansion on Enter when FocusTools is active" $ do
-        let s1 = fst $ updateTui (EvHarness (EvToolCall "run_command" "echo hi")) baseState
-            toolsFocus = s1 { tsFocus = FocusTools }
-            s2 = fst $ updateTui (EvUserKey KeyEnter) toolsFocus
-        case tsTools s2 of
-          [card] -> tiExpanded card `shouldBe` True
+        let calls = [ToolCall "c1" "run_command" "echo hi"]
+            s0 = fst $ updateTui (EvHarness (EvLLMResponse (Just "reply") calls Nothing)) baseState
+            toolsFocus = s0 { tsFocus = FocusTools }
+            (s1, _) = updateTui (EvUserKey KeyEnter) toolsFocus
+        case [tc | TiToolCard tc <- tsTranscript s1] of
+          [card] -> tcExpanded card `shouldBe` True
           _      -> expectationFailure "Expected tool card"
-        let s3 = fst $ updateTui (EvUserKey KeyEnter) s2
-        case tsTools s3 of
-          [card] -> tiExpanded card `shouldBe` False
+        let (s2, _) = updateTui (EvUserKey KeyEnter) s1
+        case [tc | TiToolCard tc <- tsTranscript s2] of
+          [card] -> tcExpanded card `shouldBe` False
           _      -> expectationFailure "Expected tool card"
 
       it "records final completion answer on EvDone" $ do
@@ -262,16 +332,16 @@ spec = do
         actions `shouldBe` [ActionScrollHistory (-5)]
 
       it "emits ActionScrollTools 1 on KeyDown in Tools panel" $ do
-        let tool1 = ToolItem "read_file" "{}" Nothing False
-            tool2 = ToolItem "write_file" "{}" Nothing False
-            sTools = baseState { tsFocus = FocusTools, tsTools = [tool1, tool2] }
+        let tool1 = TiToolCard (ToolCard "c1" "read_file" "{}" Pending False)
+            tool2 = TiToolCard (ToolCard "c2" "write_file" "{}" Pending False)
+            sTools = baseState { tsFocus = FocusTools, tsTranscript = [tool1, tool2] }
             (_, actions) = updateTui (EvUserKey KeyDown) sTools
         actions `shouldBe` [ActionScrollTools 1]
 
       it "emits ActionScrollTools (-1) on KeyUp in Tools panel" $ do
-        let tool1 = ToolItem "read_file" "{}" Nothing False
-            tool2 = ToolItem "write_file" "{}" Nothing False
-            sTools = baseState { tsFocus = FocusTools, tsTools = [tool1, tool2], tsSelectedToolIndex = 1 }
+        let tool1 = TiToolCard (ToolCard "c1" "read_file" "{}" Pending False)
+            tool2 = TiToolCard (ToolCard "c2" "write_file" "{}" Pending False)
+            sTools = baseState { tsFocus = FocusTools, tsTranscript = [tool1, tool2], tsSelectedToolIndex = 1 }
             (_, actions) = updateTui (EvUserKey KeyUp) sTools
         actions `shouldBe` [ActionScrollTools (-1)]
 
@@ -297,8 +367,8 @@ spec = do
         actionsDown `shouldBe` [ActionScrollTools 2]
 
       it "scrolls tool activity on KeyDown even when there is only 1 tool card" $ do
-        let tool1 = ToolItem "read_file" "{}" Nothing True
-            sTools = baseState { tsFocus = FocusTools, tsTools = [tool1], tsSelectedToolIndex = 0 }
+        let tool1 = TiToolCard (ToolCard "c1" "read_file" "{}" Pending True)
+            sTools = baseState { tsFocus = FocusTools, tsTranscript = [tool1], tsSelectedToolIndex = 0 }
             (_, actions) = updateTui (EvUserKey KeyDown) sTools
         actions `shouldBe` [ActionScrollTools 1]
 
@@ -518,45 +588,45 @@ spec = do
 
     describe "Local Slash Commands and Skill Invocations" $ do
       it "handles /clear locally by emptying dialogue history without running agent" $ do
-        let s0 = baseState { tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
+        let s0 = baseState { tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
             (s1, actions) = updateTui (EvUserKey KeyEnter) s0
-        tsHistory s1 `shouldBe` []
+        tsTranscript s1 `shouldBe` []
         tsInputBuffer s1 `shouldBe` ""
         actions `shouldBe` []
 
       it "cancels running agent turn when /clear is submitted while busy" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
+        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
             (s1, actions) = updateTui (EvUserKey KeyEnter) s0
-        tsHistory s1 `shouldBe` []
+        tsTranscript s1 `shouldBe` []
         tsInputBuffer s1 `shouldBe` ""
         tsStatus s1 `shouldBe` StatusIdle
         actions `shouldBe` [ActionCancelAgent]
 
       it "drops stale EvDone after /clear while busy" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
+        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
             (s1, _) = updateTui (EvUserKey KeyEnter) s0
             (s2, _) = updateTui (EvHarness (EvDone "stale answer")) s1
-        tsHistory s2 `shouldBe` []
+        tsTranscript s2 `shouldBe` []
 
       it "drops stale EvToolCall after /clear while busy" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
+        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
             (s1, _) = updateTui (EvUserKey KeyEnter) s0
             (s2, _) = updateTui (EvHarness (EvToolCall "read_file" "{}")) s1
         tsTools s2 `shouldBe` []
 
       it "drops stale EvError after /clear while busy" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
+        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
             (s1, _) = updateTui (EvUserKey KeyEnter) s0
             (s2, _) = updateTui (EvHarness (EvError "stale error")) s1
-        tsHistory s2 `shouldBe` []
+        tsTranscript s2 `shouldBe` []
 
       it "resets tsCancelRequested when user submits a new prompt" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
+        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
             (s1, _) = updateTui (EvUserKey KeyEnter) s0
             s2 = s1 { tsInputBuffer = "new question" }
             (s3, _) = updateTui (EvUserKey KeyEnter) s2
         tsCancelRequested s3 `shouldBe` False
-        tsHistory s3 `shouldBe` [DiUser "new question"]
+        tsTranscript s3 `shouldBe` [DiUser "new question"]
 
       it "handles /help locally by toggling help dialog without running agent" $ do
         let s0 = baseState { tsShowHelp = False, tsInputBuffer = "/help" }

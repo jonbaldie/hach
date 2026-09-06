@@ -272,9 +272,10 @@ renderHistoryPanel TuiState{..} =
       headerText = if isFocused
                      then " [ 💬 Dialogue History (Active) ] "
                      else " 💬 Dialogue History "
-      items = if null tsHistory
+      dialogueItems = [item | item <- tsTranscript, case item of TiToolCard _ -> False; _ -> True]
+      items = if null dialogueItems
                 then [padAll 1 (withAttr dimAttr (txtWrap "No dialogue yet. Type a prompt below and press Enter to start."))]
-                else map renderDialogue tsHistory
+                else map renderDialogue dialogueItems
   in borderMod $
      withBorderStyle borderGlyph $
      borderWithLabel (txt headerText) $
@@ -282,7 +283,7 @@ renderHistoryPanel TuiState{..} =
 
 renderDialogue :: DialogueItem -> Widget Name
 renderDialogue = \case
-  DiUser u ->
+  TiUser u ->
     padBottom (Pad 1) $
     vBox
       [ hBox
@@ -293,7 +294,7 @@ renderDialogue = \case
         withAttr userTextAttr (txtWrap u)
       ]
 
-  DiAssistant a ->
+  TiAssistant a ->
     padBottom (Pad 1) $
     vBox
       [ hBox
@@ -304,15 +305,17 @@ renderDialogue = \case
         renderAssistantBody a
       ]
 
-  DiSystem s ->
+  TiSystem s ->
     padBottom (Pad 1) $
     padLeft (Pad 2) $
     withAttr sysAttr (txtWrap ("⚙ " <> s))
 
-  DiNotice n ->
+  TiNotice n ->
     padBottom (Pad 1) $
     padLeft (Pad 2) $
     withAttr noticeAttr (txtWrap ("! " <> n))
+
+  TiToolCard _ -> emptyWidget
 
 -- | Render assistant response text, formatting code blocks cleanly.
 renderAssistantBody :: Text -> Widget Name
@@ -362,13 +365,14 @@ renderToolsPanel TuiState{..} =
   let isFocused = tsFocus == FocusTools
       borderMod = if isFocused then withAttr activeBorderAttr else withAttr inactiveBorderAttr
       borderGlyph = if isFocused then unicodeBold else unicodeRounded
-      total = length tsTools
+      toolCards = [tc | TiToolCard tc <- tsTranscript]
+      total = length toolCards
       headerText = if isFocused
                      then " [ ⚡ Tool Activity (" <> T.pack (show total) <> ") (Active) ] "
                      else " ⚡ Tool Activity (" <> T.pack (show total) <> ") "
-      cards = if null tsTools
+      cards = if null toolCards
                 then [padAll 1 (withAttr dimAttr (txtWrap "No tools executed yet. Tool calls will stream here."))]
-                else zipWith (renderToolCard tsSelectedToolIndex isFocused) [0..] tsTools
+                else zipWith (renderToolCard tsSelectedToolIndex isFocused) [0..] toolCards
   in borderMod $
      withBorderStyle borderGlyph $
      borderWithLabel (txt headerText) $
@@ -418,31 +422,37 @@ truncateText maxLen t
   | T.length t > maxLen = T.take maxLen t <> "..."
   | otherwise           = t
 
-formatResultSummary :: Maybe ToolResult -> (Text, AttrName)
-formatResultSummary = \case
-  Nothing ->
-    ("◌ running...", statusThinkingAttr)
-  Just (ToolSuccess out) ->
+formatLifecycleSummary :: ToolLifecycle -> (Text, AttrName, AttrName)
+formatLifecycleSummary = \case
+  Pending ->
+    ("◌ pending...", dimAttr, dimAttr)
+  Running ->
+    ("◌ running...", statusThinkingAttr, statusRunningAttr)
+  Finished (ToolSuccess out) ->
     let chars = T.length out
         linesCount = length (T.lines out)
         tag = if linesCount > 1
                 then "✓ success (" <> T.pack (show linesCount) <> " lines)"
                 else "✓ success (" <> T.pack (show chars) <> " chars)"
-    in (tag, toolSuccessAttr)
-  Just (ToolError err) ->
-    ("✖ failed (" <> T.take 25 err <> ")", toolErrorAttr)
+    in (tag, toolSuccessAttr, toolSuccessAttr)
+  Finished (ToolError err) ->
+    ("✖ failed (" <> T.take 25 err <> ")", toolErrorAttr, toolErrorAttr)
+  Denied reason ->
+    ("✖ denied (" <> T.take 25 reason <> ")", toolErrorAttr, toolErrorAttr)
+  Cancelled ->
+    ("✖ cancelled", toolErrorAttr, toolErrorAttr)
 
-renderToolCard :: Int -> Bool -> Int -> ToolItem -> Widget Name
-renderToolCard selectedIdx isToolsFocused idx ToolItem{..} =
+renderToolCard :: Int -> Bool -> Int -> ToolCard -> Widget Name
+renderToolCard selectedIdx isToolsFocused idx ToolCard{..} =
   let isSelected = isToolsFocused && selectedIdx == idx
       cursorMark = if isSelected then withAttr userPromptAttr (txt "▸ ") else txt "  "
-      icon = withAttr toolIconAttr (txt "⏺ ")
-      nameWidget = withAttr toolNameAttr (txt tiName)
-      targetText = formatToolTarget tiName tiArgs
+      (statusTxt, statusAttr, iconAttr) = formatLifecycleSummary tcLifecycle
+      icon = withAttr iconAttr (txt "⏺ ")
+      nameWidget = withAttr toolNameAttr (txt tcName)
+      targetText = formatToolTarget tcName tcArgs
       targetWidget = if T.null targetText
                        then emptyWidget
                        else withAttr toolTargetAttr (txt (" " <> targetText))
-      (statusTxt, statusAttr) = formatResultSummary tiResult
       statusWidget = withAttr statusAttr (txt statusTxt)
 
       headerLine = hBox [cursorMark, icon, nameWidget, targetWidget]
@@ -450,31 +460,40 @@ renderToolCard selectedIdx isToolsFocused idx ToolItem{..} =
                 hBox
                   [ withAttr dimAttr (txt "⎿  ")
                   , statusWidget
-                  , if tiExpanded
+                  , if tcExpanded
                       then withAttr dimAttr (txt "  (expanded)")
                       else withAttr dimAttr (txt "  (↵ details)")
                   ]
 
-      expandedBody = if tiExpanded
+      expandedBody = if tcExpanded
         then padLeft (Pad 4) $
              padTop (Pad 1) $
              vBox
                [ withBorderStyle unicodeRounded $
                  borderWithLabel (withAttr dimAttr (txt " Arguments ")) $
-                 padLeftRight 1 (withAttr codeBlockAttr (txtWrap tiArgs))
-               , case tiResult of
-                   Nothing ->
+                 padLeftRight 1 (withAttr codeBlockAttr (txtWrap tcArgs))
+               , case tcLifecycle of
+                   Pending ->
+                     padTop (Pad 1) (withAttr dimAttr (txt "Pending execution..."))
+                   Running ->
                      padTop (Pad 1) (withAttr statusThinkingAttr (txt "Waiting for execution output..."))
-                   Just (ToolSuccess out) ->
+                   Finished (ToolSuccess out) ->
                      padTop (Pad 1) $
                      withBorderStyle unicodeRounded $
                      borderWithLabel (withAttr toolSuccessAttr (txt " Output ")) $
                      padLeftRight 1 (withAttr codeBlockAttr (txtWrap (if T.null out then "(empty output)" else out)))
-                   Just (ToolError err) ->
+                   Finished (ToolError err) ->
                      padTop (Pad 1) $
                      withBorderStyle unicodeRounded $
                      borderWithLabel (withAttr toolErrorAttr (txt " Error ")) $
                      padLeftRight 1 (withAttr toolErrorAttr (txtWrap err))
+                   Denied reason ->
+                     padTop (Pad 1) $
+                     withBorderStyle unicodeRounded $
+                     borderWithLabel (withAttr toolErrorAttr (txt " Denied ")) $
+                     padLeftRight 1 (withAttr toolErrorAttr (txtWrap reason))
+                   Cancelled ->
+                     padTop (Pad 1) (withAttr toolErrorAttr (txt "Tool call was cancelled."))
                ]
         else emptyWidget
 

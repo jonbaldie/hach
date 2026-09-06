@@ -19,6 +19,7 @@ import Hach.Types
   , GoalVerdict(..)
   , SessionTokenUsage(..)
   , TokenUsage(..)
+  , ToolCall(..)
   , ToolResult
   , addUsageToSession
   , contextSaturationPercent
@@ -139,7 +140,7 @@ handleSubmitPrompt rawPrompt state
           busy = isBusy (tsStatus state)
           actions = if busy then [ActionCancelAgent] else []
           newStatus = if busy then StatusIdle else tsStatus state
-      in ( state { tsHistory            = []
+      in ( state { tsTranscript         = []
                  , tsHistoryScroll      = 0
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
@@ -166,8 +167,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/cost reset" || trimmed == "/cost clear" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Session token usage reset to 0."]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Session token usage reset to 0."]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -179,8 +180,8 @@ handleSubmitPrompt rawPrompt state
   | trimmed == "/cost" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
           costNotice = formatCostReport state
-          newHistory = tsHistory state ++ [DiNotice costNotice]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice costNotice]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -190,10 +191,10 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/compact" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = if length (tsHistory state) > 4
-            then DiNotice "Prior conversation turns compacted for context efficiency." : drop (length (tsHistory state) - 4) (tsHistory state)
-            else tsHistory state ++ [DiNotice "Conversation history compacted."]
-      in ( state { tsHistory            = newHistory
+          newTranscript = if length (tsTranscript state) > 4
+            then DiNotice "Prior conversation turns compacted for context efficiency." : drop (length (tsTranscript state) - 4) (tsTranscript state)
+            else tsTranscript state ++ [DiNotice "Conversation history compacted."]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -213,8 +214,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/model" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice ("Current model: " <> tsModelName state)]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice ("Current model: " <> tsModelName state)]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -228,8 +229,8 @@ handleSubmitPrompt rawPrompt state
           (newModel, notice) = if T.null mName
             then (tsModelName state, "Usage: /model <model_name>")
             else (mName, "Model switched to: " <> mName)
-          newHistory = tsHistory state ++ [DiNotice notice]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice notice]
+      in ( state { tsTranscript         = newTranscript
                  , tsModelName          = newModel
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
@@ -241,8 +242,8 @@ handleSubmitPrompt rawPrompt state
   | trimmed == "/config" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
           notice = "Configuration: model=" <> tsModelName state <> ", maxTurns=" <> T.pack (show (tsMaxTurns state))
-          newHistory = tsHistory state ++ [DiNotice notice]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice notice]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -253,8 +254,8 @@ handleSubmitPrompt rawPrompt state
   | trimmed == "/context" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
           notice = "Context tokens: " <> formatTokens (tsContextTokens state) <> " tracked"
-          newHistory = tsHistory state ++ [DiNotice notice]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice notice]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -264,8 +265,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/resume" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Session resume initialized."]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Session resume initialized."]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -275,8 +276,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/plan" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Plan mode activated. Read-only actions allowed."]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Plan mode activated. Read-only actions allowed."]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -286,8 +287,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/diff" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Git working tree diff inspected."]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Git working tree diff inspected."]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -297,8 +298,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/tasks" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Task list: No active background tasks."]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Task list: No active background tasks."]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -308,8 +309,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/theme" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Theme: dark"]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Theme: dark"]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -320,8 +321,8 @@ handleSubmitPrompt rawPrompt state
   | trimmed == "/status" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
           notice = "Status: " <> (if isBusy (tsStatus state) then "busy" else "idle") <> " | Model: " <> tsModelName state <> " | Turn: " <> T.pack (show (tsCurrentTurn state)) <> "/" <> T.pack (show (tsMaxTurns state))
-          newHistory = tsHistory state ++ [DiNotice notice]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice notice]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -331,8 +332,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/memory" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Project memory instructions active."]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Project memory instructions active."]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -342,8 +343,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/init" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Initialized CLAUDE.md guidelines template."]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Initialized CLAUDE.md guidelines template."]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -353,8 +354,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/permissions" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Permissions policy: default"]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Permissions policy: default"]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -364,8 +365,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/fewer-permission-prompts" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Permissions set to acceptEdits: Auto-approving file edits."]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Permissions set to acceptEdits: Auto-approving file edits."]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -375,8 +376,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/doctor" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Doctor: All systems operational."]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Doctor: All systems operational."]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -386,8 +387,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/copy" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Last response copied to clipboard."]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Last response copied to clipboard."]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -397,8 +398,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/reload-skills" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice ("Skills reloaded: " <> T.pack (show (Map.size (tsSkills state))) <> " available")]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice ("Skills reloaded: " <> T.pack (show (Map.size (tsSkills state))) <> " available")]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -408,8 +409,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/mcp" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "MCP: Model Context Protocol servers loaded."]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "MCP: Model Context Protocol servers loaded."]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -419,8 +420,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/plugin" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newHistory = tsHistory state ++ [DiNotice "Plugins: 0 loaded"]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice "Plugins: 0 loaded"]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -431,8 +432,8 @@ handleSubmitPrompt rawPrompt state
   | trimmed == "/goal" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
           (goalNotice, _) = goalStatusText (tsGoalState state)
-          newHistory = tsHistory state ++ [DiNotice goalNotice]
-      in ( state { tsHistory            = newHistory
+          newTranscript = tsTranscript state ++ [DiNotice goalNotice]
+      in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -451,8 +452,8 @@ handleSubmitPrompt rawPrompt state
                      , Just gs { gsStatus = GoalCleared } )
                    _ ->
                      ( "No goal set", Nothing )
-                 newHistory = tsHistory state ++ [DiNotice clearNotice]
-             in ( state { tsHistory            = newHistory
+                 newTranscript = tsTranscript state ++ [DiNotice clearNotice]
+             in ( state { tsTranscript         = newTranscript
                         , tsInputBuffer        = ""
                         , tsPromptHistory      = newPromptHistory
                         , tsPromptHistoryIndex = Nothing
@@ -462,9 +463,9 @@ handleSubmitPrompt rawPrompt state
                 , [] )
            else if T.null (T.strip argText)
              then
-               let newHistory = tsHistory state ++
+               let newTranscript = tsTranscript state ++
                      [DiNotice "Usage: /goal <condition> or /goal clear"]
-               in ( state { tsHistory            = newHistory
+               in ( state { tsTranscript         = newTranscript
                           , tsInputBuffer        = ""
                           , tsPromptHistory      = newPromptHistory
                           , tsPromptHistoryIndex = Nothing
@@ -473,10 +474,10 @@ handleSubmitPrompt rawPrompt state
                   , [] )
            else if T.length argText > maxGoalConditionLength
              then
-               let newHistory = tsHistory state ++
+               let newTranscript = tsTranscript state ++
                      [DiNotice ("Goal condition too long (max " <>
                        T.pack (show maxGoalConditionLength) <> " characters).")]
-               in ( state { tsHistory            = newHistory
+               in ( state { tsTranscript         = newTranscript
                           , tsInputBuffer        = ""
                           , tsPromptHistory      = newPromptHistory
                           , tsPromptHistoryIndex = Nothing
@@ -486,11 +487,11 @@ handleSubmitPrompt rawPrompt state
            else
              let condition = T.strip argText
                  gs = initialGoalState condition
-                 newHistory = tsHistory state ++
+                 newTranscript = tsTranscript state ++
                    [ DiUser trimmed
                    , DiNotice ("Goal set: " <> condition)
                    ]
-             in ( state { tsHistory            = newHistory
+             in ( state { tsTranscript         = newTranscript
                         , tsInputBuffer        = ""
                         , tsStatus             = StatusThinking
                         , tsFocus              = FocusHistory
@@ -505,10 +506,10 @@ handleSubmitPrompt rawPrompt state
       let (cleanedPrompt, invokedSkills) = parseSkillInvocations (tsSkills state) trimmed
           finalPrompt = injectSkillsIntoPrompt invokedSkills cleanedPrompt
           skillNotices = [ DiNotice ("Activated skill: " <> skillName s) | s <- invokedSkills ]
-          newHistory = tsHistory state ++ [DiUser trimmed] ++ skillNotices
+          newTranscript = tsTranscript state ++ [DiUser trimmed] ++ skillNotices
           newPromptHistory = tsPromptHistory state ++ [trimmed]
           newState = state
-            { tsHistory            = newHistory
+            { tsTranscript         = newTranscript
             , tsInputBuffer        = ""
             , tsStatus             = StatusThinking
             , tsFocus              = FocusHistory
@@ -534,6 +535,7 @@ handleUserKey key state@TuiState{..} =
           ( state { tsCancelRequested = True
                   , tsStatus = StatusError "Turn cancelled by user."
                   , tsFocus = FocusInput
+                  , tsTranscript = cancelUnresolvedToolCards tsTranscript
                   }
           , [ActionCancelAgent]
           )
@@ -545,6 +547,7 @@ handleUserKey key state@TuiState{..} =
           ( state { tsCancelRequested = True
                   , tsStatus = StatusError "Turn cancelled by user."
                   , tsFocus = FocusInput
+                  , tsTranscript = cancelUnresolvedToolCards tsTranscript
                   }
           , [ActionCancelAgent]
           )
@@ -675,7 +678,7 @@ handleHistoryKey key state@TuiState{..} = case key of
 
   KeyChar 'c' ->
     -- Clear dialogue history and reset context window tokens
-    (state { tsHistory = [], tsHistoryScroll = 0, tsContextTokens = 0, tsTokenUsage = Nothing, tsUsageStatus = UsageVerified }, [])
+    (state { tsTranscript = [], tsHistoryScroll = 0, tsContextTokens = 0, tsTokenUsage = Nothing, tsUsageStatus = UsageVerified }, [])
 
   _ ->
     (state, [])
@@ -683,7 +686,7 @@ handleHistoryKey key state@TuiState{..} = case key of
 -- | Key handling when the tool activity panel is focused.
 handleToolsKey :: UserKey -> TuiState -> (TuiState, [TuiAction])
 handleToolsKey key state@TuiState{..} =
-  let totalTools = length tsTools
+  let totalTools = length (tsTools state)
   in case key of
     KeyUp ->
       let newIdx = max 0 (tsSelectedToolIndex - 1)
@@ -712,10 +715,14 @@ handleToolsKey key state@TuiState{..} =
 
 -- | Toggle the expanded state of a tool card.
 toggleToolExpanded :: Int -> TuiState -> TuiState
-toggleToolExpanded idx state@TuiState{..} =
-  let updatedTools = zipWith (\i item ->
-        if i == idx then item { tiExpanded = not (tiExpanded item) } else item) [0..] tsTools
-  in state { tsTools = updatedTools }
+toggleToolExpanded targetIdx state@TuiState{..} =
+  let updateCard (i, acc) item = case item of
+        TiToolCard tc
+          | i == targetIdx -> (i + 1, TiToolCard tc { tcExpanded = not (tcExpanded tc) } : acc)
+          | otherwise      -> (i + 1, item : acc)
+        other -> (i, other : acc)
+      (_, newTranscriptRev) = foldl updateCard (0, []) tsTranscript
+  in state { tsTranscript = reverse newTranscriptRev }
 
 -- | Pure update of state when an 'AgentEvent' arrives from the harness.
 -- When a cancel has been requested (via /clear, Esc, or Ctrl+C while busy),
@@ -732,16 +739,25 @@ handleAgentEvent event state@TuiState{..}
     state { tsStatus = StatusThinking }
 
   EvLLMResponse mContent calls mUsage ->
-    let withText = case mContent of
-          Just c | not (T.null (T.strip c)) ->
-            tsHistory ++ [DiAssistant c]
-          _ -> tsHistory
+    let textItems = case mContent of
+          Just c | not (T.null (T.strip c)) -> [TiAssistant c]
+          _                                  -> []
+        cardItems = [ TiToolCard ToolCard
+                        { tcId        = callId tc
+                        , tcName      = functionName tc
+                        , tcArgs      = callArgsRaw tc
+                        , tcLifecycle = Pending
+                        , tcExpanded  = False
+                        }
+                    | tc <- calls
+                    ]
+        newTranscript = tsTranscript ++ textItems ++ cardItems
         newStatus = if null calls then StatusFinished else tsStatus
         (newContextTokens, newUsage, newSessionTokens, newUsageStatus) = case mUsage of
           Just u  -> (tuTotalTokens u, Just u, addUsageToSession u False tsSessionTokens, UsageVerified)
           Nothing -> (tsContextTokens, tsTokenUsage, tsSessionTokens, UsageMissing)
     in state
-         { tsHistory       = withText
+         { tsTranscript    = newTranscript
          , tsStatus        = newStatus
          , tsContextTokens = newContextTokens
          , tsTokenUsage    = newUsage
@@ -750,35 +766,32 @@ handleAgentEvent event state@TuiState{..}
          }
 
   EvToolCall name args ->
-    let newItem = ToolItem
-          { tiName     = name
-          , tiArgs     = args
-          , tiResult   = Nothing
-          , tiExpanded = False
-          }
-        newTools = tsTools ++ [newItem]
+    let (newTranscript, mIdx) = updateFirstPendingTool name args tsTranscript
+        newSelected = case mIdx of
+          Just idx -> idx
+          Nothing  -> tsSelectedToolIndex
     in state
-      { tsTools             = newTools
+      { tsTranscript        = newTranscript
       , tsStatus            = StatusRunningTool name
-      , tsSelectedToolIndex = max 0 (length newTools - 1)
+      , tsSelectedToolIndex = newSelected
       }
 
   EvToolResult _name res ->
-    let updatedTools = updateLatestToolResult res tsTools
-    in state { tsTools = updatedTools, tsStatus = StatusThinking }
+    let newTranscript = updateFirstRunningToFinished res tsTranscript
+    in state { tsTranscript = newTranscript, tsStatus = StatusThinking }
 
   EvDone ans ->
-    let finalHistory =
-          if not (null tsHistory) && last tsHistory == DiAssistant ans
-            then tsHistory
-            else tsHistory ++ [DiAssistant ans]
-    in state { tsHistory = finalHistory, tsStatus = StatusFinished, tsFocus = FocusInput }
+    let finalTranscript =
+          if not (null tsTranscript) && last tsTranscript == TiAssistant ans
+            then tsTranscript
+            else tsTranscript ++ [TiAssistant ans]
+    in state { tsTranscript = finalTranscript, tsStatus = StatusFinished, tsFocus = FocusInput }
 
   EvError err ->
     state
-      { tsHistory = tsHistory ++ [DiNotice ("Error: " <> err)]
-      , tsStatus  = StatusError err
-      , tsFocus   = FocusInput
+      { tsTranscript = tsTranscript ++ [TiNotice ("Error: " <> err)]
+      , tsStatus     = StatusError err
+      , tsFocus      = FocusInput
       }
 
   EvTurnComplete _ ->
@@ -795,7 +808,7 @@ handleAgentEvent event state@TuiState{..}
           , gsLastReason  = Just reason
           , gsTurnCount   = gsTurnCount gs + 1
           }
-        , tsHistory = tsHistory ++ [DiNotice ("Goal evaluated: " <> verdictText verdict <> " — " <> reason)]
+        , tsTranscript = tsTranscript ++ [TiNotice ("Goal evaluated: " <> verdictText verdict <> " — " <> reason)]
         }
       Nothing -> state
 
@@ -806,7 +819,7 @@ handleAgentEvent event state@TuiState{..}
     case tsGoalState of
       Just gs -> state
         { tsGoalState = Just gs { gsStatus = GoalAchieved }
-        , tsHistory = tsHistory ++ [DiNotice ("Goal achieved: " <> cond)]
+        , tsTranscript = tsTranscript ++ [TiNotice ("Goal achieved: " <> cond)]
         , tsFocus = FocusInput
         }
       Nothing -> state
@@ -815,7 +828,7 @@ handleAgentEvent event state@TuiState{..}
     case tsGoalState of
       Just gs -> state
         { tsGoalState = Just gs { gsStatus = GoalFailed }
-        , tsHistory = tsHistory ++ [DiNotice ("Goal failed: " <> cond <> " — " <> reason)]
+        , tsTranscript = tsTranscript ++ [TiNotice ("Goal failed: " <> cond <> " — " <> reason)]
         , tsFocus = FocusInput
         }
       Nothing -> state
@@ -826,9 +839,9 @@ handleAgentEvent event state@TuiState{..}
   EvGoalBlocked cond ->
     case tsGoalState of
       Just _ -> state
-        { tsHistory = tsHistory ++
-          [ DiNotice ("No progress detected. Goal still active: " <> cond)
-          , DiNotice "Run /goal again to continue after your next prompt."
+        { tsTranscript = tsTranscript ++
+          [ TiNotice ("No progress detected. Goal still active: " <> cond)
+          , TiNotice "Run /goal again to continue after your next prompt."
           ]
         , tsFocus = FocusInput
         }
@@ -837,13 +850,60 @@ handleAgentEvent event state@TuiState{..}
   EvPartialResponse _ -> state
   EvToolCallDelta _ -> state
   EvPermissionDenied tool reason ->
-    state { tsHistory = tsHistory ++ [DiNotice ("Permission denied for " <> tool <> ": " <> reason)] }
+    let updatedTranscript = updateFirstMatchingToDenied tool reason tsTranscript
+        finalTranscript   = updatedTranscript ++ [TiNotice ("Permission denied for " <> tool <> ": " <> reason)]
+    in state { tsTranscript = finalTranscript }
   EvHookTriggered hook res ->
-    state { tsHistory = tsHistory ++ [DiNotice ("Hook triggered: " <> hook <> " -> " <> res)] }
+    state { tsTranscript = tsTranscript ++ [TiNotice ("Hook triggered: " <> hook <> " -> " <> res)] }
   EvSessionSaved path ->
-    state { tsHistory = tsHistory ++ [DiNotice ("Session saved to " <> path)] }
+    state { tsTranscript = tsTranscript ++ [DiNotice ("Session saved to " <> path)] }
   EvNotificationSent msg ->
-    state { tsHistory = tsHistory ++ [DiNotice ("Notification: " <> msg)] }
+    state { tsTranscript = tsTranscript ++ [DiNotice ("Notification: " <> msg)] }
+
+-- | Transition the first 'Pending' card to 'Running', replacing its arguments,
+-- and return the card's 0-based index among tool cards in the transcript.
+updateFirstPendingTool :: T.Text -> T.Text -> [TranscriptItem] -> ([TranscriptItem], Maybe Int)
+updateFirstPendingTool name args = go 0
+  where
+    go _ [] = ([], Nothing)
+    go cardIdx (TiToolCard tc : rest)
+      | tcLifecycle tc == Pending =
+          let updated = TiToolCard tc { tcName = name, tcArgs = args, tcLifecycle = Running }
+          in (updated : rest, Just cardIdx)
+      | otherwise =
+          let (rest', mIdx) = go (cardIdx + 1) rest
+          in (TiToolCard tc : rest', mIdx)
+    go cardIdx (x : rest) =
+      let (rest', mIdx) = go cardIdx rest
+      in (x : rest', mIdx)
+
+-- | Transition the first 'Running' card to 'Finished' with the tool result.
+updateFirstRunningToFinished :: ToolResult -> [TranscriptItem] -> [TranscriptItem]
+updateFirstRunningToFinished res = go
+  where
+    go [] = []
+    go (TiToolCard tc : rest)
+      | tcLifecycle tc == Running =
+          TiToolCard tc { tcLifecycle = Finished res } : rest
+    go (x : rest) = x : go rest
+
+-- | Transition the first 'Pending' or 'Running' card matching the tool name to 'Denied'.
+updateFirstMatchingToDenied :: T.Text -> T.Text -> [TranscriptItem] -> [TranscriptItem]
+updateFirstMatchingToDenied tool reason = go
+  where
+    go [] = []
+    go (TiToolCard tc : rest)
+      | (tcLifecycle tc == Pending || tcLifecycle tc == Running) && tcName tc == tool =
+          TiToolCard tc { tcLifecycle = Denied reason } : rest
+    go (x : rest) = x : go rest
+
+-- | Mark every unresolved (Pending or Running) tool card as Cancelled.
+cancelUnresolvedToolCards :: [TranscriptItem] -> [TranscriptItem]
+cancelUnresolvedToolCards = map $ \case
+  TiToolCard tc
+    | tcLifecycle tc `elem` [Pending, Running] ->
+        TiToolCard tc { tcLifecycle = Cancelled }
+  item -> item
 
 -- | Render a goal verdict as display text.
 verdictText :: GoalVerdict -> T.Text
@@ -878,11 +938,3 @@ goalStatusText (Just gs) =
     GoalCleared ->
       ( "Goal cleared: " <> gsCondition gs
       , Just gs )
-
--- | Attach tool execution output to the most recent unfinished tool item.
-updateLatestToolResult :: ToolResult -> [ToolItem] -> [ToolItem]
-updateLatestToolResult res items =
-  case reverse items of
-    (latest : rest) | tiResult latest == Nothing ->
-      reverse (latest { tiResult = Just res } : rest)
-    _ -> items
