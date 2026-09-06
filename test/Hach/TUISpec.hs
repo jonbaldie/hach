@@ -12,7 +12,6 @@ import Hach.TUI.App
   , goalAgentConfig
   , initialTuiLaunch
   , runGoalWorker
-  , transcriptItemsToMessages
   , transcriptToMessages
   , vtyToUserKey
   )
@@ -353,14 +352,14 @@ spec = do
         let s0 = baseState { tsFocus = FocusTranscript, tsTranscript = [TiUser "hi", TiAssistant "hello"] }
             (sDown, aDown) = updateTui (EvUserKey KeyDown) s0
         aDown `shouldBe` [ActionScrollTranscript 1]
-        let (sUp, aUp) = updateTui (EvUserKey KeyUp) sDown
+        let (_sUp, aUp) = updateTui (EvUserKey KeyUp) sDown
         aUp `shouldBe` [ActionScrollTranscript (-1)]
 
       it "scrolls transcript 5 lines on PgUp and PgDn in FocusTranscript" $ do
         let s0 = baseState { tsFocus = FocusTranscript }
             (sDown, aDown) = updateTui (EvUserKey KeyPageDown) s0
         aDown `shouldBe` [ActionScrollTranscript 5]
-        let (sUp, aUp) = updateTui (EvUserKey KeyPageUp) sDown
+        let (_sUp, aUp) = updateTui (EvUserKey KeyPageUp) sDown
         aUp `shouldBe` [ActionScrollTranscript (-5)]
 
       it "clears transcript and resets context token counters on 'c' in FocusTranscript" $ do
@@ -454,7 +453,7 @@ spec = do
                   ]
               }
             rows = renderTestRows st (100, 30)
-            findRow needle = case [idx | (idx, r) <- zip [0..] rows, needle `T.isInfixOf` r] of
+            findRow needle = case [idx | (idx, r) <- zip [0 :: Int ..] rows, needle `T.isInfixOf` r] of
               (i:_) -> Just i
               []    -> Nothing
         let mUserRow = findRow "Show me foo.txt"
@@ -999,7 +998,7 @@ spec = do
               rows = renderTestRows thinkingState (120, 40)
           any ("Thinking..." `T.isInfixOf`) rows `shouldBe` True
 
-          let findRow needle = case [idx | (idx, r) <- zip [0..] rows, needle `T.isInfixOf` r] of
+          let findRow needle = case [idx | (idx, r) <- zip [0 :: Int ..] rows, needle `T.isInfixOf` r] of
                 (i:_) -> Just i
                 []    -> Nothing
               mUserRow = findRow "analyze repo"
