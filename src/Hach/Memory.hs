@@ -85,28 +85,27 @@ ruleMatchesFiles Rule{..} fps
 resolveMemoryImports :: FilePath -> Int -> FilePath -> IO Text
 resolveMemoryImports baseDir maxDepth path = do
   absBase <- makeAbsolute baseDir
-  go absBase maxDepth path
+  absPath <- makeAbsolute path
+  pathRes <- resolveWorkspacePath absBase absPath
+  case pathRes of
+    Left _       -> pure ""
+    Right safeFp -> readAndExpand absBase maxDepth safeFp
   where
-    go base depth fp
-      | depth <= 0 = pure ""
-      | otherwise = do
-          absFp <- makeAbsolute fp
-          allowed <- resolveWorkspacePath base absFp
-          case allowed of
+    -- 'safeFp' has already passed 'resolveWorkspacePath'.
+    readAndExpand _ depth _ | depth <= 0 = pure ""
+    readAndExpand base depth safeFp = do
+      exists <- doesFileExist safeFp
+      if not exists
+        then pure ""
+        else do
+          res <- try (BS.readFile safeFp) :: IO (Either SomeException BS.ByteString)
+          case res of
             Left _ -> pure ""
-            Right safeFp -> do
-              exists <- doesFileExist safeFp
-              if not exists
-                then pure ""
-                else do
-                  res <- try (BS.readFile safeFp) :: IO (Either SomeException BS.ByteString)
-                  case res of
-                    Left _ -> pure ""
-                    Right bytes -> do
-                      let txt = TE.decodeUtf8With (\_ _ -> Just ' ') bytes
-                          ls  = T.lines txt
-                      expandedLines <- mapM (processLine base (depth - 1) (takeDirectory safeFp)) ls
-                      pure (T.unlines (concat expandedLines))
+            Right bytes -> do
+              let txt = TE.decodeUtf8With (\_ _ -> Just ' ') bytes
+                  ls  = T.lines txt
+              expandedLines <- mapM (processLine base (depth - 1) (takeDirectory safeFp)) ls
+              pure (T.unlines (concat expandedLines))
 
     processLine base depth dir line
       | "@import " `T.isPrefixOf` T.strip line =
@@ -121,7 +120,7 @@ resolveMemoryImports baseDir maxDepth path = do
                 Left _ ->
                   pure ["[Import denied: path escapes workspace]"]
                 Right safeFp -> do
-                  content <- go base depth safeFp
+                  content <- readAndExpand base depth safeFp
                   pure (T.lines content)
       | otherwise = pure [line]
 

@@ -13,6 +13,7 @@ module Hach.MCP
   ) where
 
 import Hach.Types
+import Control.Monad (guard)
 import Control.Exception (SomeException, try)
 import Data.Aeson
   ( FromJSON(..), ToJSON(..), (.:?), (.!=), object, (.=), withObject
@@ -95,34 +96,18 @@ formatMcpToolName server tool = "mcp__" <> server <> "__" <> tool
 
 -- | Parse a qualified MCP tool name back into server name and tool name.
 --
--- Splits on the first @__@ delimiter that is not fused into a longer
--- underscore run.  @mcp__srv___tool@ (server name ending in @_@) is
--- therefore rejected rather than silently reparsed as @("srv", "_tool")@.
--- Extra @__@ segments in the tool name are also rejected.
+-- Splits on the first @__@ delimiter. A server name ending in @_@ or a
+-- tool name starting with @_@ fuses with the delimiter into @___@ and is
+-- rejected, as are extra @__@ segments in the tool name.
 parseMcpToolName :: Text -> Maybe (Text, Text)
-parseMcpToolName t =
-  case T.stripPrefix "mcp__" t of
-    Nothing   -> Nothing
-    Just rest ->
-      case unfusedSplit rest of
-        Just (srv, tool)
-          | not (T.null srv)
-          , not (T.null tool)
-          , not ("__" `T.isInfixOf` srv)
-          , not ("__" `T.isInfixOf` tool) -> Just (srv, tool)
-        _ -> Nothing
-  where
-    unfusedSplit rest =
-      let n = T.length rest
-          go i
-            | i + 1 >= n = Nothing
-            | T.index rest i == '_'
-              && T.index rest (i + 1) == '_'
-              && (i == 0 || T.index rest (i - 1) /= '_')
-              && (i + 2 >= n || T.index rest (i + 2) /= '_') =
-                Just (T.take i rest, T.drop (i + 2) rest)
-            | otherwise = go (i + 1)
-      in go 0
+parseMcpToolName t = do
+  rest <- T.stripPrefix "mcp__" t
+  let (srv, after) = T.breakOn "__" rest
+  tool <- T.stripPrefix "__" after
+  guard (not (T.null srv) && not (T.null tool))
+  guard (not (T.isSuffixOf "_" srv) && not (T.isPrefixOf "_" tool))
+  guard (not ("__" `T.isInfixOf` tool))
+  pure (srv, tool)
 
 -- | Search tool definitions by substring matching.
 searchMcpTools :: Text -> [ToolDef] -> [ToolDef]

@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 -- | Workspace-relative path containment.
 --
 -- Shared by the tool runtime, memory @import resolver, and skill
@@ -8,7 +6,6 @@ module Hach.Paths
   ( collapseLogicalPath
   , canonicalizeCandidate
   , resolveWorkspacePath
-  , isUnderRoot
   ) where
 
 import Data.List (isPrefixOf)
@@ -19,10 +16,9 @@ import System.Directory
   )
 import System.FilePath
   ( (</>)
+  , addTrailingPathSeparator
   , isAbsolute
-  , isPathSeparator
   , joinPath
-  , pathSeparator
   , splitDirectories
   , takeDirectory
   , takeFileName
@@ -72,24 +68,8 @@ resolveWorkspacePath root rawPath = do
     then pure (Right finalPath)
     else pure (Left ("Access denied: path '" <> rawPath <> "' escapes the workspace root."))
 
--- | True when 'candidate' (already collapsed / canonicalized as far as possible)
--- sits on or under 'rootCanon'.
+-- | True when 'finalPath' sits on or under 'rootCanon'.
 isUnderRootCanon :: FilePath -> FilePath -> Bool
 isUnderRootCanon rootCanon finalPath =
-  let rootWithSep =
-        if isPathSeparator (last rootCanon)
-          then rootCanon
-          else rootCanon ++ [pathSeparator]
+  let rootWithSep = addTrailingPathSeparator rootCanon
   in finalPath == rootCanon || rootWithSep `isPrefixOf` finalPath
-
--- | True when 'candidate' resolves to a location inside 'root'.
--- Relative candidates are first joined with 'root'. Absolute candidates
--- are accepted only if they still land inside 'root' after collapse.
-isUnderRoot :: FilePath -> FilePath -> IO Bool
-isUnderRoot root candidate = do
-  rootOk <- doesDirectoryExist root
-  if not rootOk
-    then pure False
-    else do
-      res <- resolveWorkspacePath root candidate
-      pure (either (const False) (const True) res)

@@ -155,22 +155,23 @@ transcriptToMessages = dialogueToMessages
 -- A run of consecutive tool cards following an assistant text item (or standing alone)
 -- becomes one assistant message carrying the text plus those tool calls,
 -- followed by one tool message per card keyed by call id.
--- Notices remain omitted. Consecutive assistant text items (including those
--- that become adjacent after notices are dropped) are collapsed so the
--- resulting message list never contains two adjoining 'AssistantMsg' values.
+-- Notices remain omitted. Consecutive assistant or user text items
+-- (including those that become adjacent after notices are dropped) are
+-- collapsed so the resulting message list never contains two adjoining
+-- 'AssistantMsg' or 'UserMsg' values.
 transcriptItemsToMessages :: [TranscriptItem] -> [Message]
-transcriptItemsToMessages = go . collapseAdjacentAssistants . filter (not . isNotice)
+transcriptItemsToMessages = go . collapseAdjacentTextItems . filter (not . isNotice)
   where
     isNotice (TiNotice _) = True
     isNotice _            = False
 
-    collapseAdjacentAssistants [] = []
-    collapseAdjacentAssistants (TiAssistant a1 : TiAssistant a2 : rest) =
-      collapseAdjacentAssistants (TiAssistant (a1 <> "\n\n" <> a2) : rest)
-    collapseAdjacentAssistants (TiUser u1 : TiUser u2 : rest) =
-      collapseAdjacentAssistants (TiUser (u1 <> "\n\n" <> u2) : rest)
-    collapseAdjacentAssistants (x : xs) =
-      x : collapseAdjacentAssistants xs
+    collapseAdjacentTextItems [] = []
+    collapseAdjacentTextItems (TiAssistant a1 : TiAssistant a2 : rest) =
+      collapseAdjacentTextItems (TiAssistant (a1 <> "\n\n" <> a2) : rest)
+    collapseAdjacentTextItems (TiUser u1 : TiUser u2 : rest) =
+      collapseAdjacentTextItems (TiUser (u1 <> "\n\n" <> u2) : rest)
+    collapseAdjacentTextItems (x : xs) =
+      x : collapseAdjacentTextItems xs
 
     extractCards (TiToolCard c : rest) =
       let (cs, remItems) = extractCards rest
