@@ -1,8 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Agent.Skills
   ( SkillSource(..)
   , Skill(..)
+  , mkSkill
   , SkillCatalog
   , parseSkillFile
   , mergeSkills
@@ -11,12 +13,14 @@ module Agent.Skills
   , parseSkillInvocations
   , injectSkillsIntoPrompt
   , skillInvocationCompletion
+  , substituteArguments
+  , injectDynamicContext
   ) where
 
 import Control.Applicative ((<|>))
 import Control.Exception (try, SomeException)
 import qualified Data.ByteString as BS
-import Data.Char (isSpace)
+import Data.Char (isSpace, toLower)
 import Data.List (nubBy)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -25,7 +29,9 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import System.Directory (doesDirectoryExist, doesFileExist, getHomeDirectory, listDirectory)
+import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
+import System.Process (CreateProcess(cwd), readCreateProcessWithExitCode, shell)
 
 -- | Source location of a discovered skill.
 data SkillSource
@@ -33,14 +39,36 @@ data SkillSource
   | SkillWorkspace
   deriving (Show, Eq)
 
--- | A parsed agent skill.
+-- | A parsed agent skill with frontmatter metadata.
 data Skill = Skill
-  { skillName        :: !Text
-  , skillDescription :: !Text
-  , skillContent     :: !Text
-  , skillPath        :: !FilePath
-  , skillSource      :: !SkillSource
+  { skillName                   :: !Text
+  , skillDescription            :: !Text
+  , skillContent                :: !Text
+  , skillPath                   :: !FilePath
+  , skillSource                 :: !SkillSource
+  , skillAllowedTools           :: ![Text]
+  , skillUserInvocable          :: !Bool
+  , skillDisableModelInvocation :: !Bool
+  , skillContextFork            :: !Bool
+  , skillAgent                  :: !(Maybe Text)
+  , skillPaths                  :: ![Text]
   } deriving (Show, Eq)
+
+-- | Smart constructor with default metadata for backward compatibility.
+mkSkill :: Text -> Text -> Text -> FilePath -> SkillSource -> Skill
+mkSkill name desc content path source = Skill
+  { skillName                   = name
+  , skillDescription            = desc
+  , skillContent                = content
+  , skillPath                   = path
+  , skillSource                 = source
+  , skillAllowedTools           = []
+  , skillUserInvocable          = True
+  , skillDisableModelInvocation = False
+  , skillContextFork            = False
+  , skillAgent                  = Nothing
+  , skillPaths                  = []
+  }
 
 -- | Catalog of available skills indexed by skill name.
 type SkillCatalog = Map Text Skill
@@ -62,14 +90,34 @@ parseSkillFile source path rawText =
           let parsedFields = [ parseKeyValue l | l <- fmLines, not (T.null (T.strip l)) ]
               mName = lookup "name" parsedFields
               mDesc = lookup "description" parsedFields
+              mAllowed = lookup "allowed-tools" parsedFields
+              mUserInvocable = lookup "user-invocable" parsedFields
+              mDisableModel = lookup "disable-model-invocation" parsedFields
+              mContext = lookup "context" parsedFields <|> lookup "context:fork" parsedFields
+              mAgent = lookup "agent" parsedFields
+              mPaths = lookup "paths" parsedFields
+
+              parseBool _ (Just v) =
+                let s = map toLower (T.unpack (T.strip v))
+                in s `elem` ["true", "yes", "1"]
+              parseBool def Nothing = def
+
+              parseList (Just v) = [ T.strip (stripQuotes w) | w <- T.splitOn "," v, not (T.null (T.strip w)) ]
+              parseList Nothing  = []
           in case mName of
             Nothing -> Left "Missing 'name' field in skill frontmatter."
             Just nm -> Right Skill
-              { skillName        = nm
-              , skillDescription = fromMaybe "" mDesc
-              , skillContent     = T.strip (T.unlines bodyLines)
-              , skillPath        = path
-              , skillSource      = source
+              { skillName                   = nm
+              , skillDescription            = fromMaybe "" mDesc
+              , skillContent                = T.strip (T.unlines bodyLines)
+              , skillPath                   = path
+              , skillSource                 = source
+              , skillAllowedTools           = parseList mAllowed
+              , skillUserInvocable          = parseBool True mUserInvocable
+              , skillDisableModelInvocation = parseBool False mDisableModel
+              , skillContextFork            = maybe False (\v -> T.toLower (T.strip v) `elem` ["fork", "true"]) mContext
+              , skillAgent                  = mAgent
+              , skillPaths                  = parseList mPaths
               }
         _ -> Left "Unterminated frontmatter delimiter (missing closing '---')."
     _ -> Left "Skill file must begin with frontmatter delimiter '---'."
@@ -87,7 +135,7 @@ mergeSkills globalSkills workspaceSkills =
       workspaceMap = Map.fromList [ (skillName s, s) | s <- workspaceSkills ]
   in Map.union workspaceMap globalMap
 
--- | Discover skills from a given root directory (e.g. ~/.agents/skills).
+-- | Discover skills from a given directory.
 discoverSkillsFromDir :: SkillSource -> FilePath -> IO [Skill]
 discoverSkillsFromDir source dir = do
   exists <- doesDirectoryExist dir
@@ -116,19 +164,64 @@ discoverSkillsFromDir source dir = do
                 Left _  -> pure Nothing
                 Right s -> pure (Just s)
 
--- | Discover all skills across global (~/.agents/skills) and workspace (.agents/skills).
+-- | Discover all skills across global and workspace, supporting .claude/skills and .agents/skills.
 discoverSkills :: FilePath -> IO SkillCatalog
 discoverSkills workspace = do
   homeRes <- try getHomeDirectory :: IO (Either SomeException FilePath)
   globalSkills <- case homeRes of
-    Left _     -> pure []
-    Right home -> discoverSkillsFromDir SkillGlobal (home </> ".agents" </> "skills")
-  let workspaceDir = workspace </> ".agents" </> "skills"
-  workspaceSkills <- discoverSkillsFromDir SkillWorkspace workspaceDir
-  pure (mergeSkills globalSkills workspaceSkills)
+    Left _ -> pure []
+    Right home -> do
+      gClaude <- discoverSkillsFromDir SkillGlobal (home </> ".claude" </> "skills")
+      gAgents <- discoverSkillsFromDir SkillGlobal (home </> ".agents" </> "skills")
+      pure (gClaude ++ gAgents)
+  wClaude <- discoverSkillsFromDir SkillWorkspace (workspace </> ".claude" </> "skills")
+  wAgents <- discoverSkillsFromDir SkillWorkspace (workspace </> ".agents" </> "skills")
+  pure (mergeSkills globalSkills (wClaude ++ wAgents))
+
+-- | Substitute $ARGUMENTS in skill content.
+substituteArguments :: Text -> Text -> Text
+substituteArguments args content = T.replace "$ARGUMENTS" args content
+
+-- | Inject dynamic context into skill content: !command lines and {{file:path}} placeholders.
+injectDynamicContext :: FilePath -> Text -> IO Text
+injectDynamicContext root raw = do
+  let ls = T.lines raw
+  expandedLines <- mapM processLine ls
+  pure (T.unlines expandedLines)
+  where
+    processLine line
+      | "!" `T.isPrefixOf` T.stripStart line = do
+          let cmd = T.unpack (T.drop 1 (T.stripStart line))
+              procSpec = (shell cmd) { cwd = Just root }
+          res <- try (readCreateProcessWithExitCode procSpec "") :: IO (Either SomeException (ExitCode, String, String))
+          pure $ case res of
+            Right (ExitSuccess, out, _) -> T.stripEnd (T.pack out)
+            _                           -> line
+      | "{{file:" `T.isInfixOf` line = replaceFilePlaceholders line
+      | otherwise = pure line
+
+    replaceFilePlaceholders line =
+      case T.breakOn "{{file:" line of
+        (before, rest) | not (T.null rest) -> do
+          let afterPrefix = T.drop 7 rest
+          case T.breakOn "}}" afterPrefix of
+            (fpText, restAfter) | not (T.null restAfter) -> do
+              let targetFp = root </> T.unpack (T.strip fpText)
+                  trailing = T.drop 2 restAfter
+              exists <- doesFileExist targetFp
+              fileContent <- if exists
+                then do
+                  bRes <- try (BS.readFile targetFp) :: IO (Either SomeException BS.ByteString)
+                  case bRes of
+                    Right bs -> pure (TE.decodeUtf8With (\_ _ -> Just ' ') bs)
+                    Left _   -> pure ("{{file:" <> fpText <> "}}")
+                else pure ("{{file:" <> fpText <> "}}")
+              nextTrailing <- replaceFilePlaceholders trailing
+              pure (before <> fileContent <> nextTrailing)
+            _ -> pure line
+        _ -> pure line
 
 -- | Inspect a user message for skill invocation tokens (e.g. '/to-spec').
--- Extracts matching skills and removes the invocation token while preserving multiline formatting.
 parseSkillInvocations :: SkillCatalog -> Text -> (Text, [Skill])
 parseSkillInvocations catalog rawInput =
   let allWords = T.words rawInput
@@ -164,18 +257,7 @@ injectSkillsIntoPrompt skills prompt =
        then T.strip formattedSkills
        else T.strip formattedSkills <> "\n\n" <> prompt
 
--- | Compute the inline completion suffix for the slash-command currently
--- being typed at the end of the input buffer.
---
--- When the trailing whitespace-delimited word of the buffer is a @/@
--- followed by a non-empty string that is a proper prefix of at least one
--- skill name in the catalog, returns the characters needed to complete
--- that word to the lexicographically smallest skill name that is strictly
--- longer than the typed prefix. An exact match never blocks extending to a
--- longer skill (so @"/go"@ can still complete to @"/goal"@ even when a
--- @go@ skill exists). Returns 'Nothing' when the trailing word is not a
--- @/@-command in progress, when no skill extends it, or when the buffer
--- ends in whitespace (the word is finished).
+-- | Compute the inline completion suffix for the slash-command currently being typed.
 skillInvocationCompletion :: SkillCatalog -> Text -> Maybe Text
 skillInvocationCompletion catalog input =
   case trailingWord input of
@@ -188,12 +270,11 @@ skillInvocationCompletion catalog input =
       where
         partial = T.drop 1 word
         longer  = [ m | m <- Map.keys catalog
+                     , skillUserInvocable (catalog Map.! m)
                      , partial `T.isPrefixOf` m
                      , T.length m > T.length partial
                      ]
 
--- | The whitespace-delimited word at the end of the buffer, or 'Nothing'
--- when the buffer is empty or ends in whitespace (no word in progress).
 trailingWord :: Text -> Maybe Text
 trailingWord t
   | T.null t           = Nothing

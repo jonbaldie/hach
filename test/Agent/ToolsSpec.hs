@@ -60,6 +60,62 @@ spec = do
       let call = ToolCall "c4" "list_dir" "{}"
       parseListDirArgs call `shouldBe` Right (ListDirArgs ".")
 
+    it "parses Edit tool arguments" $ do
+      let call = ToolCall "c_edit" "Edit" "{\"path\":\"file.txt\",\"old_content\":\"a\",\"new_content\":\"b\"}"
+      parseEditArgs call `shouldBe` Right (EditArgs "file.txt" "a" "b")
+
+    it "parses Bash tool arguments with optional timeout" $ do
+      let call1 = ToolCall "c_b1" "Bash" "{\"command\":\"ls -la\"}"
+          call2 = ToolCall "c_b2" "Bash" "{\"command\":\"sleep 10\",\"timeout\":15}"
+      parseBashArgs call1 `shouldBe` Right (BashArgs "ls -la" Nothing)
+      parseBashArgs call2 `shouldBe` Right (BashArgs "sleep 10" (Just 15))
+
+    it "parses Glob tool arguments" $ do
+      let call = ToolCall "c_glob" "Glob" "{\"pattern\":\"*.hs\",\"path\":\"src\"}"
+      parseGlobArgs call `shouldBe` Right (GlobArgs "*.hs" "src")
+
+    it "parses Grep tool arguments" $ do
+      let call = ToolCall "c_grep" "Grep" "{\"query\":\"data \",\"path\":\"src\",\"case_sensitive\":true}"
+      parseGrepArgs call `shouldBe` Right (GrepArgs "data " "src" True)
+
+    it "parses WebFetch arguments" $ do
+      let call = ToolCall "c_fetch" "WebFetch" "{\"url\":\"https://example.com\"}"
+      parseWebFetchArgs call `shouldBe` Right (WebFetchArgs "https://example.com")
+
+    it "parses WebSearch arguments" $ do
+      let call = ToolCall "c_search" "WebSearch" "{\"query\":\"haskell free monads\"}"
+      parseWebSearchArgs call `shouldBe` Right (WebSearchArgs "haskell free monads")
+
+    it "parses Agent arguments" $ do
+      let call = ToolCall "c_agent" "Agent" "{\"name\":\"explore\",\"prompt\":\"Find files\"}"
+      parseAgentArgs call `shouldBe` Right (AgentArgs "explore" "Find files")
+
+    it "parses TodoWrite arguments" $ do
+      let call = ToolCall "c_todo" "TodoWrite" "{\"tasks\":[\"task 1\",\"task 2\"]}"
+      parseTodoWriteArgs call `shouldBe` Right (TodoWriteArgs ["task 1", "task 2"])
+
+    it "parses Skill arguments" $ do
+      let call = ToolCall "c_skill" "Skill" "{\"name\":\"review\",\"args\":\"file.hs\"}"
+      parseSkillToolArgs call `shouldBe` Right (SkillToolArgs "review" (Just "file.hs"))
+
+    it "parses PushNotification arguments" $ do
+      let call = ToolCall "c_notify" "PushNotification" "{\"title\":\"Build\",\"message\":\"Done!\"}"
+      parsePushNotificationArgs call `shouldBe` Right (PushNotificationArgs "Build" "Done!")
+
+    it "parses Task arguments (Create, Get, Update, Stop)" $ do
+      let callCreate = ToolCall "c_tc" "TaskCreate" "{\"name\":\"compile\",\"command\":\"cabal build\"}"
+          callGet = ToolCall "c_tg" "TaskGet" "{\"task_id\":\"task-1\"}"
+          callUpdate = ToolCall "c_tu" "TaskUpdate" "{\"task_id\":\"task-1\",\"status\":\"completed\"}"
+          callStop = ToolCall "c_ts" "TaskStop" "{\"task_id\":\"task-1\"}"
+      parseTaskCreateArgs callCreate `shouldBe` Right (TaskCreateArgs "compile" (Just "cabal build"))
+      parseTaskGetArgs callGet `shouldBe` Right (TaskGetArgs (TaskId "task-1"))
+      parseTaskUpdateArgs callUpdate `shouldBe` Right (TaskUpdateArgs (TaskId "task-1") "completed")
+      parseTaskStopArgs callStop `shouldBe` Right (TaskStopArgs (TaskId "task-1"))
+
+    it "parses AskUserQuestion arguments" $ do
+      let call = ToolCall "c_ask" "AskUserQuestion" "{\"question\":\"Proceed?\",\"options\":[\"yes\",\"no\"]}"
+      parseAskUserQuestionArgs call `shouldBe` Right (AskUserQuestionArgs "Proceed?" ["yes", "no"])
+
   describe "allToolDefs" $ do
     it "contains all seven coding tools" $ do
       let names = map toolName allToolDefs
@@ -145,4 +201,47 @@ spec = do
           ToolSuccess out -> do
             out `shouldSatisfy` ("Code.hs:2: searchTarget here" `T.isInfixOf`)
           ToolError err -> expectationFailure (T.unpack err)
+
+      it "executes Edit tool via executeCodingTool" $ do
+        let targetFile = testSandbox </> "edit_target.txt"
+        _ <- executeWriteFile "." (WriteFileArgs targetFile "apple banana cherry")
+        let call = ToolCall "c_e" "Edit" ("{\"path\":\"" <> T.pack targetFile <> "\",\"old_content\":\"banana\",\"new_content\":\"orange\"}")
+        res <- executeCodingTool "." call
+        case res of
+          ToolSuccess _ -> do
+            readRes <- executeReadFile "." (ReadFileArgs targetFile)
+            readRes `shouldBe` ToolSuccess "apple orange cherry"
+          ToolError err -> expectationFailure ("Edit execution failed: " ++ T.unpack err)
+
+      it "executes Bash command via executeCodingTool" $ do
+        let call = ToolCall "c_b" "Bash" "{\"command\":\"echo hello-bash\"}"
+        res <- executeCodingTool "." call
+        case res of
+          ToolSuccess out -> out `shouldSatisfy` ("hello-bash" `T.isInfixOf`)
+          ToolError err   -> expectationFailure ("Bash failed: " ++ T.unpack err)
+
+      it "executes Glob tool via executeCodingTool" $ do
+        _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "sub" </> "foo.txt") "content")
+        let call = ToolCall "c_g" "Glob" ("{\"pattern\":\"*.txt\",\"path\":\"" <> T.pack testSandbox <> "\"}")
+        res <- executeCodingTool "." call
+        case res of
+          ToolSuccess out -> out `shouldSatisfy` ("foo.txt" `T.isInfixOf`)
+          ToolError err   -> expectationFailure ("Glob failed: " ++ T.unpack err)
+
+      it "executes EnterPlanMode and ExitPlanMode" $ do
+        r1 <- executeCodingTool "." (ToolCall "p1" "EnterPlanMode" "{}")
+        r1 `shouldSatisfy` \case ToolSuccess out -> "plan mode" `T.isInfixOf` out; _ -> False
+        r2 <- executeCodingTool "." (ToolCall "p2" "ExitPlanMode" "{}")
+        r2 `shouldSatisfy` \case ToolSuccess out -> "Exited" `T.isInfixOf` out; _ -> False
+
+      it "manages tasks via TaskCreate and TaskList" $ do
+        r1 <- executeCodingTool "." (ToolCall "t1" "TaskCreate" "{\"name\":\"Build feature\"}")
+        r1 `shouldSatisfy` \case ToolSuccess out -> "Build feature" `T.isInfixOf` out; _ -> False
+        r2 <- executeCodingTool "." (ToolCall "t2" "TaskList" "{}")
+        r2 `shouldSatisfy` \case ToolSuccess out -> "Build feature" `T.isInfixOf` out; _ -> False
+
+      it "writes todos via TodoWrite" $ do
+        r <- executeCodingTool testSandbox (ToolCall "tw" "TodoWrite" "{\"tasks\":[\"Step 1\",\"Step 2\"]}")
+        r `shouldSatisfy` \case ToolSuccess out -> "2 todo items" `T.isInfixOf` out; _ -> False
+
 

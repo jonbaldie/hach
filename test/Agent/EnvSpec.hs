@@ -3,6 +3,8 @@
 module Agent.EnvSpec (spec) where
 
 import Agent.Env
+import Agent.Settings (defaultSettings)
+import Agent.Types (PermissionMode(..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -57,7 +59,7 @@ spec = do
   describe "parseCliArgs" $ do
     it "parses --model with separate argument" $ do
       let args = ["--model", "meta/llama-3", "do", "something"]
-      parseCliArgs args `shouldBe` Right CliOptions
+      parseCliArgs args `shouldBe` Right defaultCliOptions
         { optModel = Just "meta/llama-3"
         , optPrompt = Just "do something"
         , optNoTui = False
@@ -65,7 +67,7 @@ spec = do
 
     it "parses --model= syntax" $ do
       let args = ["--model=anthropic/claude-3", "run", "all", "tests"]
-      parseCliArgs args `shouldBe` Right CliOptions
+      parseCliArgs args `shouldBe` Right defaultCliOptions
         { optModel = Just "anthropic/claude-3"
         , optPrompt = Just "run all tests"
         , optNoTui = False
@@ -73,7 +75,7 @@ spec = do
 
     it "parses short flag -m" $ do
       let args = ["-m", "openai/gpt-4o", "hello"]
-      parseCliArgs args `shouldBe` Right CliOptions
+      parseCliArgs args `shouldBe` Right defaultCliOptions
         { optModel = Just "openai/gpt-4o"
         , optPrompt = Just "hello"
         , optNoTui = False
@@ -81,7 +83,7 @@ spec = do
 
     it "parses flag positioned between prompt words" $ do
       let args = ["hello", "--model", "meta/muse-glimmer-30b", "world"]
-      parseCliArgs args `shouldBe` Right CliOptions
+      parseCliArgs args `shouldBe` Right defaultCliOptions
         { optModel = Just "meta/muse-glimmer-30b"
         , optPrompt = Just "hello world"
         , optNoTui = False
@@ -89,7 +91,7 @@ spec = do
 
     it "parses --no-tui flag" $ do
       let args = ["--no-tui", "echo", "hello"]
-      parseCliArgs args `shouldBe` Right CliOptions
+      parseCliArgs args `shouldBe` Right defaultCliOptions
         { optModel = Nothing
         , optPrompt = Just "echo hello"
         , optNoTui = True
@@ -97,21 +99,21 @@ spec = do
 
     it "parses arguments when no model flag is provided" $ do
       let args = ["run", "my", "task"]
-      parseCliArgs args `shouldBe` Right CliOptions
+      parseCliArgs args `shouldBe` Right defaultCliOptions
         { optModel = Nothing
         , optPrompt = Just "run my task"
         , optNoTui = False
         }
 
     it "parses empty arguments" $ do
-      parseCliArgs [] `shouldBe` Right CliOptions
+      parseCliArgs [] `shouldBe` Right defaultCliOptions
         { optModel = Nothing
         , optPrompt = Nothing
         , optNoTui = False
         }
 
     it "treats whitespace-only arguments as Nothing for optPrompt" $ do
-      parseCliArgs ["", "   "] `shouldBe` Right CliOptions
+      parseCliArgs ["", "   "] `shouldBe` Right defaultCliOptions
         { optModel = Nothing
         , optPrompt = Nothing
         , optNoTui = False
@@ -127,6 +129,61 @@ spec = do
         Left _ -> pure ()
         Right _ -> expectationFailure "Expected parseCliArgs to fail when --model= is empty"
 
+    it "parses --print and -p flags" $ do
+      parseCliArgs ["--print", "hi"] `shouldBe` Right defaultCliOptions
+        { optPrint = True
+        , optNoTui = True
+        , optPrompt = Just "hi"
+        }
+      parseCliArgs ["-p", "hi"] `shouldBe` Right defaultCliOptions
+        { optPrint = True
+        , optNoTui = True
+        , optPrompt = Just "hi"
+        }
+
+    it "parses --output-format json and text" $ do
+      parseCliArgs ["--output-format", "json"] `shouldBe` Right defaultCliOptions
+        { optOutputFormat = OutputJson }
+      parseCliArgs ["--output-format=text"] `shouldBe` Right defaultCliOptions
+        { optOutputFormat = OutputText }
+
+    it "parses --continue / -c and --resume / -r" $ do
+      parseCliArgs ["--continue"] `shouldBe` Right defaultCliOptions { optContinue = True }
+      parseCliArgs ["-c"] `shouldBe` Right defaultCliOptions { optContinue = True }
+      parseCliArgs ["--resume"] `shouldBe` Right defaultCliOptions { optResume = True }
+      parseCliArgs ["-r"] `shouldBe` Right defaultCliOptions { optResume = True }
+
+    it "parses --session-id" $ do
+      parseCliArgs ["--session-id", "sess-123"] `shouldBe` Right defaultCliOptions
+        { optSessionId = Just "sess-123" }
+
+    it "parses --max-turns and --max-budget-usd" $ do
+      parseCliArgs ["--max-turns", "50", "--max-budget-usd", "5.25"] `shouldBe` Right defaultCliOptions
+        { optMaxTurns = Just 50
+        , optMaxBudgetUsd = Just 5.25
+        }
+
+    it "parses --worktree / -w" $ do
+      parseCliArgs ["--worktree", "feat-1"] `shouldBe` Right defaultCliOptions
+        { optWorktree = Just "feat-1" }
+      parseCliArgs ["-w", "feat-2"] `shouldBe` Right defaultCliOptions
+        { optWorktree = Just "feat-2" }
+
+    it "parses --permission-mode" $ do
+      parseCliArgs ["--permission-mode", "acceptEdits"] `shouldBe` Right defaultCliOptions
+        { optPermissionMode = Just ModeAcceptEdits }
+      parseCliArgs ["--permission-mode=plan"] `shouldBe` Right defaultCliOptions
+        { optPermissionMode = Just ModePlan }
+
+    it "parses --dangerously-skip-permissions" $ do
+      parseCliArgs ["--dangerously-skip-permissions"] `shouldBe` Right defaultCliOptions
+        { optDangerouslySkipPerms = True }
+
+    it "fails on unknown flag" $ do
+      case parseCliArgs ["--some-bogus-flag"] of
+        Left err -> err `shouldContain` "Unknown flag"
+        Right _  -> expectationFailure "Expected failure on unknown flag"
+
   describe "resolveConfigWith" $ do
     let dotEnvSample = "OPENROUTER_API_KEY=sk-dotenv\nOPENROUTER_MODEL=meta/muse-glimmer-30b\n"
 
@@ -139,6 +196,7 @@ spec = do
       res `shouldBe` Right EnvConfig
         { envApiKey = "sk-os-env"
         , envModel = "custom/cli-model"
+        , envSettings = defaultSettings
         }
 
     it "uses OS environment API key in preference to .env" $ do
@@ -150,6 +208,7 @@ spec = do
       res `shouldBe` Right EnvConfig
         { envApiKey = "sk-os-env"
         , envModel = "meta/muse-glimmer-30b"
+        , envSettings = defaultSettings
         }
 
     it "falls back to .env when OS environment variables are missing" $ do
@@ -161,6 +220,7 @@ spec = do
       res `shouldBe` Right EnvConfig
         { envApiKey = "sk-dotenv"
         , envModel = "meta/muse-glimmer-30b"
+        , envSettings = defaultSettings
         }
 
     it "uses OS environment model when no CLI flag given and .env missing" $ do
@@ -172,6 +232,7 @@ spec = do
       res `shouldBe` Right EnvConfig
         { envApiKey = "sk-os-env"
         , envModel = "os-model"
+        , envSettings = defaultSettings
         }
 
     it "fails if API key is not in OS env or .env" $ do

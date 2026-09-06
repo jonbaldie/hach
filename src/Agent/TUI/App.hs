@@ -10,7 +10,6 @@ module Agent.TUI.App
 import Agent.Core
 import Agent.Env (buildSystemPrompt, loadProjectInstructions)
 import Agent.Interpreter.IO
-import Agent.OpenRouter
 import Agent.Skills (discoverSkills, injectSkillsIntoPrompt, parseSkillInvocations)
 import Agent.Tools
 import Agent.TUI.State
@@ -24,7 +23,6 @@ import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, writeTVar)
 import Control.Exception (SomeException, try)
 import Control.Monad (forM_)
 import Control.Monad.IO.Class (liftIO)
-import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Graphics.Vty as Vty
@@ -55,48 +53,10 @@ vtyToUserKey = \case
 
 -- | Algebra that pipes every agent execution event into the Brick BChan.
 tuiAlgebra :: BChan AgentEvent -> IOEnv -> AgentAlgebra IO
-tuiAlgebra chan IOEnv{..} = AgentAlgebra
-  { interpPrompt = \msgs tools -> do
-      let req = ChatRequest
-            { reqModel      = ioModel
-            , reqMessages   = msgs
-            , reqTools      = tools
-            , reqToolChoice = Just "auto"
-            }
-      sendChatCompletion ioManager ioApiKey req
-
-  , interpTool = \call ->
-      executeCodingTool ioWorkspace call
-
-  , interpLog = \ev ->
-      writeBChan chan ev
-
-  , interpEvaluate = \condition transcript -> do
-      let evalMsgs = [ SystemMsg evaluatorSystemPrompt
-                     , UserMsg ("Condition: " <> condition <> "\n\nTranscript:\n" <> transcriptToText transcript)
-                     ]
-          req = ChatRequest
-            { reqModel      = ioModel
-            , reqMessages   = evalMsgs
-            , reqTools      = []
-            , reqToolChoice = Nothing
-            }
-      res <- sendChatCompletion ioManager ioApiKey req
-      case res of
-        Right asstResp ->
-          case respContent asstResp of
-            Just content -> pure (parseGoalEvaluation content)
-            Nothing      -> pure (GoalEvaluation GoalNotYetMet "Empty evaluator response.")
-        Left err ->
-          pure (GoalEvaluation GoalNotYetMet ("Evaluator error: " <> err))
+tuiAlgebra chan env = (ioAlgebra env)
+  { interpLog = writeBChan chan
   }
-  where
-    transcriptToText = T.unlines . map msgToText
-    msgToText = \case
-      SystemMsg c       -> "[System] " <> c
-      UserMsg c         -> "[User] " <> c
-      AssistantMsg mc _ -> "[Assistant] " <> fromMaybe "" mc
-      ToolMsg _ name c  -> "[Tool " <> name <> "] " <> c
+
 
 -- | Run the full modern TUI application.
 runTui :: IOEnv -> Maybe Text -> IO ()

@@ -27,6 +27,17 @@ data MockEnv = MockEnv
   , mockCommandOutputs    :: !(Map Text (Int, Text, Text)) -- ^ (exitCode, stdout, stderr)
   , mockEvents            :: ![AgentEvent]
   , mockGoalEvaluations   :: ![Text -> [Message] -> GoalEvaluation]
+  , mockPermissions       :: !(Text -> Text -> Bool)
+  , mockHooks             :: !(HookEvent -> Text -> HookResult)
+  , mockSavedSessions     :: !(Map SessionId SessionInfo)
+  , mockRunningAgents     :: ![AgentInfo]
+  , mockMcpTools          :: ![ToolDef]
+  , mockMcpResults        :: !(Map (Text, Text) ToolResult)
+  , mockTasks             :: !(Map TaskId TaskInfo)
+  , mockNotifications     :: ![(Text, Text)]
+  , mockGitStatus         :: !GitStatusInfo
+  , mockWorktrees         :: ![FilePath]
+  , mockCurrentWorktree   :: !(Maybe FilePath)
   }
 
 -- | An initial empty mock environment.
@@ -37,6 +48,17 @@ emptyMockEnv = MockEnv
   , mockCommandOutputs  = Map.empty
   , mockEvents          = []
   , mockGoalEvaluations = []
+  , mockPermissions     = \_ _ -> True
+  , mockHooks           = \_ _ -> HookResult Nothing Nothing Nothing Nothing
+  , mockSavedSessions   = Map.empty
+  , mockRunningAgents   = []
+  , mockMcpTools        = []
+  , mockMcpResults      = Map.empty
+  , mockTasks           = Map.empty
+  , mockNotifications   = []
+  , mockGitStatus       = GitStatusInfo "main" True [] []
+  , mockWorktrees       = []
+  , mockCurrentWorktree = Nothing
   }
 
 -- | Helper to lift a successful pure assistant response function into 'Either Text AssistantResponse'.
@@ -173,6 +195,81 @@ pureAlgebra = AgentAlgebra
           pure (evalFn cond msgs)
         [] ->
           pure $ GoalEvaluation GoalNotYetMet "No evaluator steps left; defaulting to not yet met."
+
+  , interpCheckPermission = \tool args -> do
+      env <- getEnv
+      pure (mockPermissions env tool args)
+
+  , interpRunHook = \ev payload -> do
+      env <- getEnv
+      pure (mockHooks env ev payload)
+
+  , interpSaveSession = \sinfo -> do
+      modifyEnv $ \e -> e { mockSavedSessions = Map.insert (siId sinfo) sinfo (mockSavedSessions e) }
+      pure (siId sinfo)
+
+  , interpLoadSession = \sid -> do
+      env <- getEnv
+      pure (Map.lookup sid (mockSavedSessions env))
+
+  , interpSpawnAgent = \role desc -> do
+      let aid = AgentId ("agent_" <> role)
+      modifyEnv $ \e -> e { mockRunningAgents = mockRunningAgents e ++ [AgentInfo aid role desc "idle"] }
+      pure aid
+
+  , interpSendMessage = \aid msg ->
+      pure ("Delivered to " <> unAgentId aid <> ": " <> msg)
+
+  , interpListAgents = do
+      env <- getEnv
+      pure (mockRunningAgents env)
+
+  , interpCallMcpTool = \srv tool _args -> do
+      env <- getEnv
+      pure (fromMaybe (ToolSuccess "mcp ok") (Map.lookup (srv, tool) (mockMcpResults env)))
+
+  , interpListMcpTools = do
+      env <- getEnv
+      pure (mockMcpTools env)
+
+  , interpRunBackground = \cmd -> do
+      let tid = TaskId "task_bg"
+      modifyEnv $ \e -> e { mockTasks = Map.insert tid (TaskInfo tid cmd "running" "") (mockTasks e) }
+      pure tid
+
+  , interpGetTaskOutput = \tid -> do
+      env <- getEnv
+      pure (fromMaybe (TaskInfo tid "" "pending" "") (Map.lookup tid (mockTasks env)))
+
+  , interpStopTask = \tid -> do
+      modifyEnv $ \e -> e { mockTasks = Map.adjust (\t -> t { tiStatus = "stopped" }) tid (mockTasks e) }
+      pure True
+
+  , interpSendNotification = \title body ->
+      modifyEnv $ \e -> e { mockNotifications = mockNotifications e ++ [(title, body)] }
+
+  , interpGitStatus = do
+      env <- getEnv
+      pure (mockGitStatus env)
+
+  , interpCreateWorktree = \name -> do
+      let p = ".agents/worktrees/" <> T.unpack name
+      modifyEnv $ \e -> e { mockWorktrees = mockWorktrees e ++ [p] }
+      pure p
+
+  , interpEnterWorktree = \path ->
+      modifyEnv $ \e -> e { mockCurrentWorktree = Just path }
+
+  , interpExitWorktree =
+      modifyEnv $ \e -> e { mockCurrentWorktree = Nothing }
+
+  , interpLoadMemory = \path -> do
+      env <- getEnv
+      pure (fromMaybe "" (Map.lookup path (mockFiles env)))
+
+  , interpResolveImport = \path -> do
+      env <- getEnv
+      pure (fromMaybe "" (Map.lookup path (mockFiles env)))
   }
 
 searchInFile :: Text -> Bool -> (FilePath, Text) -> [Text]

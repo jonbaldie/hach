@@ -11,7 +11,11 @@ module Agent.Interpreter.IO
   ) where
 
 import Agent.Core
+import qualified Agent.Git as Git
+import Agent.Memory (loadHierarchicalMemory, resolveMemoryImports)
+import Agent.Notifications (sendDesktopNotification)
 import Agent.OpenRouter
+import qualified Agent.Sessions as Sessions
 import Agent.Tools
 import Agent.Types
 import Control.Monad (when)
@@ -23,6 +27,7 @@ import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
 import Network.HTTP.Client (Manager, newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
+import System.FilePath ((</>))
 
 -- | Runtime environment for executing an agent harness in real IO.
 data IOEnv = IOEnv
@@ -113,6 +118,24 @@ renderEventIO verbose = \case
   EvGoalBlocked cond ->
     putStrLn ("\n[Goal] No progress detected. Goal still active: " <> T.unpack cond)
 
+  EvPartialResponse delta ->
+    when verbose $ TIO.putStr delta
+
+  EvToolCallDelta delta ->
+    when verbose $ TIO.putStr delta
+
+  EvPermissionDenied tool reason ->
+    putStrLn ("\n[Permission Denied] " <> T.unpack tool <> ": " <> T.unpack reason)
+
+  EvHookTriggered hook msg ->
+    when verbose $ putStrLn ("\n[Hook " <> T.unpack hook <> "] " <> T.unpack msg)
+
+  EvSessionSaved sid ->
+    when verbose $ putStrLn ("\n[Session Saved] " <> T.unpack sid)
+
+  EvNotificationSent msg ->
+    putStrLn ("\n[Notification] " <> T.unpack msg)
+
 -- | System prompt instructing the evaluator LLM to judge goal completion.
 evaluatorSystemPrompt :: Text
 evaluatorSystemPrompt =
@@ -178,6 +201,40 @@ ioAlgebra IOEnv{..} = AgentAlgebra
             Nothing      -> pure (GoalEvaluation GoalNotYetMet "Empty evaluator response.")
         Left err ->
           pure (GoalEvaluation GoalNotYetMet ("Evaluator error: " <> err))
+
+  , interpCheckPermission = \_tool _args -> pure True
+  , interpRunHook = \_ev _payload -> pure defaultHookResult
+  , interpSaveSession = \sinfo -> do
+      Sessions.saveSession (ioWorkspace </> ".agent" </> "sessions") sinfo []
+      pure (siId sinfo)
+  , interpLoadSession = \sid -> do
+      mRes <- Sessions.loadSession (ioWorkspace </> ".agent" </> "sessions") sid
+      pure (fmap fst mRes)
+  , interpSpawnAgent = \role _desc -> pure (AgentId ("agent_" <> role))
+  , interpSendMessage = \aid msg -> pure ("Sent to " <> unAgentId aid <> ": " <> msg)
+  , interpListAgents = pure
+      [ AgentInfo (AgentId "explore") "explore" "default" "idle"
+      , AgentInfo (AgentId "plan") "plan" "default" "idle"
+      ]
+  , interpCallMcpTool = \srv tool args ->
+      pure (ToolSuccess ("MCP " <> srv <> "/" <> tool <> " called with: " <> args))
+  , interpListMcpTools = pure []
+  , interpRunBackground = \_cmd -> pure (TaskId "bg-cmd")
+  , interpGetTaskOutput = \tid -> pure (TaskInfo tid "" "completed" "task done")
+  , interpStopTask = \_tid -> pure True
+  , interpSendNotification = \title body -> do
+      _ <- sendDesktopNotification title body
+      pure ()
+  , interpGitStatus = Git.getGitStatus ioWorkspace
+  , interpCreateWorktree = \name -> do
+      res <- Git.createWorktree ioWorkspace name
+      case res of
+        Right p -> pure p
+        Left err -> pure (T.unpack err)
+  , interpEnterWorktree = \_path -> pure ()
+  , interpExitWorktree = pure ()
+  , interpLoadMemory = \path -> T.unlines <$> loadHierarchicalMemory ioWorkspace path
+  , interpResolveImport = \path -> resolveMemoryImports ioWorkspace 4 path
   }
   where
     transcriptToText = T.unlines . map messageToText

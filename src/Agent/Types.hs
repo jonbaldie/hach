@@ -29,10 +29,42 @@ module Agent.Types
   , AgentConfig(..)
   , AgentResult(..)
   , AgentEvent(..)
+
+    -- * Permissions
+  , PermissionMode(..)
+  , PermissionDecision(..)
+  , RuleAction(..)
+  , PermissionRule(..)
+
+    -- * Sessions
+  , SessionId
+  , SessionInfo(..)
+  , SessionEvent(..)
+
+    -- * Hooks
+  , HookEvent(..)
+  , HookHandlerType(..)
+  , HookHandler(..)
+  , HookResult(..)
+  , defaultHookResult
+
+    -- * Subagents
+  , AgentId(..)
+  , AgentInfo(..)
+
+    -- * Background Tasks
+  , TaskId(..)
+  , TaskInfo(..)
+
+    -- * Git
+  , GitStatusInfo(..)
+
+    -- * Output Styles
+  , OutputStyle(..)
   ) where
 
 import Data.Aeson
-  ( FromJSON(..), ToJSON(..), Value, object, withObject, (.:), (.:?), (.!=), (.=)
+  ( FromJSON(..), ToJSON(..), FromJSONKey(..), ToJSONKey(..), Value, object, withObject, (.:), (.:?), (.!=), (.=)
   )
 import qualified Data.Aeson as Aeson
 import Data.Text (Text)
@@ -322,6 +354,8 @@ data AgentEvent
   = EvTurnStart !Int
   | EvPromptingLLM !Int
   | EvLLMResponse !(Maybe Text) ![ToolCall] !(Maybe TokenUsage)
+  | EvPartialResponse !Text
+  | EvToolCallDelta !Text
   | EvToolCall !Text !Text
   | EvToolResult !Text !ToolResult
   | EvTurnComplete !Int
@@ -333,4 +367,375 @@ data AgentEvent
   | EvGoalFailed !Text !Text
   | EvGoalCleared !Text
   | EvGoalBlocked !Text
+  | EvPermissionDenied !Text !Text
+  | EvHookTriggered !Text !Text
+  | EvSessionSaved !Text
+  | EvNotificationSent !Text
   deriving (Show, Eq)
+
+--------------------------------------------------------------------------------
+-- Permissions
+--------------------------------------------------------------------------------
+
+-- | Six operating modes for the permission subsystem.
+data PermissionMode
+  = ModeDefault           -- ^ Ask for writes/commands
+  | ModeAcceptEdits       -- ^ Auto-approve file edits, ask for commands
+  | ModePlan              -- ^ Read-only, block all writes/commands
+  | ModeAuto              -- ^ Classifier decides
+  | ModeDontAsk           -- ^ Auto-approve all
+  | ModeBypassPermissions -- ^ Skip all permission checks
+  deriving (Show, Eq, Enum, Bounded, Generic)
+
+instance ToJSON PermissionMode where
+  toJSON = \case
+    ModeDefault           -> "default"
+    ModeAcceptEdits       -> "acceptEdits"
+    ModePlan              -> "plan"
+    ModeAuto              -> "auto"
+    ModeDontAsk           -> "dontAsk"
+    ModeBypassPermissions -> "bypassPermissions"
+
+instance FromJSON PermissionMode where
+  parseJSON = Aeson.withText "PermissionMode" $ \case
+    "default"           -> pure ModeDefault
+    "acceptEdits"       -> pure ModeAcceptEdits
+    "plan"              -> pure ModePlan
+    "auto"              -> pure ModeAuto
+    "dontAsk"           -> pure ModeDontAsk
+    "bypassPermissions" -> pure ModeBypassPermissions
+    other               -> fail ("Unknown permission mode: " <> T.unpack other)
+
+-- | Outcome of evaluating permission for an action.
+data PermissionDecision
+  = PermAllow
+  | PermAsk !Text
+  | PermDeny !Text
+  deriving (Show, Eq, Generic)
+
+instance ToJSON PermissionDecision where
+  toJSON = \case
+    PermAllow    -> object ["decision" .= ("allow" :: Text)]
+    PermAsk msg  -> object ["decision" .= ("ask" :: Text), "reason" .= msg]
+    PermDeny msg -> object ["decision" .= ("deny" :: Text), "reason" .= msg]
+
+instance FromJSON PermissionDecision where
+  parseJSON = withObject "PermissionDecision" $ \o -> do
+    dec <- o .: "decision"
+    case (dec :: Text) of
+      "allow" -> pure PermAllow
+      "ask"   -> PermAsk <$> (o .:? "reason" .!= "")
+      "deny"  -> PermDeny <$> (o .:? "reason" .!= "")
+      other   -> fail ("Unknown permission decision: " <> T.unpack other)
+
+-- | Action in a permission rule.
+data RuleAction = RuleAllow | RuleAsk | RuleDeny
+  deriving (Show, Eq, Generic)
+
+instance ToJSON RuleAction where
+  toJSON = \case
+    RuleAllow -> "allow"
+    RuleAsk   -> "ask"
+    RuleDeny  -> "deny"
+
+instance FromJSON RuleAction where
+  parseJSON = Aeson.withText "RuleAction" $ \case
+    "allow" -> pure RuleAllow
+    "ask"   -> pure RuleAsk
+    "deny"  -> pure RuleDeny
+    other   -> fail ("Unknown rule action: " <> T.unpack other)
+
+-- | Permission rule matching by tool and optional path glob.
+data PermissionRule = PermissionRule
+  { prAction   :: !RuleAction
+  , prTool     :: !(Maybe Text)
+  , prPathGlob :: !(Maybe Text)
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON PermissionRule where
+  toJSON PermissionRule{..} = object
+    [ "action" .= prAction
+    , "tool" .= prTool
+    , "path" .= prPathGlob
+    ]
+
+instance FromJSON PermissionRule where
+  parseJSON = withObject "PermissionRule" $ \o ->
+    PermissionRule
+      <$> o .: "action"
+      <*> o .:? "tool"
+      <*> (o .:? "path" .!= Nothing)
+
+--------------------------------------------------------------------------------
+-- Sessions
+--------------------------------------------------------------------------------
+
+-- | Unique identifier for a session.
+type SessionId = Text
+
+-- | Persistent metadata describing a recorded session.
+data SessionInfo = SessionInfo
+  { siId        :: !SessionId
+  , siCreatedAt :: !Text
+  , siModel     :: !Text
+  , siTurns     :: !Int
+  , siCostUsd   :: !Double
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON SessionInfo where
+  toJSON SessionInfo{..} = object
+    [ "id" .= siId
+    , "created_at" .= siCreatedAt
+    , "model" .= siModel
+    , "turns" .= siTurns
+    , "cost_usd" .= siCostUsd
+    ]
+
+instance FromJSON SessionInfo where
+  parseJSON = withObject "SessionInfo" $ \o ->
+    SessionInfo
+      <$> o .: "id"
+      <*> o .: "created_at"
+      <*> o .: "model"
+      <*> o .:? "turns" .!= 0
+      <*> o .:? "cost_usd" .!= 0.0
+
+-- | Event item stored in session JSONL lines.
+data SessionEvent
+  = SeMessage !Message
+  | SeEvent !AgentEvent
+  deriving (Show, Eq, Generic)
+
+--------------------------------------------------------------------------------
+-- Hooks
+--------------------------------------------------------------------------------
+
+-- | Hook event points in the agent lifecycle.
+data HookEvent
+  = HookPreToolUse
+  | HookPostToolUse
+  | HookUserPromptSubmit
+  | HookStop
+  | HookSessionStart
+  | HookNotification
+  | HookPreCompact
+  deriving (Show, Eq, Ord, Enum, Bounded, Generic)
+
+instance ToJSON HookEvent where
+  toJSON = \case
+    HookPreToolUse       -> "pre_tool_use"
+    HookPostToolUse      -> "post_tool_use"
+    HookUserPromptSubmit -> "user_prompt_submit"
+    HookStop             -> "stop"
+    HookSessionStart     -> "session_start"
+    HookNotification     -> "notification"
+    HookPreCompact       -> "pre_compact"
+
+instance FromJSON HookEvent where
+  parseJSON = Aeson.withText "HookEvent" $ \case
+    "pre_tool_use"       -> pure HookPreToolUse
+    "post_tool_use"      -> pure HookPostToolUse
+    "user_prompt_submit" -> pure HookUserPromptSubmit
+    "stop"               -> pure HookStop
+    "session_start"      -> pure HookSessionStart
+    "notification"       -> pure HookNotification
+    "pre_compact"        -> pure HookPreCompact
+    other                -> fail ("Unknown hook event: " <> T.unpack other)
+
+instance ToJSONKey HookEvent
+instance FromJSONKey HookEvent
+
+data HookHandlerType
+  = HookCommand !Text
+  | HookHttp !Text
+  | HookMcp !Text !Text
+  deriving (Show, Eq, Generic)
+
+instance ToJSON HookHandlerType where
+  toJSON = \case
+    HookCommand cmd   -> object ["type" .= ("command" :: Text), "command" .= cmd]
+    HookHttp url      -> object ["type" .= ("http" :: Text), "url" .= url]
+    HookMcp srv tool  -> object ["type" .= ("mcp" :: Text), "server" .= srv, "tool" .= tool]
+
+instance FromJSON HookHandlerType where
+  parseJSON = withObject "HookHandlerType" $ \o -> do
+    t <- o .: "type"
+    case (t :: Text) of
+      "command" -> HookCommand <$> o .: "command"
+      "http"    -> HookHttp <$> o .: "url"
+      "mcp"     -> HookMcp <$> o .: "server" <*> o .: "tool"
+      other     -> fail ("Unknown hook handler type: " <> T.unpack other)
+
+data HookHandler = HookHandler
+  { hhType    :: !HookHandlerType
+  , hhMatcher :: !(Maybe Text)  -- ^ Optional tool name matcher
+  , hhAsync   :: !Bool
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON HookHandler where
+  toJSON HookHandler{..} = object
+    [ "handler" .= hhType
+    , "matcher" .= hhMatcher
+    , "async"   .= hhAsync
+    ]
+
+instance FromJSON HookHandler where
+  parseJSON = withObject "HookHandler" $ \o ->
+    HookHandler
+      <$> o .: "handler"
+      <*> o .:? "matcher"
+      <*> o .:? "async" .!= False
+
+data HookResult = HookResult
+  { hrDecision          :: !(Maybe PermissionDecision)
+  , hrAdditionalContext :: !(Maybe Text)
+  , hrModifiedInput     :: !(Maybe Value)
+  , hrError             :: !(Maybe Text)
+  } deriving (Show, Eq, Generic)
+
+defaultHookResult :: HookResult
+defaultHookResult = HookResult Nothing Nothing Nothing Nothing
+
+instance ToJSON HookResult where
+  toJSON HookResult{..} = object
+    [ "permissionDecision" .= hrDecision
+    , "additionalContext"  .= hrAdditionalContext
+    , "modifiedToolInput"  .= hrModifiedInput
+    , "error"              .= hrError
+    ]
+
+instance FromJSON HookResult where
+  parseJSON = withObject "HookResult" $ \o ->
+    HookResult
+      <$> o .:? "permissionDecision"
+      <*> o .:? "additionalContext"
+      <*> o .:? "modifiedToolInput"
+      <*> o .:? "error"
+
+--------------------------------------------------------------------------------
+-- Subagents
+--------------------------------------------------------------------------------
+
+newtype AgentId = AgentId { unAgentId :: Text }
+  deriving (Show, Eq, Ord, Generic)
+
+instance ToJSON AgentId where
+  toJSON (AgentId t) = toJSON t
+
+instance FromJSON AgentId where
+  parseJSON v = AgentId <$> parseJSON v
+
+data AgentInfo = AgentInfo
+  { aiId     :: !AgentId
+  , aiName   :: !Text
+  , aiModel  :: !Text
+  , aiStatus :: !Text
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON AgentInfo where
+  toJSON AgentInfo{..} = object
+    [ "id" .= aiId
+    , "name" .= aiName
+    , "model" .= aiModel
+    , "status" .= aiStatus
+    ]
+
+instance FromJSON AgentInfo where
+  parseJSON = withObject "AgentInfo" $ \o ->
+    AgentInfo
+      <$> o .: "id"
+      <*> o .: "name"
+      <*> o .: "model"
+      <*> o .: "status"
+
+--------------------------------------------------------------------------------
+-- Background Tasks
+--------------------------------------------------------------------------------
+
+newtype TaskId = TaskId { unTaskId :: Text }
+  deriving (Show, Eq, Ord, Generic)
+
+instance ToJSON TaskId where
+  toJSON (TaskId t) = toJSON t
+
+instance FromJSON TaskId where
+  parseJSON v = TaskId <$> parseJSON v
+
+data TaskInfo = TaskInfo
+  { tiTaskId  :: !TaskId
+  , tiCommand :: !Text
+  , tiStatus  :: !Text
+  , tiOutput  :: !Text
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON TaskInfo where
+  toJSON TaskInfo{..} = object
+    [ "id" .= tiTaskId
+    , "command" .= tiCommand
+    , "status" .= tiStatus
+    , "output" .= tiOutput
+    ]
+
+instance FromJSON TaskInfo where
+  parseJSON = withObject "TaskInfo" $ \o ->
+    TaskInfo
+      <$> o .: "id"
+      <*> o .: "command"
+      <*> o .: "status"
+      <*> o .:? "output" .!= ""
+
+--------------------------------------------------------------------------------
+-- Git
+--------------------------------------------------------------------------------
+
+data GitStatusInfo = GitStatusInfo
+  { gsiBranch    :: !Text
+  , gsiClean     :: !Bool
+  , gsiModified  :: ![FilePath]
+  , gsiUntracked :: ![FilePath]
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON GitStatusInfo where
+  toJSON GitStatusInfo{..} = object
+    [ "branch" .= gsiBranch
+    , "clean" .= gsiClean
+    , "modified" .= gsiModified
+    , "untracked" .= gsiUntracked
+    ]
+
+instance FromJSON GitStatusInfo where
+  parseJSON = withObject "GitStatusInfo" $ \o ->
+    GitStatusInfo
+      <$> o .: "branch"
+      <*> o .: "clean"
+      <*> o .:? "modified" .!= []
+      <*> o .:? "untracked" .!= []
+
+--------------------------------------------------------------------------------
+-- Output Styles
+--------------------------------------------------------------------------------
+
+data OutputStyle
+  = StyleDefault
+  | StyleConcise
+  | StyleExplanatory
+  | StyleCodeOnly
+  | StyleCustom !Text
+  deriving (Show, Eq, Generic)
+
+instance ToJSON OutputStyle where
+  toJSON = \case
+    StyleDefault     -> "default"
+    StyleConcise     -> "concise"
+    StyleExplanatory -> "explanatory"
+    StyleCodeOnly    -> "code_only"
+    StyleCustom t    -> toJSON t
+
+instance FromJSON OutputStyle where
+  parseJSON = Aeson.withText "OutputStyle" $ \case
+    "default"     -> pure StyleDefault
+    "concise"     -> pure StyleConcise
+    "explanatory" -> pure StyleExplanatory
+    "code_only"   -> pure StyleCodeOnly
+    other         -> pure (StyleCustom other)
+

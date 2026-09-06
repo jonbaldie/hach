@@ -39,6 +39,16 @@ library
         Agent.TUI.UI
         Agent.TUI.App
         Agent.Skills
+        Agent.Permissions
+        Agent.Settings
+        Agent.Sessions
+        Agent.Hooks
+        Agent.Subagents
+        Agent.MCP
+        Agent.Memory
+        Agent.Git
+        Agent.Tasks
+        Agent.Notifications
     build-depends:
         base >= 4.18 && < 5,
         text,
@@ -59,7 +69,8 @@ library
         microlens,
         microlens-mtl,
         async,
-        stm
+        stm,
+        time
 
 executable agent-harness
     import:           common-options
@@ -71,7 +82,8 @@ executable agent-harness
         text,
         bytestring,
         directory,
-        filepath
+        filepath,
+        time
     ghc-options:
         -threaded
         -rtsopts
@@ -87,7 +99,8 @@ executable agent-integration-test
         text,
         bytestring,
         directory,
-        filepath
+        filepath,
+        time
     ghc-options:
         -threaded
         -rtsopts
@@ -106,6 +119,15 @@ test-suite agent-test
         Agent.TUISpec
         Agent.PropertySpec
         Agent.SkillsSpec
+        Agent.PermissionsSpec
+        Agent.SettingsSpec
+        Agent.SessionsSpec
+        Agent.HooksSpec
+        Agent.SubagentsSpec
+        Agent.MCPSpec
+        Agent.MemorySpec
+        Agent.GitSpec
+        Agent.TasksSpec
     build-depends:
         base >= 4.18 && < 5,
         agent,
@@ -117,4 +139,5 @@ test-suite agent-test
         vty >= 6.0,
         QuickCheck >= 2.14,
         directory,
-        filepath
+        filepath,
+        time
