@@ -14,6 +14,7 @@ module Agent.TUI.Types
     -- * State
   , TuiState(..)
   , initialTuiState
+  , UsageStatus(..)
 
     -- * Events and Actions
   , UserKey(..)
@@ -22,9 +23,15 @@ module Agent.TUI.Types
   ) where
 
 import Agent.Skills (SkillCatalog)
-import Agent.Types (AgentEvent, GoalState, TokenUsage, ToolResult)
+import Agent.Types (AgentEvent, GoalState, SessionTokenUsage, TokenUsage, ToolResult, initialSessionTokenUsage)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
+
+-- | Status of token usage reporting for the latest turn.
+data UsageStatus
+  = UsageVerified
+  | UsageMissing
+  deriving (Show, Eq)
 
 -- | Operational status of the agent in the TUI.
 data TuiStatus
@@ -90,6 +97,8 @@ data TuiState = TuiState
   , tsPromptDraft        :: !Text
   , tsContextTokens      :: !Int
   , tsTokenUsage         :: !(Maybe TokenUsage)
+  , tsSessionTokens      :: !SessionTokenUsage
+  , tsUsageStatus        :: !UsageStatus
   , tsSkills             :: !SkillCatalog
   , tsGoalState          :: !(Maybe GoalState)
   } deriving (Show, Eq)
@@ -115,6 +124,8 @@ initialTuiState model maxTurns = TuiState
   , tsPromptDraft        = ""
   , tsContextTokens      = 0
   , tsTokenUsage         = Nothing
+  , tsSessionTokens      = initialSessionTokenUsage
+  , tsUsageStatus        = UsageVerified
   , tsSkills             = Map.empty
   , tsGoalState          = Nothing
   }

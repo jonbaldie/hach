@@ -27,6 +27,7 @@ data MockEnv = MockEnv
   , mockCommandOutputs    :: !(Map Text (Int, Text, Text)) -- ^ (exitCode, stdout, stderr)
   , mockEvents            :: ![AgentEvent]
   , mockGoalEvaluations   :: ![Text -> [Message] -> GoalEvaluation]
+  , mockGoalEvaluationUsages :: ![Maybe TokenUsage]
   , mockPermissions       :: !(Text -> Text -> Bool)
   , mockHooks             :: !(HookEvent -> Text -> HookResult)
   , mockSavedSessions     :: !(Map SessionId SessionInfo)
@@ -48,6 +49,7 @@ emptyMockEnv = MockEnv
   , mockCommandOutputs  = Map.empty
   , mockEvents          = []
   , mockGoalEvaluations = []
+  , mockGoalEvaluationUsages = []
   , mockPermissions     = \_ _ -> True
   , mockHooks           = \_ _ -> HookResult Nothing Nothing Nothing Nothing
   , mockSavedSessions   = Map.empty
@@ -189,12 +191,21 @@ pureAlgebra = AgentAlgebra
 
   , interpEvaluate = \cond msgs -> do
       env <- getEnv
-      case mockGoalEvaluations env of
-        (evalFn : rest) -> do
-          putEnv env { mockGoalEvaluations = rest }
-          pure (evalFn cond msgs)
-        [] ->
-          pure $ GoalEvaluation GoalNotYetMet "No evaluator steps left; defaulting to not yet met."
+      let (mUsage, restUsages) = case mockGoalEvaluationUsages env of
+            (u : rest) -> (u, rest)
+            []         -> (Nothing, [])
+          (evalRes, restEvals) = case mockGoalEvaluations env of
+            (evalFn : rest) -> (evalFn cond msgs, rest)
+            []              -> (GoalEvaluation GoalNotYetMet "No evaluator steps left; defaulting to not yet met.", [])
+          usageEvents = case mUsage of
+            Just u  -> [EvGoalEvaluationUsage u]
+            Nothing -> []
+      putEnv env
+        { mockGoalEvaluationUsages = restUsages
+        , mockGoalEvaluations      = restEvals
+        , mockEvents               = mockEvents env ++ usageEvents
+        }
+      pure evalRes
 
   , interpCheckPermission = \tool args -> do
       env <- getEnv

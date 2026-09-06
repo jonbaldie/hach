@@ -56,9 +56,7 @@ vtyToUserKey = \case
 
 -- | Algebra that pipes every agent execution event into the Brick BChan.
 tuiAlgebra :: BChan AgentEvent -> IOEnv -> AgentAlgebra IO
-tuiAlgebra chan env = (ioAlgebra env)
-  { interpLog = writeBChan chan
-  }
+tuiAlgebra chan env = ioAlgebraWithLog (writeBChan chan) env
 
 
 -- | Run the full modern TUI application.

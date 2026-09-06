@@ -5,6 +5,10 @@ module Agent.TUI.UI
   ( drawUI
   , tuiAttrMap
   , formatTokens
+  , formatCompactLimit
+  , renderTokensDisplay
+  , tokenWarnAttr
+  , tokenCritAttr
   , renderMaxTurns
   , Name(..)
   , wideGlyphs
@@ -13,7 +17,7 @@ module Agent.TUI.UI
 
 import Agent.Skills (skillInvocationCompletion)
 import Agent.TUI.Types
-import Agent.Types (ToolResult(..))
+import Agent.Types (SessionTokenUsage(..), ToolResult(..), modelContextLimit)
 import Brick
 import Brick.Widgets.Border
 import Brick.Widgets.Border.Style
@@ -27,6 +31,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Graphics.Vty as Vty
+import Text.Printf (printf)
 import Graphics.Vty.UnicodeWidthTable.Install (TableInstallException, installUnicodeWidthTable)
 import Graphics.Vty.UnicodeWidthTable.Types (UnicodeWidthTable(..), WidthTableRange(..))
 
@@ -75,12 +80,14 @@ installWideGlyphWidths =
 -- Theme Attributes (Claude Code / AGY CLI Style)
 --------------------------------------------------------------------------------
 
-brandAttr, modelAttr, turnAttr, tokenAttr, dimAttr :: AttrName
-brandAttr = attrName "brand"
-modelAttr = attrName "model"
-turnAttr  = attrName "turn"
-tokenAttr = attrName "token"
-dimAttr   = attrName "dim"
+brandAttr, modelAttr, turnAttr, tokenAttr, tokenWarnAttr, tokenCritAttr, dimAttr :: AttrName
+brandAttr     = attrName "brand"
+modelAttr     = attrName "model"
+turnAttr      = attrName "turn"
+tokenAttr     = attrName "token"
+tokenWarnAttr = attrName "tokenWarn"
+tokenCritAttr = attrName "tokenCrit"
+dimAttr       = attrName "dim"
 
 statusIdleAttr, statusThinkingAttr, statusRunningAttr, statusErrorAttr :: AttrName
 statusIdleAttr     = attrName "statusIdle"
@@ -120,6 +127,8 @@ tuiAttrMap = attrMap Vty.defAttr
   , (modelAttr,          Vty.withStyle (fg (Vty.rgbColor (192 :: Int) (132 :: Int) (252 :: Int))) Vty.bold)  -- Lavender / Purple
   , (turnAttr,           fg (Vty.rgbColor (251 :: Int) (191 :: Int) (36 :: Int)))                            -- Gold
   , (tokenAttr,          Vty.withStyle (fg (Vty.rgbColor (56 :: Int) (189 :: Int) (248 :: Int))) Vty.bold)  -- Electric Sky Blue
+  , (tokenWarnAttr,      Vty.withStyle (fg (Vty.rgbColor (251 :: Int) (191 :: Int) (36 :: Int))) Vty.bold)  -- Amber Warning (>80%)
+  , (tokenCritAttr,      Vty.withStyle (fg (Vty.rgbColor (248 :: Int) (113 :: Int) (113 :: Int))) Vty.bold)  -- Coral/Red Critical (>90%)
   , (dimAttr,            fg (Vty.rgbColor (100 :: Int) (116 :: Int) (139 :: Int)))                           -- Slate Gray
   , (statusIdleAttr,     Vty.withStyle (fg (Vty.rgbColor (52 :: Int) (211 :: Int) (153 :: Int))) Vty.bold)  -- Mint Green
   , (statusThinkingAttr, Vty.withStyle (fg (Vty.rgbColor (251 :: Int) (191 :: Int) (36 :: Int))) Vty.bold)  -- Amber
@@ -188,6 +197,41 @@ formatTokens n
 renderMaxTurns :: Maybe Int -> Text
 renderMaxTurns = maybe "∞" (T.pack . show)
 
+-- | Format a token limit or count compactly (e.g., 0, 8.4k, 128k, 1M, 1.5M).
+formatCompactLimit :: Int -> Text
+formatCompactLimit n
+  | n >= 1000000 =
+      let d = (fromIntegral n :: Double) / 1000000.0
+      in if n `mod` 1000000 == 0
+           then T.pack (show (n `div` 1000000)) <> "M"
+           else T.pack (printf "%.1f" d) <> "M"
+  | n >= 1000 =
+      let d = (fromIntegral n :: Double) / 1000.0
+      in if n `mod` 1000 == 0
+           then T.pack (show (n `div` 1000)) <> "k"
+           else T.pack (printf "%.1f" d) <> "k"
+  | otherwise = T.pack (show n)
+
+-- | Render context and session token consumption widget with saturation warning styling.
+renderTokensDisplay :: Int -> Int -> Int -> UsageStatus -> Widget Name
+renderTokensDisplay ctxTokens sesTokens limit status =
+  let pct = if limit <= 0 then 0 else (ctxTokens * 100) `div` limit
+      attr = if pct >= 90
+               then tokenCritAttr
+               else if pct >= 80
+                      then tokenWarnAttr
+                      else tokenAttr
+      missingTag = case status of
+        UsageMissing  -> " [?]"
+        UsageVerified -> ""
+      ctxText = "ctx: " <> formatCompactLimit ctxTokens <> "/" <> formatCompactLimit limit <> " (" <> T.pack (show pct) <> "%)" <> missingTag
+      sesText = "ses: " <> formatCompactLimit sesTokens
+  in hBox
+       [ withAttr attr (txt ctxText)
+       , withAttr dimAttr (txt " │ ")
+       , withAttr tokenAttr (txt sesText)
+       ]
+
 -- | Modern, sleek status bar (Claude Code / AGY CLI style).
 renderHeader :: TuiState -> Widget Name
 renderHeader TuiState{..} =
@@ -200,8 +244,8 @@ renderHeader TuiState{..} =
     , withAttr modelAttr (txt tsModelName)
     , withAttr dimAttr (txt "  │  turn: ")
     , withAttr turnAttr (txt (T.pack (show tsCurrentTurn) <> "/" <> renderMaxTurns tsMaxTurns))
-    , withAttr dimAttr (txt "  │  tokens: ")
-    , withAttr tokenAttr (txt (formatTokens tsContextTokens))
+    , withAttr dimAttr (txt "  │  ")
+    , renderTokensDisplay tsContextTokens (stuTotalTokens tsSessionTokens) (modelContextLimit tsModelName) tsUsageStatus
     , withAttr dimAttr (txt "  │  ")
     , renderStatus tsStatus
     , padLeft Max (withAttr dimAttr (txt "press ? for help "))

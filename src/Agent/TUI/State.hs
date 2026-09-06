@@ -17,14 +17,20 @@ import Agent.Types
   , GoalState(..)
   , GoalStatus(..)
   , GoalVerdict(..)
+  , SessionTokenUsage(..)
   , TokenUsage(..)
   , ToolResult
-  , initialGoalState
+  , addUsageToSession
+  , contextSaturationPercent
   , goalArgIsClear
+  , initialGoalState
+  , initialSessionTokenUsage
   , maxGoalConditionLength
+  , modelContextLimit
   )
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
+import Text.Printf (printf)
 
 -- | Pure state reducer for the TUI.
 -- Evaluates an incoming 'TuiEvent' against the current 'TuiState',
@@ -76,6 +82,54 @@ isBusy = \case
   StatusRunningTool _ -> True
   _                   -> False
 
+-- | Format a comprehensive cost and token breakdown report.
+formatCostReport :: TuiState -> T.Text
+formatCostReport TuiState{..} =
+  let limit = modelContextLimit tsModelName
+      pct = contextSaturationPercent tsContextTokens tsModelName
+      contextLine = case tsTokenUsage of
+        Just TokenUsage{..} ->
+          let cachePart = if tuCachedTokens > 0 then ", " <> formatTokens tuCachedTokens <> " cached" else ""
+          in "Tokens: " <> formatTokens tsContextTokens <> " in context window (" <>
+             formatTokens tuPromptTokens <> " prompt" <> cachePart <> ", " <>
+             formatTokens tuCompletionTokens <> " completion) — " <>
+             formatTokens tsContextTokens <> "/" <> formatTokens limit <> " capacity (" <> T.pack (show pct) <> "%)"
+        Nothing ->
+          "Tokens: " <> formatTokens tsContextTokens <> " in context window — " <>
+          formatTokens tsContextTokens <> "/" <> formatTokens limit <> " capacity (" <> T.pack (show pct) <> "%)"
+
+      stu = tsSessionTokens
+      cacheSessionPart = if stuCachedTokens stu > 0 then ", " <> formatTokens (stuCachedTokens stu) <> " cached" else ""
+      evalSessionPart = if stuEvaluationTokens stu > 0 then ", " <> formatTokens (stuEvaluationTokens stu) <> " goal-eval" else ""
+      sessionLine =
+        "Session Cumulative: " <> formatTokens (stuTotalTokens stu) <> " tokens (" <>
+        formatTokens (stuPromptTokens stu) <> " prompt" <> cacheSessionPart <> ", " <>
+        formatTokens (stuCompletionTokens stu) <> " completion" <> evalSessionPart <> ")"
+
+      costLine = case stuTotalCost stu of
+        Just c  -> "\nReported API Cost: $" <> T.pack (printf "%.4f" c)
+        Nothing ->
+          if stuTotalTokens stu > 0
+            then let est = estimateCost tsModelName (stuPromptTokens stu) (stuCompletionTokens stu)
+                 in "\nEstimated Cost: ~$" <> T.pack (printf "%.4f" est)
+            else ""
+  in contextLine <> "\n" <> sessionLine <> costLine
+
+-- | Estimate monetary cost in USD based on standard model pricing tiers per 1M tokens.
+estimateCost :: T.Text -> Int -> Int -> Double
+estimateCost m prompt comp =
+  let (pRate, cRate) = modelPricingRates m
+  in (fromIntegral prompt * pRate + fromIntegral comp * cRate) / 1000000.0
+
+modelPricingRates :: T.Text -> (Double, Double)
+modelPricingRates m
+  | "claude" `T.isInfixOf` lower   = (3.0, 15.0)
+  | "gpt-4" `T.isInfixOf` lower    = (2.5, 10.0)
+  | "deepseek" `T.isInfixOf` lower = (0.27, 1.1)
+  | otherwise                      = (1.0, 3.0)
+  where
+    lower = T.toLower m
+
 -- | Handle submitting a user task prompt.
 handleSubmitPrompt :: T.Text -> TuiState -> (TuiState, [TuiAction])
 handleSubmitPrompt rawPrompt state
@@ -94,6 +148,9 @@ handleSubmitPrompt rawPrompt state
                  , tsGoalState          = Nothing
                  , tsStatus             = newStatus
                  , tsCancelRequested    = if busy then True else False
+                 , tsContextTokens      = 0
+                 , tsTokenUsage         = Nothing
+                 , tsUsageStatus        = UsageVerified
                  }
          , actions
          )
@@ -107,15 +164,21 @@ handleSubmitPrompt rawPrompt state
                  }
          , []
          )
+  | trimmed == "/cost reset" || trimmed == "/cost clear" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Session token usage reset to 0."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 , tsSessionTokens      = initialSessionTokenUsage
+                 }
+         , []
+         )
   | trimmed == "/cost" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          costNotice = case tsTokenUsage state of
-            Just TokenUsage{..} ->
-              "Tokens: " <> formatTokens (tsContextTokens state) <> " in context window (" <>
-              formatTokens tuPromptTokens <> " prompt, " <>
-              formatTokens tuCompletionTokens <> " completion)"
-            Nothing ->
-              "Tokens: " <> formatTokens (tsContextTokens state) <> " in context window"
+          costNotice = formatCostReport state
           newHistory = tsHistory state ++ [DiNotice costNotice]
       in ( state { tsHistory            = newHistory
                  , tsInputBuffer        = ""
@@ -609,7 +672,7 @@ handleHistoryKey key state@TuiState{..} = case key of
 
   KeyChar 'c' ->
     -- Clear dialogue history and reset context window tokens
-    (state { tsHistory = [], tsHistoryScroll = 0, tsContextTokens = 0, tsTokenUsage = Nothing }, [])
+    (state { tsHistory = [], tsHistoryScroll = 0, tsContextTokens = 0, tsTokenUsage = Nothing, tsUsageStatus = UsageVerified }, [])
 
   _ ->
     (state, [])
@@ -671,14 +734,16 @@ handleAgentEvent event state@TuiState{..}
             tsHistory ++ [DiAssistant c]
           _ -> tsHistory
         newStatus = if null calls then StatusFinished else tsStatus
-        (newContextTokens, newUsage) = case mUsage of
-          Just u  -> (tuTotalTokens u, Just u)
-          Nothing -> (tsContextTokens, tsTokenUsage)
+        (newContextTokens, newUsage, newSessionTokens, newUsageStatus) = case mUsage of
+          Just u  -> (tuTotalTokens u, Just u, addUsageToSession u False tsSessionTokens, UsageVerified)
+          Nothing -> (tsContextTokens, tsTokenUsage, tsSessionTokens, UsageMissing)
     in state
          { tsHistory       = withText
          , tsStatus        = newStatus
          , tsContextTokens = newContextTokens
          , tsTokenUsage    = newUsage
+         , tsSessionTokens = newSessionTokens
+         , tsUsageStatus   = newUsageStatus
          }
 
   EvToolCall name args ->
@@ -730,6 +795,9 @@ handleAgentEvent event state@TuiState{..}
         , tsHistory = tsHistory ++ [DiNotice ("Goal evaluated: " <> verdictText verdict <> " — " <> reason)]
         }
       Nothing -> state
+
+  EvGoalEvaluationUsage u ->
+    state { tsSessionTokens = addUsageToSession u True tsSessionTokens }
 
   EvGoalAchieved cond ->
     case tsGoalState of

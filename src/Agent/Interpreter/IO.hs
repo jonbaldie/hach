@@ -5,6 +5,7 @@ module Agent.Interpreter.IO
   ( IOEnv(..)
   , newIOEnv
   , ioAlgebra
+  , ioAlgebraWithLog
   , runIO
   , evaluatorSystemPrompt
   , parseGoalEvaluation
@@ -106,6 +107,12 @@ renderEventIO verbose = \case
   EvGoalEvaluated verdict reason ->
     putStrLn ("\n[Goal] Evaluated: " <> show verdict <> " — " <> T.unpack reason)
 
+  EvGoalEvaluationUsage TokenUsage{..} ->
+    when verbose $
+      putStrLn ("\n[Goal Evaluator Usage] " <> show tuPromptTokens <> " prompt, "
+                <> show tuCompletionTokens <> " completion, "
+                <> show tuTotalTokens <> " total tokens")
+
   EvGoalAchieved cond ->
     putStrLn ("\n[Goal] Achieved: " <> T.unpack cond)
 
@@ -168,7 +175,11 @@ parseGoalEvaluation content =
 
 -- | Concrete IO algebra interpreting agent instructions against real OpenRouter and OS.
 ioAlgebra :: IOEnv -> AgentAlgebra IO
-ioAlgebra IOEnv{..} = AgentAlgebra
+ioAlgebra env = ioAlgebraWithLog (renderEventIO (ioVerbose env)) env
+
+-- | Concrete IO algebra parameterized by an event logger (useful for TUI piping).
+ioAlgebraWithLog :: (AgentEvent -> IO ()) -> IOEnv -> AgentAlgebra IO
+ioAlgebraWithLog logger IOEnv{..} = AgentAlgebra
   { interpPrompt = \msgs tools -> do
       let req = ChatRequest
             { reqModel      = ioModel
@@ -181,7 +192,7 @@ ioAlgebra IOEnv{..} = AgentAlgebra
   , interpTool = \call ->
       executeCodingTool ioWorkspace call
 
-  , interpLog = renderEventIO ioVerbose
+  , interpLog = logger
 
   , interpEvaluate = \condition transcript -> do
       let evalMsgs = SystemMsg evaluatorSystemPrompt
@@ -195,7 +206,8 @@ ioAlgebra IOEnv{..} = AgentAlgebra
             }
       res <- sendChatCompletion ioManager ioApiKey req
       case res of
-        Right asstResp ->
+        Right asstResp -> do
+          mapM_ (logger . EvGoalEvaluationUsage) (respUsage asstResp)
           case respContent asstResp of
             Just content -> pure (parseGoalEvaluation content)
             Nothing      -> pure (GoalEvaluation GoalNotYetMet "Empty evaluator response.")

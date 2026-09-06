@@ -90,7 +90,7 @@ spec = do
       Map.lookup "out.txt" (mockFiles endEnv) `shouldBe` Just "Pearls in Haskell"
 
     it "propagates token usage metadata in EvLLMResponse" $ do
-      let usage = TokenUsage 150 40 190
+      let usage = mkTokenUsage 150 40 190
           step1 _ _ = Right $ AssistantResponse (Just "Tokens measured") [] (Just usage)
           env = emptyMockEnv { mockLLMSteps = [step1] }
           initHist = [UserMsg "Check tokens"]
@@ -316,6 +316,21 @@ spec = do
 
       mockEvents endEnv `shouldContain` [EvGoalEvaluated GoalNotYetMet "Not done."]
       mockEvents endEnv `shouldContain` [EvGoalEvaluated GoalMet "Done."]
+
+    it "logs EvGoalEvaluationUsage when evaluator reports token usage" $ do
+      let step1 _ _ = Right $ AssistantResponse (Just "Finished.") [] Nothing
+          eval1 _ _ = GoalEvaluation GoalMet "All good."
+          evalUsage = mkTokenUsage 500 50 550
+          env = emptyMockEnv
+            { mockLLMSteps = [step1]
+            , mockGoalEvaluations = [eval1]
+            , mockGoalEvaluationUsages = [Just evalUsage]
+            }
+          initHist = [UserMsg condition]
+          (_, endEnv) =
+            runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
+
+      mockEvents endEnv `shouldContain` [EvGoalEvaluationUsage evalUsage]
 
     it "injects evaluator reason as guidance for the next turn" $ do
       let step1 _ _ = Right $ AssistantResponse (Just "Working.") [] Nothing

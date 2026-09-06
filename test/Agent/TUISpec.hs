@@ -8,7 +8,7 @@ import Agent.Skills (SkillSource(..), mkSkill)
 import Agent.TUI.App (dialogueToMessages, goalAgentConfig, runGoalWorker, vtyToUserKey)
 import Agent.TUI.State
 import Agent.TUI.Types
-import Agent.TUI.UI (formatTokens, renderMaxTurns)
+import Agent.TUI.UI (formatCompactLimit, formatTokens, renderMaxTurns)
 import Agent.Types
   ( AgentConfig(..)
   , AgentEvent(..)
@@ -18,10 +18,15 @@ import Agent.Types
   , GoalStatus(..)
   , GoalVerdict(..)
   , Message(..)
+  , SessionTokenUsage(..)
   , TokenUsage(..)
   , ToolCall(..)
   , ToolResult(..)
+  , contextSaturationPercent
   , initialGoalState
+  , initialSessionTokenUsage
+  , mkTokenUsage
+  , modelContextLimit
   )
 import Data.IORef
 import qualified Data.Map.Strict as Map
@@ -313,32 +318,116 @@ spec = do
         tsPromptHistory s4 `shouldBe` ["first query", "second query"]
         tsPromptHistoryIndex s4 `shouldBe` Nothing
 
-    describe "Context Window Token Usage Tracking" $ do
-      it "initializes context tokens to 0 and token usage to Nothing" $ do
+    describe "Context Window and Session Token Usage Tracking" $ do
+      it "initializes context tokens to 0, token usage to Nothing, and session tokens to 0" $ do
         tsContextTokens baseState `shouldBe` 0
         tsTokenUsage baseState `shouldBe` Nothing
+        tsSessionTokens baseState `shouldBe` initialSessionTokenUsage
+        tsUsageStatus baseState `shouldBe` UsageVerified
 
-      it "updates context tokens and token usage on EvLLMResponse" $ do
-        let usage = TokenUsage 120 30 150
+      it "updates context tokens and session tokens on EvLLMResponse" $ do
+        let usage = mkTokenUsage 120 30 150
             (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
         tsContextTokens s1 `shouldBe` 150
         tsTokenUsage s1 `shouldBe` Just usage
+        stuTotalTokens (tsSessionTokens s1) `shouldBe` 150
+        stuPromptTokens (tsSessionTokens s1) `shouldBe` 120
+        stuCompletionTokens (tsSessionTokens s1) `shouldBe` 30
+        tsUsageStatus s1 `shouldBe` UsageVerified
 
-      it "updates context tokens with latest turn on subsequent EvLLMResponse" $ do
-        let usage1 = TokenUsage 120 30 150
-            usage2 = TokenUsage 200 45 245
+      it "accumulates session tokens while context tokens tracks latest turn" $ do
+        let usage1 = mkTokenUsage 120 30 150
+            usage2 = mkTokenUsage 200 45 245
             (s1, _) = updateTui (EvHarness (EvLLMResponse Nothing [] (Just usage1))) baseState
             (s2, _) = updateTui (EvHarness (EvLLMResponse (Just "Done") [] (Just usage2))) s1
         tsContextTokens s2 `shouldBe` 245
         tsTokenUsage s2 `shouldBe` Just usage2
+        stuTotalTokens (tsSessionTokens s2) `shouldBe` 395
+        stuPromptTokens (tsSessionTokens s2) `shouldBe` 320
+        stuCompletionTokens (tsSessionTokens s2) `shouldBe` 75
 
-      it "resets context tokens to 0 when history is cleared" $ do
-        let usage = TokenUsage 120 30 150
+      it "accumulates prompt cache metrics and monetary cost across turns" $ do
+        let usage1 = TokenUsage 100 20 120 80 (Just 0.0015)
+            usage2 = TokenUsage 200 30 230 150 (Just 0.0025)
+            (s1, _) = updateTui (EvHarness (EvLLMResponse Nothing [] (Just usage1))) baseState
+            (s2, _) = updateTui (EvHarness (EvLLMResponse (Just "Done") [] (Just usage2))) s1
+        stuCachedTokens (tsSessionTokens s2) `shouldBe` 230
+        case stuTotalCost (tsSessionTokens s2) of
+          Just c  -> c `shouldSatisfy` (\v -> abs (v - 0.0040) < 0.00001)
+          Nothing -> expectationFailure "Expected cumulative total cost to be present"
+
+      it "marks UsageMissing when EvLLMResponse arrives without usage, preserving context count" $ do
+        let usage = mkTokenUsage 120 30 150
+            (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
+            (s2, _) = updateTui (EvHarness (EvLLMResponse (Just "Follow-up") [] Nothing)) s1
+        tsContextTokens s2 `shouldBe` 150
+        tsUsageStatus s2 `shouldBe` UsageMissing
+
+      it "accumulates goal evaluation tokens into session tokens without polluting context tokens" $ do
+        let usage1 = mkTokenUsage 120 30 150
+            evalUsage = mkTokenUsage 500 50 550
+            (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Task done") [] (Just usage1))) baseState
+            (s2, _) = updateTui (EvHarness (EvGoalEvaluationUsage evalUsage)) s1
+        tsContextTokens s2 `shouldBe` 150
+        stuTotalTokens (tsSessionTokens s2) `shouldBe` 700
+        stuEvaluationTokens (tsSessionTokens s2) `shouldBe` 550
+
+      it "resets context tokens to 0 when history is cleared with 'c' while preserving session totals" $ do
+        let usage = mkTokenUsage 120 30 150
             (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
             s2 = s1 { tsFocus = FocusHistory }
             (s3, _) = updateTui (EvUserKey (KeyChar 'c')) s2
         tsContextTokens s3 `shouldBe` 0
         tsTokenUsage s3 `shouldBe` Nothing
+        stuTotalTokens (tsSessionTokens s3) `shouldBe` 150
+
+      it "resets context tokens to 0 on /clear while preserving session totals" $ do
+        let usage = mkTokenUsage 120 30 150
+            (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
+            (s2, _) = updateTui (EvSubmit "/clear") s1
+        tsContextTokens s2 `shouldBe` 0
+        tsTokenUsage s2 `shouldBe` Nothing
+        stuTotalTokens (tsSessionTokens s2) `shouldBe` 150
+
+      it "resets session tokens to 0 on /cost reset" $ do
+        let usage = mkTokenUsage 120 30 150
+            (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
+            (s2, _) = updateTui (EvSubmit "/cost reset") s1
+        stuTotalTokens (tsSessionTokens s2) `shouldBe` 0
+
+      it "generates an informative breakdown with context, session, and capacity on /cost" $ do
+        let usage = TokenUsage 120 30 150 50 (Just 0.0012)
+            (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
+            (s2, _) = updateTui (EvSubmit "/cost") s1
+        let notices = [ m | DiNotice m <- tsHistory s2 ]
+        notices `shouldSatisfy` (\l -> any ("Tokens: 150 in context window" `T.isInfixOf`) l)
+        notices `shouldSatisfy` (\l -> any ("Session Cumulative: 150 tokens" `T.isInfixOf`) l)
+        notices `shouldSatisfy` (\l -> any ("Reported API Cost: $0.0012" `T.isInfixOf`) l)
+
+    describe "formatCompactLimit" $ do
+      it "formats zero and small numbers directly" $ do
+        formatCompactLimit 0 `shouldBe` "0"
+        formatCompactLimit 500 `shouldBe` "500"
+
+      it "formats thousands with k" $ do
+        formatCompactLimit 8400 `shouldBe` "8.4k"
+        formatCompactLimit 128000 `shouldBe` "128k"
+        formatCompactLimit 200000 `shouldBe` "200k"
+
+      it "formats millions with M" $ do
+        formatCompactLimit 1000000 `shouldBe` "1M"
+        formatCompactLimit 1500000 `shouldBe` "1.5M"
+
+    describe "modelContextLimit and contextSaturationPercent" $ do
+      it "maps known model families to context limits" $ do
+        modelContextLimit "anthropic/claude-3.7-sonnet" `shouldBe` 200000
+        modelContextLimit "openai/gpt-4o" `shouldBe` 128000
+        modelContextLimit "google/gemini-2.0-flash" `shouldBe` 1000000
+        modelContextLimit "unknown-custom-model" `shouldBe` 128000
+
+      it "calculates context saturation percentage accurately" $ do
+        contextSaturationPercent 160000 "anthropic/claude-3.7-sonnet" `shouldBe` 80
+        contextSaturationPercent 115200 "openai/gpt-4o" `shouldBe` 90
 
     describe "formatTokens" $ do
       it "formats small counts without commas" $ do

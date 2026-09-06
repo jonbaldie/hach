@@ -52,7 +52,29 @@ spec = do
         Left err -> expectationFailure ("Failed to parse response: " <> show err)
         Right resp -> do
           respContent resp `shouldBe` Just "Hello there!"
-          respUsage resp `shouldBe` Just (TokenUsage 42 18 60)
+          respUsage resp `shouldBe` Just (mkTokenUsage 42 18 60)
+
+    it "parses cached tokens and total_cost when present" $ do
+      let rawJson = LBS.concat
+            [ "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Cache hit!\"}}],"
+            , "\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"total_tokens\":120,"
+            , "\"prompt_tokens_details\":{\"cached_tokens\":80},\"total_cost\":0.0015}}"
+            ]
+      case parseChatResponse rawJson of
+        Left err -> expectationFailure ("Failed to parse response: " <> show err)
+        Right resp ->
+          respUsage resp `shouldBe` Just (TokenUsage 100 20 120 80 (Just 0.0015))
+
+    it "parses cache_read_input_tokens and direct cost when present" $ do
+      let rawJson = LBS.concat
+            [ "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Anthropic cache!\"}}],"
+            , "\"usage\":{\"prompt_tokens\":200,\"completion_tokens\":50,\"total_tokens\":250,"
+            , "\"cache_read_input_tokens\":150,\"cost\":0.003}}"
+            ]
+      case parseChatResponse rawJson of
+        Left err -> expectationFailure ("Failed to parse response: " <> show err)
+        Right resp ->
+          respUsage resp `shouldBe` Just (TokenUsage 200 50 250 150 (Just 0.003))
 
     it "sets respUsage to Nothing when usage field is absent" $ do
       let rawJson = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Hello there!\"}}]}"

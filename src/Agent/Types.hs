@@ -10,6 +10,12 @@ module Agent.Types
   , AssistantResponse(..)
   , parseCallArgs
   , TokenUsage(..)
+  , mkTokenUsage
+  , SessionTokenUsage(..)
+  , initialSessionTokenUsage
+  , addUsageToSession
+  , modelContextLimit
+  , contextSaturationPercent
 
     -- * Tools & Schemas
   , ToolDef(..)
@@ -168,21 +174,122 @@ data TokenUsage = TokenUsage
   { tuPromptTokens     :: !Int
   , tuCompletionTokens :: !Int
   , tuTotalTokens      :: !Int
+  , tuCachedTokens     :: !Int
+  , tuCost             :: !(Maybe Double)
   } deriving (Show, Eq, Generic)
 
+-- | Smart constructor for simple token usage without cache or cost.
+mkTokenUsage :: Int -> Int -> Int -> TokenUsage
+mkTokenUsage p c t = TokenUsage p c t 0 Nothing
+
 instance ToJSON TokenUsage where
-  toJSON TokenUsage{..} = object
+  toJSON TokenUsage{..} = object $
     [ "prompt_tokens"     .= tuPromptTokens
     , "completion_tokens" .= tuCompletionTokens
     , "total_tokens"      .= tuTotalTokens
-    ]
+    , "cached_tokens"     .= tuCachedTokens
+    ] ++ maybe [] (\c -> ["cost" .= c]) tuCost
 
 instance FromJSON TokenUsage where
-  parseJSON = withObject "TokenUsage" $ \o ->
-    TokenUsage
+  parseJSON = withObject "TokenUsage" $ \o -> do
+    p <- o .:? "prompt_tokens"     .!= 0
+    c <- o .:? "completion_tokens" .!= 0
+    t <- o .:? "total_tokens"      .!= (p + c)
+    mDetails <- o .:? "prompt_tokens_details"
+    cachedFromDetails <- case mDetails of
+      Just (Aeson.Object d) -> d .:? "cached_tokens" .!= 0
+      _                     -> pure 0
+    cachedDirect <- o .:? "cached_tokens" .!= 0
+    cachedRead <- o .:? "cache_read_input_tokens" .!= 0
+    let cached = max cachedFromDetails (max cachedDirect cachedRead)
+    mTotalCost <- o .:? "total_cost"
+    costVal <- case mTotalCost of
+      Just cost -> pure (Just cost)
+      Nothing   -> o .:? "cost"
+    pure TokenUsage
+      { tuPromptTokens     = p
+      , tuCompletionTokens = c
+      , tuTotalTokens      = t
+      , tuCachedTokens     = cached
+      , tuCost             = costVal
+      }
+
+-- | Cumulative session token usage across multiple turns and operations.
+data SessionTokenUsage = SessionTokenUsage
+  { stuPromptTokens     :: !Int
+  , stuCompletionTokens :: !Int
+  , stuTotalTokens      :: !Int
+  , stuCachedTokens     :: !Int
+  , stuEvaluationTokens :: !Int
+  , stuTotalCost        :: !(Maybe Double)
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON SessionTokenUsage where
+  toJSON SessionTokenUsage{..} = object $
+    [ "prompt_tokens"     .= stuPromptTokens
+    , "completion_tokens" .= stuCompletionTokens
+    , "total_tokens"      .= stuTotalTokens
+    , "cached_tokens"     .= stuCachedTokens
+    , "evaluation_tokens" .= stuEvaluationTokens
+    ] ++ maybe [] (\c -> ["total_cost" .= c]) stuTotalCost
+
+instance FromJSON SessionTokenUsage where
+  parseJSON = withObject "SessionTokenUsage" $ \o ->
+    SessionTokenUsage
       <$> o .:? "prompt_tokens"     .!= 0
       <*> o .:? "completion_tokens" .!= 0
       <*> o .:? "total_tokens"      .!= 0
+      <*> o .:? "cached_tokens"     .!= 0
+      <*> o .:? "evaluation_tokens" .!= 0
+      <*> o .:? "total_cost"
+
+-- | Clean initial session usage.
+initialSessionTokenUsage :: SessionTokenUsage
+initialSessionTokenUsage = SessionTokenUsage 0 0 0 0 0 Nothing
+
+-- | Accumulate turn usage into session totals.
+addUsageToSession :: TokenUsage -> Bool -> SessionTokenUsage -> SessionTokenUsage
+addUsageToSession u isEval s =
+  let promptInc = tuPromptTokens u
+      compInc   = tuCompletionTokens u
+      totalInc  = tuTotalTokens u
+      cacheInc  = tuCachedTokens u
+      evalInc   = if isEval then totalInc else 0
+      costInc   = case (stuTotalCost s, tuCost u) of
+                    (Just c1, Just c2) -> Just (c1 + c2)
+                    (Just c1, Nothing) -> Just c1
+                    (Nothing, Just c2) -> Just c2
+                    (Nothing, Nothing) -> Nothing
+  in s
+       { stuPromptTokens     = stuPromptTokens s + promptInc
+       , stuCompletionTokens = stuCompletionTokens s + compInc
+       , stuTotalTokens      = stuTotalTokens s + totalInc
+       , stuCachedTokens     = stuCachedTokens s + cacheInc
+       , stuEvaluationTokens = stuEvaluationTokens s + evalInc
+       , stuTotalCost        = costInc
+       }
+
+-- | Standard context limits for known model families.
+modelContextLimit :: Text -> Int
+modelContextLimit m
+  | "claude" `T.isInfixOf` lower = 200000
+  | "gpt-4" `T.isInfixOf` lower = 128000
+  | "gpt-3.5" `T.isInfixOf` lower = 16384
+  | "llama-3" `T.isInfixOf` lower = 128000
+  | "deepseek" `T.isInfixOf` lower = 128000
+  | "qwen" `T.isInfixOf` lower = 128000
+  | "gemini" `T.isInfixOf` lower = 1000000
+  | "mistral" `T.isInfixOf` lower = 128000
+  | "muse" `T.isInfixOf` lower = 128000
+  | otherwise = 128000
+  where
+    lower = T.toLower m
+
+-- | Calculate context window saturation percentage (clamped to 0..100).
+contextSaturationPercent :: Int -> Text -> Int
+contextSaturationPercent tokens model =
+  let limit = modelContextLimit model
+  in if limit <= 0 then 0 else (tokens * 100) `div` limit
 
 -- | The model's response for a turn.
 data AssistantResponse = AssistantResponse
@@ -409,6 +516,7 @@ data AgentEvent
   | EvError !Text
   | EvGoalSet !Text
   | EvGoalEvaluated !GoalVerdict !Text
+  | EvGoalEvaluationUsage !TokenUsage
   | EvGoalAchieved !Text
   | EvGoalFailed !Text !Text
   | EvGoalCleared !Text
