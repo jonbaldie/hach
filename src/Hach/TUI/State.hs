@@ -141,7 +141,8 @@ handleSubmitPrompt rawPrompt state
           actions = if busy then [ActionCancelAgent] else []
           newStatus = if busy then StatusIdle else tsStatus state
       in ( state { tsTranscript         = []
-                 , tsHistoryScroll      = 0
+                 , tsTranscriptScroll   = 0
+                 , tsSelectedToolIndex  = 0
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -494,7 +495,7 @@ handleSubmitPrompt rawPrompt state
              in ( state { tsTranscript         = newTranscript
                         , tsInputBuffer        = ""
                         , tsStatus             = StatusThinking
-                        , tsFocus              = FocusHistory
+                        , tsFocus              = FocusTranscript
                         , tsPromptHistory      = newPromptHistory
                         , tsPromptHistoryIndex = Nothing
                         , tsPromptDraft        = ""
@@ -512,7 +513,7 @@ handleSubmitPrompt rawPrompt state
             { tsTranscript         = newTranscript
             , tsInputBuffer        = ""
             , tsStatus             = StatusThinking
-            , tsFocus              = FocusHistory
+            , tsFocus              = FocusTranscript
             , tsPromptHistory      = newPromptHistory
             , tsPromptHistoryIndex = Nothing
             , tsPromptDraft        = ""
@@ -580,24 +581,19 @@ handleUserKey key state@TuiState{..} =
     KeyBackTab ->
       (state { tsFocus = prevFocus tsFocus }, [])
 
-    KeyScrollUp -> case tsFocus of
-      FocusTools -> (state, [ActionScrollTools (-2)])
-      _          -> (state { tsHistoryScroll = max 0 (tsHistoryScroll - 2) }, [ActionScrollHistory (-2)])
+    KeyScrollUp ->
+      (state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 2) }, [ActionScrollTranscript (-2)])
 
-    KeyScrollDown -> case tsFocus of
-      FocusTools -> (state, [ActionScrollTools 2])
-      _          -> (state { tsHistoryScroll = tsHistoryScroll + 2 }, [ActionScrollHistory 2])
+    KeyScrollDown ->
+      (state { tsTranscriptScroll = tsTranscriptScroll + 2 }, [ActionScrollTranscript 2])
 
     -- 2. Focus-specific actions
     _ -> case tsFocus of
       FocusInput ->
         handleInputKey key state
 
-      FocusHistory ->
-        handleHistoryKey key state
-
-      FocusTools ->
-        handleToolsKey key state
+      FocusTranscript ->
+        handleTranscriptKey key state
 
 -- | Key handling inside the input text area.
 handleInputKey :: UserKey -> TuiState -> (TuiState, [TuiAction])
@@ -653,62 +649,49 @@ handleInputKey key state@TuiState{..} = case key of
     (state { tsInputBuffer = "" }, [])
 
   KeyPageUp ->
-    (state { tsHistoryScroll = max 0 (tsHistoryScroll - 5) }, [ActionScrollHistory (-5)])
+    (state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 5) }, [ActionScrollTranscript (-5)])
 
   KeyPageDown ->
-    (state { tsHistoryScroll = tsHistoryScroll + 5 }, [ActionScrollHistory 5])
+    (state { tsTranscriptScroll = tsTranscriptScroll + 5 }, [ActionScrollTranscript 5])
 
   _ ->
     (state, [])
 
--- | Key handling when the conversation history panel is focused.
-handleHistoryKey :: UserKey -> TuiState -> (TuiState, [TuiAction])
-handleHistoryKey key state@TuiState{..} = case key of
-  KeyUp ->
-    (state { tsHistoryScroll = max 0 (tsHistoryScroll - 1) }, [ActionScrollHistory (-1)])
-
-  KeyDown ->
-    (state { tsHistoryScroll = tsHistoryScroll + 1 }, [ActionScrollHistory 1])
-
-  KeyPageUp ->
-    (state { tsHistoryScroll = max 0 (tsHistoryScroll - 5) }, [ActionScrollHistory (-5)])
-
-  KeyPageDown ->
-    (state { tsHistoryScroll = tsHistoryScroll + 5 }, [ActionScrollHistory 5])
-
-  KeyChar 'c' ->
-    -- Clear dialogue history and reset context window tokens
-    (state { tsTranscript = [], tsHistoryScroll = 0, tsContextTokens = 0, tsTokenUsage = Nothing, tsUsageStatus = UsageVerified }, [])
-
-  _ ->
-    (state, [])
-
--- | Key handling when the tool activity panel is focused.
-handleToolsKey :: UserKey -> TuiState -> (TuiState, [TuiAction])
-handleToolsKey key state@TuiState{..} =
-  let totalTools = length (tsTools state)
+-- | Key handling when the unified transcript panel is focused.
+handleTranscriptKey :: UserKey -> TuiState -> (TuiState, [TuiAction])
+handleTranscriptKey key state@TuiState{..} =
+  let toolCards = [tc | TiToolCard tc <- tsTranscript]
+      totalCards = length toolCards
   in case key of
-    KeyUp ->
-      let newIdx = max 0 (tsSelectedToolIndex - 1)
-      in (state { tsSelectedToolIndex = newIdx }, [ActionScrollTools (-1)])
+    KeyUp
+      | totalCards > 0 ->
+          let newIdx = max 0 (tsSelectedToolIndex - 1)
+          in (state { tsSelectedToolIndex = newIdx }, [])
+      | otherwise ->
+          (state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 1) }, [ActionScrollTranscript (-1)])
 
-    KeyDown ->
-      let newIdx = min (max 0 (totalTools - 1)) (tsSelectedToolIndex + 1)
-      in (state { tsSelectedToolIndex = newIdx }, [ActionScrollTools 1])
+    KeyDown
+      | totalCards > 0 ->
+          let newIdx = min (totalCards - 1) (tsSelectedToolIndex + 1)
+          in (state { tsSelectedToolIndex = newIdx }, [])
+      | otherwise ->
+          (state { tsTranscriptScroll = tsTranscriptScroll + 1 }, [ActionScrollTranscript 1])
 
     KeyPageUp ->
-      let newIdx = max 0 (tsSelectedToolIndex - 5)
-      in (state { tsSelectedToolIndex = newIdx }, [ActionScrollTools (-5)])
+      (state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 5) }, [ActionScrollTranscript (-5)])
 
     KeyPageDown ->
-      let newIdx = min (max 0 (totalTools - 1)) (tsSelectedToolIndex + 5)
-      in (state { tsSelectedToolIndex = newIdx }, [ActionScrollTools 5])
+      (state { tsTranscriptScroll = tsTranscriptScroll + 5 }, [ActionScrollTranscript 5])
 
     KeyEnter ->
       (toggleToolExpanded tsSelectedToolIndex state, [])
 
     KeyChar ' ' ->
       (toggleToolExpanded tsSelectedToolIndex state, [])
+
+    KeyChar 'c' ->
+      -- Clear transcript and reset context window tokens
+      (state { tsTranscript = [], tsTranscriptScroll = 0, tsSelectedToolIndex = 0, tsContextTokens = 0, tsTokenUsage = Nothing, tsUsageStatus = UsageVerified }, [])
 
     _ ->
       (state, [])

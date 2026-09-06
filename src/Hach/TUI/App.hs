@@ -92,16 +92,14 @@ runTui ioEnv initialPrompt = do
               ActionCancelAgent -> pure ()
               ActionRunAgent prompt -> do
                 triggerAgentRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns currentState) prompt (tsHistory currentState)
-                vScrollToEnd (viewportScroll VpHistory)
+                vScrollToEnd (viewportScroll VpTranscript)
               ActionRunGoal condition -> do
                 triggerGoalRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns currentState) condition (tsHistory currentState)
-                vScrollToEnd (viewportScroll VpHistory)
-              ActionScrollHistory delta ->
-                vScrollBy (viewportScroll VpHistory) delta
-              ActionScrollHistoryToBottom ->
-                vScrollToEnd (viewportScroll VpHistory)
-              ActionScrollTools delta ->
-                vScrollBy (viewportScroll VpTools) (delta * 2)
+                vScrollToEnd (viewportScroll VpTranscript)
+              ActionScrollTranscript delta ->
+                vScrollBy (viewportScroll VpTranscript) delta
+              ActionScrollTranscriptToBottom ->
+                vScrollToEnd (viewportScroll VpTranscript)
         , appAttrMap      = const tuiAttrMap
         }
 
@@ -253,15 +251,15 @@ handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
   AppEvent agentEv -> do
     modify (handleAgentEvent agentEv)
     case agentEv of
-      EvLLMResponse _ _ _ -> vScrollToEnd (viewportScroll VpHistory)
-      EvDone _            -> vScrollToEnd (viewportScroll VpHistory)
-      EvError _         -> vScrollToEnd (viewportScroll VpHistory)
-      EvToolCall _ _    -> vScrollToEnd (viewportScroll VpTools)
-      EvGoalEvaluated{}   -> vScrollToEnd (viewportScroll VpHistory)
-      EvGoalAchieved{}    -> vScrollToEnd (viewportScroll VpHistory)
-      EvGoalFailed{}      -> vScrollToEnd (viewportScroll VpHistory)
-      EvGoalBlocked{}     -> vScrollToEnd (viewportScroll VpHistory)
-      _                 -> pure ()
+      EvLLMResponse _ _ _ -> vScrollToEnd (viewportScroll VpTranscript)
+      EvDone _            -> vScrollToEnd (viewportScroll VpTranscript)
+      EvError _           -> vScrollToEnd (viewportScroll VpTranscript)
+      EvToolCall _ _      -> vScrollToEnd (viewportScroll VpTranscript)
+      EvGoalEvaluated{}   -> vScrollToEnd (viewportScroll VpTranscript)
+      EvGoalAchieved{}    -> vScrollToEnd (viewportScroll VpTranscript)
+      EvGoalFailed{}      -> vScrollToEnd (viewportScroll VpTranscript)
+      EvGoalBlocked{}     -> vScrollToEnd (viewportScroll VpTranscript)
+      _                   -> pure ()
 
   VtyEvent vtyEv -> do
     case vtyToUserKey vtyEv of
@@ -280,16 +278,14 @@ handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
             mapM_ cancel mWorker
           ActionRunAgent prompt -> do
             triggerAgentRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns nextState) prompt (tsHistory nextState)
-            vScrollToEnd (viewportScroll VpHistory)
+            vScrollToEnd (viewportScroll VpTranscript)
           ActionRunGoal condition -> do
             triggerGoalRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns nextState) condition (tsHistory nextState)
-            vScrollToEnd (viewportScroll VpHistory)
-          ActionScrollHistory delta ->
-            vScrollBy (viewportScroll VpHistory) delta
-          ActionScrollHistoryToBottom ->
-            vScrollToEnd (viewportScroll VpHistory)
-          ActionScrollTools delta ->
-            vScrollBy (viewportScroll VpTools) (delta * 2)
+            vScrollToEnd (viewportScroll VpTranscript)
+          ActionScrollTranscript delta ->
+            vScrollBy (viewportScroll VpTranscript) delta
+          ActionScrollTranscriptToBottom ->
+            vScrollToEnd (viewportScroll VpTranscript)
       Nothing ->
         pure ()
 

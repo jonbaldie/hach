@@ -13,7 +13,7 @@ import Hach.TUI.Types
 import Hach.TUI.UI (drawUI, installWideGlyphWidths, tuiAttrMap, wideGlyphs)
 import Hach.Types (ToolResult(..))
 import qualified Brick.Main as M
-import Data.List (group, nub, sort, sortOn)
+import Data.List (nub, sort)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Vector as V
@@ -22,14 +22,14 @@ import qualified Graphics.Vty.PictureToSpans as PTS
 import qualified Graphics.Vty.Span as Span
 import Test.Hspec
 
--- | A screen with content in both panels, including a tool card (which carries
--- the ⏺ bullet) and both panel labels (💬 and ⚡). Parameterised over the turn
+-- | A screen with unified transcript, including a tool card (which carries
+-- the ⏺ bullet) and transcript panel label (💬). Parameterised over the turn
 -- limit so both header forms are covered: a turn count, and the unlimited ∞.
 sampleState :: Maybe Int -> TuiState
 sampleState maxTurns = (initialTuiState "test/model" maxTurns)
   { tsCurrentTurn = 3
   , tsStatus      = StatusThinking
-  , tsFocus       = FocusHistory
+  , tsFocus       = FocusTranscript
   , tsTranscript  =
       [ TiUser "hello"
       , TiAssistant "hi"
@@ -70,15 +70,12 @@ borderColumns = reverse . snd . T.foldl' step (0, [])
       let acc' = if c `elem` borderGlyphs then col : acc else acc
       in (col + terminalWidth c, acc')
 
--- | The panel band: the rows carrying the three inter-panel verticals. They are
--- identified by the most common border-glyph count among rows that have at
--- least four, which excludes the header/footer bars (different counts).
+-- | The panel band: the rows carrying the single-column panel verticals.
+-- In a single column layout, every row with panel borders places them at [0, cols - 1].
 panelBand :: [T.Text] -> [[Int]]
 panelBand rows =
-  let cols   = map borderColumns rows
-      counts = [length c | c <- cols, length c >= 4]
-      modal  = head (last (sortOn length (group (sort counts))))
-  in [c | c <- cols, length c == modal]
+  let cols = map borderColumns rows
+  in [c | c <- cols, length c == 2]
 
 spec :: Spec
 spec = do
@@ -97,20 +94,20 @@ spec = do
       let region@(cols, _) = (259, 54)
           band = panelBand (renderRows (Just 10) region)
       band `shouldSatisfy` (not . null)
-      nub band `shouldBe` [head band]
+      nub band `shouldBe` [[0, cols - 1]]
       -- and nothing is pushed off the right-hand edge
       concatMap (take 1 . reverse) band `shouldSatisfy` all (< cols)
 
     it "stays aligned at other terminal widths" $
       mapM_ (\cols -> do
         let band = panelBand (renderRows (Just 10) (cols, 40))
-        (cols, nub band) `shouldBe` (cols, [head band]))
+        (cols, nub band) `shouldBe` (cols, [[0, cols - 1]]))
         [80, 100, 120, 160, 200, 259]
 
     it "stays aligned with an unlimited turn count" $
       mapM_ (\cols -> do
         let band = panelBand (renderRows Nothing (cols, 40))
-        (cols, nub band) `shouldBe` (cols, [head band]))
+        (cols, nub band) `shouldBe` (cols, [[0, cols - 1]]))
         [80, 120, 259]
 
   describe "glyph inventory" $ do
