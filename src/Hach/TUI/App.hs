@@ -5,6 +5,9 @@ module Hach.TUI.App
   ( runTui
   , vtyToUserKey
   , dialogueToMessages
+  , transcriptToMessages
+  , transcriptItemsToMessages
+  , cancelledToolCallPlaceholder
   , runGoalWorker
   , goalAgentConfig
   , initialTuiLaunch
@@ -125,7 +128,7 @@ runTui ioEnv initialPrompt = do
 dialogueToMessages :: Text -> Text -> [DialogueItem] -> [Message]
 dialogueToMessages sysPrompt currentPrompt items =
   let priorItems = dropLastUser items
-      priorMsgs  = concatMap itemToMessages priorItems
+      priorMsgs  = transcriptItemsToMessages priorItems
   in SystemMsg sysPrompt : priorMsgs ++ [UserMsg currentPrompt]
   where
     dropLastUser [] = []
@@ -136,12 +139,74 @@ dialogueToMessages sysPrompt currentPrompt items =
            (DiUser _ : prior) -> reverse (notices ++ prior)
            _                  -> xs
 
-    itemToMessages = \case
-      TiUser u      -> [UserMsg u]
-      TiAssistant a -> [AssistantMsg (Just a) []]
-      TiSystem s    -> [SystemMsg s]
-      TiNotice _    -> []
-      TiToolCard _  -> []
+-- | Synonym for 'dialogueToMessages' using unified transcript terminology.
+transcriptToMessages :: Text -> Text -> [TranscriptItem] -> [Message]
+transcriptToMessages = dialogueToMessages
+
+-- | Convert a chronological list of transcript items into LLM messages.
+-- A run of consecutive tool cards following an assistant text item (or standing alone)
+-- becomes one assistant message carrying the text plus those tool calls,
+-- followed by one tool message per card keyed by call id.
+-- Notices remain omitted.
+transcriptItemsToMessages :: [TranscriptItem] -> [Message]
+transcriptItemsToMessages = go . filter (not . isNotice)
+  where
+    isNotice (TiNotice _) = True
+    isNotice _            = False
+
+    extractCards (TiToolCard c : rest) =
+      let (cs, remItems) = extractCards rest
+      in (c : cs, remItems)
+    extractCards remItems = ([], remItems)
+
+    go [] = []
+    go (TiAssistant text : rest) =
+      let (cards, remaining) = extractCards rest
+          mText = if T.null text then Nothing else Just text
+      in if null cards
+           then AssistantMsg mText [] : go remaining
+           else
+             let toolCalls = map cardToToolCall cards
+                 toolMsgs  = map cardToToolMsg cards
+             in AssistantMsg mText toolCalls : toolMsgs ++ go remaining
+    go (TiToolCard card : rest) =
+      let (cards, remaining) = extractCards rest
+          allCards = card : cards
+          toolCalls = map cardToToolCall allCards
+          toolMsgs  = map cardToToolMsg allCards
+      in AssistantMsg Nothing toolCalls : toolMsgs ++ go remaining
+    go (TiUser u : rest) =
+      UserMsg u : go rest
+    go (TiSystem s : rest) =
+      SystemMsg s : go rest
+    go (TiNotice _ : rest) =
+      go rest
+
+-- | Convert a 'ToolCard' into a provider-facing 'ToolCall'.
+cardToToolCall :: ToolCard -> ToolCall
+cardToToolCall tc = ToolCall
+  { callId       = tcId tc
+  , functionName = tcName tc
+  , callArgsRaw  = tcArgs tc
+  }
+
+-- | Convert a 'ToolCard' into a provider-facing 'ToolMsg'.
+cardToToolMsg :: ToolCard -> Message
+cardToToolMsg tc =
+  ToolMsg (tcId tc) (tcName tc) (toolCardContent (tcLifecycle tc))
+
+-- | Placeholder text for unresolved tool calls (Pending, Running, Cancelled).
+cancelledToolCallPlaceholder :: Text
+cancelledToolCallPlaceholder = "Tool call was cancelled before completion."
+
+-- | Extract tool message content based on card lifecycle.
+toolCardContent :: ToolLifecycle -> Text
+toolCardContent = \case
+  Finished res  -> toolResultToText res
+  Denied reason -> reason
+  Pending       -> cancelledToolCallPlaceholder
+  Running       -> cancelledToolCallPlaceholder
+  Cancelled     -> cancelledToolCallPlaceholder
 
 -- | Trigger background agent task execution.
 triggerAgentRun
