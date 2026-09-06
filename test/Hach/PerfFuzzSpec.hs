@@ -286,11 +286,11 @@ spec = do
             items = replicate n (TiAssistant chunk)
             joined = T.intercalate "\n\n" (replicate n chunk)
             cost = naiveCollapseCost (replicate n chunk)
-            total = T.length joined
+            joinedLen = T.length joined
         in collect (collapseBucket n) $
              transcriptItemsToMessages items === [AssistantMsg (Just joined) []]
-             .&&. counterexample ("naive cost " <> show cost <> " vs total " <> show total)
-                    (cost > 2 * total)
+             .&&. counterexample ("naive cost " <> show cost <> " vs total " <> show joinedLen)
+                    (cost > 2 * joinedLen)
 
     it "headline: 500 adjacent assistant items collapse correctly" $ do
       let n = 500
