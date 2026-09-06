@@ -1,0 +1,151 @@
+cabal-version:      3.0
+name:               hach
+version:            0.1.0.0
+synopsis:           A minimal agentic coding harness in Haskell (Functional Pearl)
+license:            MIT
+author:             Jonathan Baldie
+maintainer:         jonathan@baldie.net
+category:           Control, AI, Language
+build-type:         Simple
+
+common common-options
+    default-language:   GHC2021
+    default-extensions:
+        OverloadedStrings
+        DeriveFunctor
+        GADTs
+        RecordWildCards
+        LambdaCase
+    ghc-options:
+        -Wall
+        -Wcompat
+        -Wincomplete-record-updates
+        -Wincomplete-uni-patterns
+        -Wredundant-constraints
+
+library
+    import:           common-options
+    hs-source-dirs:   src
+    exposed-modules:
+        Hach.Types
+        Hach.Core
+        Hach.Tools
+        Hach.OpenRouter
+        Hach.Interpreter.IO
+        Hach.Interpreter.Pure
+        Hach.Env
+        Hach.TUI.Types
+        Hach.TUI.State
+        Hach.TUI.UI
+        Hach.TUI.App
+        Hach.Skills
+        Hach.Permissions
+        Hach.Settings
+        Hach.Sessions
+        Hach.Hooks
+        Hach.Subagents
+        Hach.MCP
+        Hach.Memory
+        Hach.Git
+        Hach.Tasks
+        Hach.Notifications
+    build-depends:
+        base >= 4.18 && < 5,
+        text,
+        bytestring,
+        containers,
+        aeson,
+        http-client,
+        http-client-tls,
+        http-types,
+        directory,
+        filepath,
+        process,
+        brick >= 2.0,
+        vty >= 6.0,
+        vty-crossplatform >= 0.5,
+        vty-unix,
+        text-zipper,
+        microlens,
+        microlens-mtl,
+        async,
+        stm,
+        time
+
+executable hach
+    import:           common-options
+    main-is:          Main.hs
+    other-modules:    Paths_hach
+    autogen-modules:  Paths_hach
+    hs-source-dirs:   app
+    build-depends:
+        base >= 4.18 && < 5,
+        hach,
+        text,
+        bytestring,
+        directory,
+        filepath,
+        time
+    ghc-options:
+        -threaded
+        -rtsopts
+        -with-rtsopts=-N
+
+executable hach-integration-test
+    import:           common-options
+    main-is:          IntegrationSpec.hs
+    hs-source-dirs:   test-integration
+    build-depends:
+        base >= 4.18 && < 5,
+        hach,
+        text,
+        bytestring,
+        directory,
+        filepath,
+        time
+    ghc-options:
+        -threaded
+        -rtsopts
+        -with-rtsopts=-N
+
+test-suite hach-test
+    import:           common-options
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test
+    other-modules:
+        Hach.CoreSpec
+        Hach.ToolsSpec
+        Hach.EnvSpec
+        Hach.OpenRouterSpec
+        Hach.TUISpec
+        Hach.TUILayoutSpec
+        Hach.PropertySpec
+        Hach.GoalFuzzSpec
+        Hach.SkillsSpec
+        Hach.PermissionsSpec
+        Hach.SettingsSpec
+        Hach.SessionsSpec
+        Hach.HooksSpec
+        Hach.SubagentsSpec
+        Hach.MCPSpec
+        Hach.MemorySpec
+        Hach.GitSpec
+        Hach.TasksSpec
+        Hach.NotificationsSpec
+    build-depends:
+        base >= 4.18 && < 5,
+        hach,
+        text,
+        bytestring,
+        containers,
+        aeson,
+        hspec >= 2.10,
+        brick >= 2.0,
+        vty >= 6.0,
+        vector,
+        QuickCheck >= 2.14,
+        directory,
+        filepath,
+        time,
+        process

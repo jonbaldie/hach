@@ -3,11 +3,11 @@
 
 module Main (main) where
 
-import Agent.Core
-import Agent.Env
-import Agent.Interpreter.IO
-import Agent.Tools
-import Agent.Types
+import Hach.Core
+import Hach.Env
+import Hach.Interpreter.IO
+import Hach.Tools
+import Hach.Types
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (createDirectoryIfMissing, doesFileExist, getCurrentDirectory, removeDirectoryRecursive)

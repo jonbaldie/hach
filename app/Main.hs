@@ -3,13 +3,13 @@
 
 module Main (main) where
 
-import Agent.Core
-import Agent.Env
-import Agent.Interpreter.IO
-import Agent.Skills (discoverSkills, injectSkillsIntoPrompt, parseSkillInvocations)
-import Agent.Tools
-import Agent.TUI.App (runTui)
-import Agent.Types
+import Hach.Core
+import Hach.Env
+import Hach.Interpreter.IO
+import Hach.Skills (discoverSkills, injectSkillsIntoPrompt, parseSkillInvocations)
+import Hach.Tools
+import Hach.TUI.App (runTui)
+import Hach.Types
 import Control.Monad (when)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -25,7 +25,7 @@ main = do
   CliOptions{..} <- case parseCliArgs rawArgs of
     Left err -> do
       putStrLn ("Argument error: " <> err)
-      putStrLn "Usage: agent-harness [--model <model_name>] [--no-tui] [task prompt...]"
+      putStrLn "Usage: hach [--model <model_name>] [--no-tui] [task prompt...]"
       exitFailure
     Right opts -> pure opts
 

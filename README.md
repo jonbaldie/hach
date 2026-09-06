@@ -1,8 +1,35 @@
-# Minimal Agentic Coding Harness in Haskell (Functional Pearl)
+# Hach: Haskell Agentic Coding Harness (Functional Pearl)
+
+[![CI](https://github.com/jonbaldie/hach/actions/workflows/ci.yml/badge.svg)](https://github.com/jonbaldie/hach/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A minimalist, principled agentic coding harness written in idiomatic Haskell following a **Functional Pearl** architecture.
 
 The harness implements an autonomous interaction loop between an LLM policy (via the OpenRouter API) and a coding environment (file inspection, file creation/modification, directory listing, and shell command execution).
+
+---
+
+## Installation
+
+### Homebrew (macOS)
+
+Install pre-built native binaries via the official tap:
+
+```bash
+brew tap jonbaldie/tap
+brew install hach
+```
+
+### Build from Source (Cabal)
+
+Requires GHC 9.8+ and Cabal 3.10+:
+
+```bash
+git clone https://github.com/jonbaldie/hach.git
+cd hach
+cabal build exe:hach
+cabal run hach
+```
 
 ---
 
@@ -40,8 +67,8 @@ data AgentAlgebra m = AgentAlgebra
 foldAgentProgram :: Monad m => AgentAlgebra m -> AgentProgram a -> m a
 ```
 
-1. **`Agent.Interpreter.Pure`**: Evaluates the entire agent dialogue against an in-memory mock environment (`MockEnv`), allowing fast, deterministic testing of multi-turn tool loops without touching the network or disk.
-2. **`Agent.Interpreter.IO`**: Connects the agent to the OpenRouter HTTP API and real workspace effects (`read_file`, `write_file`, `run_command`, `list_dir`).
+1. **`Hach.Interpreter.Pure`**: Evaluates the entire agent dialogue against an in-memory mock environment (`MockEnv`), allowing fast, deterministic testing of multi-turn tool loops without touching the network or disk.
+2. **`Hach.Interpreter.IO`**: Connects the agent to the OpenRouter HTTP API and real workspace effects (`read_file`, `write_file`, `run_command`, `list_dir`).
 
 ---
 
@@ -75,13 +102,13 @@ Configuration resolution precedence:
 
 ### Unit Tests (Pure Simulation & Wire Format)
 ```bash
-cabal test agent:test:agent-test --test-show-details=always
+cabal test hach:test:hach-test --test-show-details=always
 ```
 
 ### Live OpenRouter Integration Test
 Runs an end-to-end multi-turn loop against the real OpenRouter API using the `.env` configuration:
 ```bash
-cabal run agent-integration-test
+cabal run hach-integration-test
 ```
 
 ---
@@ -115,11 +142,20 @@ The harness launches directly into a modern, full-screen **Terminal User Interfa
 
 ```bash
 # Launch interactive full-screen TUI (default):
-cabal run agent-harness
+hach
+
+# Or via Cabal in development:
+cabal run hach
 
 # Launch TUI with an initial prompt and model override:
-cabal run agent-harness -- --model meta/muse-glimmer-30b "Inspect the src directory"
+hach --model meta/muse-glimmer-30b "Inspect the src directory"
 
 # Run in headless streaming CLI mode (e.g. for scripting or non-TTY pipes):
-cabal run agent-harness -- --no-tui --model meta/muse-glimmer-30b "Say hello"
+hach --no-tui --model meta/muse-glimmer-30b "Say hello"
 ```
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
