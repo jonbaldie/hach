@@ -15,7 +15,7 @@ module Hach.TUI.UI
   , installWideGlyphWidths
   ) where
 
-import Hach.Skills (skillInvocationCompletion)
+import Hach.Skills (inputSlashCompletion)
 import Hach.TUI.Types
 import Hach.Types (SessionTokenUsage(..), ToolResult(..), modelContextLimit)
 import Brick
@@ -510,9 +510,8 @@ renderToolCard selectedIdx isTranscriptFocused idx ToolCard{..} =
 --------------------------------------------------------------------------------
 
 -- | Modern prompt input bar.
--- When the trailing word is a slash-command prefix with a matching skill,
--- the completion suffix is shown as faded ghost text after the cursor
--- (press Tab to accept).
+-- Trailing slash-token completion (built-in commands and user-invocable
+-- skills) is shown as dim ghost text; Tab accepts.
 renderInputPanel :: TuiState -> Widget Name
 renderInputPanel TuiState{..} =
   let isFocused = tsFocus == FocusInput
@@ -524,7 +523,7 @@ renderInputPanel TuiState{..} =
         | T.null tsInputBuffer =
             prefix <+> withAttr dimAttr (txt "Type a task prompt and press Enter...")
         | otherwise =
-            case skillInvocationCompletion tsSkills tsInputBuffer of
+            case inputSlashCompletion tsSkills builtinCommands tsInputBuffer of
               Just suffix ->
                 prefix <+> hBox
                   [ withAttr userTextAttr (txt tsInputBuffer)

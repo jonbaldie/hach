@@ -34,6 +34,9 @@ module Hach.TUI.Types
   , TuiEvent(..)
   , TuiAction(..)
   , pattern ActionScrollHistory
+
+    -- * Built-in slash commands
+  , builtinCommands
   ) where
 
 import Hach.Skills (SkillCatalog)
@@ -222,6 +225,36 @@ data TuiAction
   | ActionQuit
   | ActionScrollTranscript !Int
   deriving (Show, Eq)
+
+-- | Canonical list of built-in slash commands recognised by the TUI.
+builtinCommands :: [Text]
+builtinCommands =
+  [ "/clear"
+  , "/help"
+  , "/cost"
+  , "/compact"
+  , "/goal"
+  , "/exit"
+  , "/quit"
+  , "/model"
+  , "/config"
+  , "/context"
+  , "/resume"
+  , "/plan"
+  , "/diff"
+  , "/tasks"
+  , "/theme"
+  , "/status"
+  , "/memory"
+  , "/init"
+  , "/permissions"
+  , "/fewer-permission-prompts"
+  , "/doctor"
+  , "/copy"
+  , "/reload-skills"
+  , "/mcp"
+  , "/plugin"
+  ]
 
 pattern ActionScrollHistory :: Int -> TuiAction
 pattern ActionScrollHistory delta = ActionScrollTranscript delta

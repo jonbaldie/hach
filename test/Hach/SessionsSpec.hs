@@ -94,3 +94,10 @@ spec = describe "Hach.Sessions" $ do
       estimateCostUsd "openai/gpt-4o-mini" 1000000 1000000 `shouldBe` 0.75
       -- 1M prompt ($5.00) + 1M completion ($15.00) = $20.00
       estimateCostUsd "openai/gpt-4o" 1000000 1000000 `shouldBe` 20.0
+
+    it "prices generic gpt-4 without shadowing gpt-4o families" $ do
+      -- 1M prompt ($2.50) + 1M completion ($10.00) = $12.50
+      estimateCostUsd "openai/gpt-4" 1000000 1000000 `shouldBe` 12.5
+      estimateCostUsd "openai/gpt-4-turbo" 1000000 1000000 `shouldBe` 12.5
+      estimateCostUsd "openai/gpt-4o-mini" 1000000 1000000 `shouldBe` 0.75
+      estimateCostUsd "openai/gpt-4o" 1000000 1000000 `shouldBe` 20.0

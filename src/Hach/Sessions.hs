@@ -19,7 +19,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.List (sortBy)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Ord (Down(..), comparing)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -136,14 +136,27 @@ estimateCostUsd model promptTokens completionTokens =
       completionCost = (fromIntegral completionTokens / 1000000.0) * completionRate
   in promptCost + completionCost
   where
-    -- Rates in USD per million tokens
-    lookupRates m
-      | "opus" `T.isInfixOf` m        = (15.0, 75.0)
-      | "sonnet" `T.isInfixOf` m      = (3.0, 15.0)
-      | "haiku" `T.isInfixOf` m       = (0.25, 1.25)
-      | "gpt-4o-mini" `T.isInfixOf` m = (0.15, 0.6)
-      | "gpt-4o" `T.isInfixOf` m      = (5.0, 15.0)
-      | otherwise                     = (1.0, 3.0)
+    -- First matching needle wins; keep more specific families first so
+    -- "claude-3-opus" is not billed as generic Claude.
+    lookupRates m =
+      fromMaybe (1.0, 3.0) $
+        listToMaybe
+          [ (p, c)
+          | (needle, p, c) <- familyRates
+          , needle `T.isInfixOf` m
+          ]
+
+    familyRates :: [(Text, Double, Double)]
+    familyRates =
+      [ ("opus",        15.0, 75.0)
+      , ("sonnet",       3.0, 15.0)
+      , ("haiku",        0.25, 1.25)
+      , ("gpt-4o-mini",  0.15, 0.6)
+      , ("gpt-4o",       5.0, 15.0)
+      , ("gpt-4",        2.5, 10.0)
+      , ("claude",       3.0, 15.0)
+      , ("deepseek",     0.27, 1.1)
+      ]
 
 -- | Generate a unique session identifier.
 generateSessionId :: IO Text

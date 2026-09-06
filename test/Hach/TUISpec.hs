@@ -531,6 +531,25 @@ spec = do
         tsInputBuffer s4 `shouldBe` "my pending draft"
         tsPromptHistoryIndex s4 `shouldBe` Nothing
 
+      it "leaves history browse mode when the recalled prompt is edited" $ do
+        let s0 = baseState { tsPromptHistory = ["alpha", "beta"], tsInputBuffer = "draft" }
+            (s1, _) = updateTui (EvUserKey KeyUp) s0
+            (s2, _) = updateTui (EvUserKey (KeyChar 'x')) s1
+            (s3, _) = updateTui (EvUserKey KeyDown) s2
+        tsInputBuffer s2 `shouldBe` "betax"
+        tsPromptHistoryIndex s2 `shouldBe` Nothing
+        tsInputBuffer s3 `shouldBe` "betax"
+
+      it "accepting Tab completion after Up leaves history browse mode" $ do
+        let s0 = baseState { tsPromptHistory = ["alpha", "/cle"], tsInputBuffer = "draft" }
+            (s1, _) = updateTui (EvUserKey KeyUp) s0
+            (s2, _) = updateTui (EvUserKey KeyTab) s1
+        tsInputBuffer s1 `shouldBe` "/cle"
+        tsPromptHistoryIndex s1 `shouldBe` Just 1
+        tsInputBuffer s2 `shouldBe` "/clear"
+        tsPromptHistoryIndex s2 `shouldBe` Nothing
+        tsFocus s2 `shouldBe` FocusInput
+
       it "appends submitted prompt to tsPromptHistory on Enter and resets index" $ do
         let s0 = baseState { tsInputBuffer = "first query" }
             (s1, _) = updateTui (EvUserKey KeyEnter) s0
@@ -946,7 +965,11 @@ spec = do
                 , EvDone "finished answer"
                 , EvError "fatal error"
                 , EvToolCall "bash" "ls -la"
+                , EvToolResult "bash" (ToolSuccess "ok")
                 , EvPermissionDenied "write_file" "protected path"
+                , EvHookTriggered "PreToolUse" "ok"
+                , EvSessionSaved "sess.jsonl"
+                , EvNotificationSent "done"
                 , EvGoalEvaluated GoalMet "condition met"
                 , EvGoalAchieved "all tests pass"
                 , EvGoalFailed "condition" "failure"
@@ -963,7 +986,11 @@ spec = do
                 , EvDone "finished answer"
                 , EvError "fatal error"
                 , EvToolCall "bash" "ls -la"
+                , EvToolResult "bash" (ToolSuccess "ok")
                 , EvPermissionDenied "write_file" "protected path"
+                , EvHookTriggered "PreToolUse" "ok"
+                , EvSessionSaved "sess.jsonl"
+                , EvNotificationSent "done"
                 , EvGoalEvaluated GoalMet "condition met"
                 , EvGoalAchieved "all tests pass"
                 , EvGoalFailed "condition" "failure"
@@ -1248,6 +1275,12 @@ spec = do
       it "cycles focus on Tab from non-input panels even with skills present" $ do
         let s0 = skillState { tsFocus = FocusTranscript, tsInputBuffer = "/go" }
             (s1, _) = updateTui (EvUserKey KeyTab) s0
+        tsFocus s1 `shouldBe` FocusInput
+
+      it "completes a built-in slash command with no skills present" $ do
+        let s0 = baseState { tsInputBuffer = "/cle" }
+            (s1, _) = updateTui (EvUserKey KeyTab) s0
+        tsInputBuffer s1 `shouldBe` "/clear"
         tsFocus s1 `shouldBe` FocusInput
 
     describe "Goal Execution Unlimited Turns in TUI (Bug Repro)" $ do

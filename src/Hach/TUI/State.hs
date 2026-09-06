@@ -6,12 +6,12 @@ module Hach.TUI.State
   , handleUserKey
   , handleAgentEvent
   , toggleToolExpanded
-  , builtinCommands
   , shouldAutoScroll
   , isTranscriptAppendingEvent
   ) where
 
-import Hach.Skills (Skill(..), injectSkillsIntoPrompt, parseSkillInvocations, skillInvocationCompletion)
+import Hach.Sessions (estimateCostUsd)
+import Hach.Skills (injectSkillsIntoPrompt, inputSlashCompletion, parseSkillInvocations, skillName)
 import Hach.TUI.Types
 import Hach.TUI.UI (formatTokens)
 import Hach.Types
@@ -49,35 +49,6 @@ updateTui event state = case event of
   EvHarness agentEv ->
     (handleAgentEvent agentEv state, [])
 
--- | Canonical list of built-in slash commands.
-builtinCommands :: [T.Text]
-builtinCommands =
-  [ "/clear"
-  , "/help"
-  , "/cost"
-  , "/compact"
-  , "/goal"
-  , "/exit"
-  , "/quit"
-  , "/model"
-  , "/config"
-  , "/context"
-  , "/resume"
-  , "/plan"
-  , "/diff"
-  , "/tasks"
-  , "/theme"
-  , "/status"
-  , "/memory"
-  , "/init"
-  , "/permissions"
-  , "/fewer-permission-prompts"
-  , "/doctor"
-  , "/copy"
-  , "/reload-skills"
-  , "/mcp"
-  , "/plugin"
-  ]
 -- | Whether the agent harness is currently busy running an inference turn or tool.
 isBusy :: TuiStatus -> Bool
 isBusy = \case
@@ -113,25 +84,10 @@ formatCostReport TuiState{..} =
         Just c  -> "\nReported API Cost: $" <> T.pack (printf "%.4f" c)
         Nothing ->
           if stuTotalTokens stu > 0
-            then let est = estimateCost tsModelName (stuPromptTokens stu) (stuCompletionTokens stu)
+            then let est = estimateCostUsd tsModelName (stuPromptTokens stu) (stuCompletionTokens stu)
                  in "\nEstimated Cost: ~$" <> T.pack (printf "%.4f" est)
             else ""
   in contextLine <> "\n" <> sessionLine <> costLine
-
--- | Estimate monetary cost in USD based on standard model pricing tiers per 1M tokens.
-estimateCost :: T.Text -> Int -> Int -> Double
-estimateCost m prompt comp =
-  let (pRate, cRate) = modelPricingRates m
-  in (fromIntegral prompt * pRate + fromIntegral comp * cRate) / 1000000.0
-
-modelPricingRates :: T.Text -> (Double, Double)
-modelPricingRates m
-  | "claude" `T.isInfixOf` lower   = (3.0, 15.0)
-  | "gpt-4" `T.isInfixOf` lower    = (2.5, 10.0)
-  | "deepseek" `T.isInfixOf` lower = (0.27, 1.1)
-  | otherwise                      = (1.0, 3.0)
-  where
-    lower = T.toLower m
 
 -- | Handle submitting a user task prompt.
 handleSubmitPrompt :: T.Text -> TuiState -> (TuiState, [TuiAction])
@@ -571,12 +527,12 @@ handleUserKey key state@TuiState{..} =
           (state { tsShowHelp = not tsShowHelp }, [])
 
     KeyTab ->
-      -- Accept the inline skill-completion ghost text when the user is
-      -- typing a slash-command prefix in the input box; otherwise cycle
-      -- panel focus as usual.
-      case skillInvocationCompletion tsSkills tsInputBuffer of
+      -- Accept the inline slash-completion ghost text (built-in commands
+      -- and user-invocable skills) when the user is typing a slash-command
+      -- prefix in the input box; otherwise cycle panel focus as usual.
+      case inputSlashCompletion tsSkills builtinCommands tsInputBuffer of
         Just suffix | tsFocus == FocusInput ->
-          (state { tsInputBuffer = tsInputBuffer `T.append` suffix }, [])
+          (editInputBuffer (<> suffix) state, [])
         _ ->
           (state { tsFocus = nextFocus tsFocus }, [])
 
@@ -596,6 +552,35 @@ handleUserKey key state@TuiState{..} =
 
       FocusTranscript ->
         handleTranscriptKey key state
+
+-- | Leave prompt-history browse mode so subsequent Up/Down does not
+-- overwrite an in-progress edit of a recalled prompt.
+abandonHistoryBrowse :: TuiState -> TuiState
+abandonHistoryBrowse state = state { tsPromptHistoryIndex = Nothing }
+
+-- | Apply a buffer edit and leave history browse mode.
+editInputBuffer :: (T.Text -> T.Text) -> TuiState -> TuiState
+editInputBuffer f state@TuiState{..} =
+  abandonHistoryBrowse state { tsInputBuffer = f tsInputBuffer }
+
+-- | True when a Harness event changes the transcript view — either by
+-- appending a Transcript Item or by updating a Tool Card in place.
+isTranscriptAppendingEvent :: AgentEvent -> Bool
+isTranscriptAppendingEvent = \case
+  EvLLMResponse{}          -> True
+  EvDone{}                 -> True
+  EvError{}                -> True
+  EvToolCall{}             -> True
+  EvToolResult{}           -> True
+  EvPermissionDenied{}     -> True
+  EvHookTriggered{}        -> True
+  EvSessionSaved{}         -> True
+  EvNotificationSent{}     -> True
+  EvGoalEvaluated{}        -> True
+  EvGoalAchieved{}         -> True
+  EvGoalFailed{}           -> True
+  EvGoalBlocked{}          -> True
+  _                        -> False
 
 -- | Key handling inside the input text area.
 handleInputKey :: UserKey -> TuiState -> (TuiState, [TuiAction])
@@ -639,16 +624,16 @@ handleInputKey key state@TuiState{..} = case key of
           )
 
   KeyChar c ->
-    (state { tsInputBuffer = tsInputBuffer `T.snoc` c }, [])
+    (editInputBuffer (`T.snoc` c) state, [])
 
   KeyBackspace ->
-    (state { tsInputBuffer = if T.null tsInputBuffer then "" else T.init tsInputBuffer }, [])
+    (editInputBuffer (T.dropEnd 1) state, [])
 
   KeyDelete ->
-    (state { tsInputBuffer = if T.null tsInputBuffer then "" else T.init tsInputBuffer }, [])
+    (editInputBuffer (T.dropEnd 1) state, [])
 
   KeyCtrl 'u' ->
-    (state { tsInputBuffer = "" }, [])
+    (editInputBuffer (const "") state, [])
 
   KeyPageUp ->
     (state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 5) }, [ActionScrollTranscript (-5)])
@@ -923,20 +908,6 @@ goalStatusText (Just gs) =
     GoalCleared ->
       ( "Goal cleared: " <> gsCondition gs
       , Just gs )
-
--- | Check whether an agent event appends items to the transcript.
-isTranscriptAppendingEvent :: AgentEvent -> Bool
-isTranscriptAppendingEvent = \case
-  EvLLMResponse{}          -> True
-  EvDone{}                 -> True
-  EvError{}                -> True
-  EvToolCall{}             -> True
-  EvPermissionDenied{}     -> True
-  EvGoalEvaluated{}        -> True
-  EvGoalAchieved{}         -> True
-  EvGoalFailed{}           -> True
-  EvGoalBlocked{}          -> True
-  _                        -> False
 
 -- | Determine whether the transcript viewport should automatically scroll to the bottom.
 -- Auto-scroll policy: when focus is on the prompt input, every transcript-appending
