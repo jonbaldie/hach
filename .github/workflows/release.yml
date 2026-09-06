@@ -164,6 +164,13 @@ jobs:
             parts << macos_blocks.join("\n\n")
             parts << "  end"
             parts << ""
+            if !linux_sha.to_s.strip.empty?
+              parts << "  on_linux do"
+              parts << "    url \"https://github.com/jonbaldie/hach/releases/download/v#{version}/#{linux_archive}\""
+              parts << "    sha256 \"#{linux_sha}\""
+              parts << "  end"
+              parts << ""
+            end
             parts << "  def install"
             parts << "    bin.install \"hach\""
             parts << "    prefix.install \"LICENSE\""
