@@ -61,7 +61,10 @@ jobs:
           set -euo pipefail
           raw_tag="${{ github.ref_name }}"
           version="${raw_tag#v}"
-          bin_path="$(cabal list-bin exe:hach)"
+          bin_path="$(cabal list-bin exe:hach --enable-optimization=2 2>/dev/null || true)"
+          if [[ -z "$bin_path" || ! -f "$bin_path" ]]; then
+            bin_path="$(find dist-newstyle -type f -name hach | grep -v '\.o$' | head -n 1)"
+          fi
 
           mkdir -p staging
           cp "$bin_path" staging/hach
