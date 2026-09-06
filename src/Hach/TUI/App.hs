@@ -122,6 +122,29 @@ runTui ioEnv initialPrompt mMaxTurns = do
   mWorker <- atomically $ readTVar workerVar
   mapM_ cancel mWorker
 
+-- | Collapse a run of same-role text items with one intercalate so the
+-- copy is linear in the total text rather than quadratic in the run length.
+collapseAdjacent
+  :: (a -> Maybe Text)
+  -> (Text -> a)
+  -> [a]
+  -> [a]
+collapseAdjacent view wrap = go
+  where
+    go [] = []
+    go (x : xs) = case view x of
+      Just t ->
+        let (more, rest) = spanView xs
+        in wrap (T.intercalate "\n\n" (t : more)) : go rest
+      Nothing ->
+        x : go xs
+
+    spanView (y : ys)
+      | Just t <- view y =
+          let (ts, rest) = spanView ys
+          in (t : ts, rest)
+    spanView ys = ([], ys)
+
 -- | Convert dialogue history into LLM messages for multi-turn context.
 -- Uses the expanded prompt for the latest turn so that skill instructions
 -- reach the model while preserving clean display history in the UI.
@@ -129,22 +152,11 @@ dialogueToMessages :: Text -> Text -> [DialogueItem] -> [Message]
 dialogueToMessages sysPrompt currentPrompt items =
   let priorItems = dropLastUser items
       priorMsgs  = transcriptItemsToMessages priorItems
-  in collapseAdjacentUserMsgs (SystemMsg sysPrompt : priorMsgs ++ [UserMsg currentPrompt])
+      -- A prior user turn with no assistant reply plus the new prompt would
+      -- otherwise emit two adjoining UserMsg values, which OpenRouter rejects.
+      msgs = SystemMsg sysPrompt : priorMsgs ++ [UserMsg currentPrompt]
+  in collapseAdjacent (\case UserMsg t -> Just t; _ -> Nothing) UserMsg msgs
   where
-    -- A prior user turn with no assistant reply plus the new prompt would
-    -- otherwise emit two adjoining UserMsg values, which OpenRouter rejects.
-    -- Collect a whole run and intercalate once so the copy is linear in
-    -- the total text rather than quadratic in the run length.
-    collapseAdjacentUserMsgs [] = []
-    collapseAdjacentUserMsgs (UserMsg a : rest) =
-      let (more, remaining) = spanUser rest
-      in UserMsg (T.intercalate "\n\n" (a : more)) : collapseAdjacentUserMsgs remaining
-    collapseAdjacentUserMsgs (x : xs) =
-      x : collapseAdjacentUserMsgs xs
-
-    spanUser (UserMsg u : xs) = let (us, rest) = spanUser xs in (u : us, rest)
-    spanUser xs               = ([], xs)
-
     dropLastUser [] = []
     dropLastUser xs =
       let rev = reverse xs
@@ -171,22 +183,9 @@ transcriptItemsToMessages = go . collapseAdjacentTextItems . filter (not . isNot
     isNotice (TiNotice _) = True
     isNotice _            = False
 
-    -- Collect a whole run and intercalate once (linear in total text).
-    collapseAdjacentTextItems [] = []
-    collapseAdjacentTextItems (TiAssistant a : rest) =
-      let (more, remaining) = spanAssist rest
-      in TiAssistant (T.intercalate "\n\n" (a : more)) : collapseAdjacentTextItems remaining
-    collapseAdjacentTextItems (TiUser u : rest) =
-      let (more, remaining) = spanUserItems rest
-      in TiUser (T.intercalate "\n\n" (u : more)) : collapseAdjacentTextItems remaining
-    collapseAdjacentTextItems (x : xs) =
-      x : collapseAdjacentTextItems xs
-
-    spanAssist (TiAssistant a : xs) = let (as, rest) = spanAssist xs in (a : as, rest)
-    spanAssist xs                   = ([], xs)
-
-    spanUserItems (TiUser u : xs) = let (us, rest) = spanUserItems xs in (u : us, rest)
-    spanUserItems xs              = ([], xs)
+    collapseAdjacentTextItems =
+      collapseAdjacent (\case TiAssistant t -> Just t; _ -> Nothing) TiAssistant
+      . collapseAdjacent (\case TiUser t -> Just t; _ -> Nothing) TiUser
 
     extractCards (TiToolCard c : rest) =
       let (cs, remItems) = extractCards rest

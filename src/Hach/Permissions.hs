@@ -14,8 +14,8 @@ module Hach.Permissions
 import Hach.Types
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KM
-import Data.List (foldl')
-import qualified Data.Map.Strict as Map
+import Data.List (tails)
+import qualified Data.Map.Lazy as Map
 import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -71,72 +71,74 @@ tokenizeGlob (c:xs)           = Lit c : tokenizeGlob xs
 -- @**@ matches any characters, including @'/'@.
 -- @*@ matches any characters within a directory segment (does not cross @'/'@).
 --
--- Implemented as a bottom-up DP table over (target offset, token index) so
+-- Implemented as a lazy DP over 'tails' of the token and path lists so
 -- the work is O(|pattern| · |path|) instead of exponential backtracking.
 matchGlob :: Text -> FilePath -> Bool
 matchGlob pat fp = matchToks (tokenizeGlob (T.unpack pat)) fp
 
+-- | Lazy DP over remaining-token / remaining-path suffixes.
+-- Cells are addressed by the 'tails' offset, never by partial '!!'.
 matchToks :: [GlobTok] -> String -> Bool
-matchToks toks target =
-  let n = length toks
-      m = length target
-      -- Cells with greater j (more of the target consumed) or greater i
-      -- (more of the pattern consumed) are inserted first, so each
-      -- lookup reads an already-computed dependency.
-      keys = [ (j, i) | j <- [m, m-1 .. 0], i <- [n, n-1 .. 0] ]
-      table = foldl' insertCell Map.empty keys
-      insertCell acc (j, i) = Map.insert (j, i) (eval acc j i) acc
-      eval acc j i
-        | i == n = j == m
-        | otherwise = case toks !! i of
-            Lit c ->
-              j < m && (target !! j) == c
-                && Map.findWithDefault False (j + 1, i + 1) acc
-            Star ->
-              Map.findWithDefault False (j, i + 1) acc
-                || (j < m && (target !! j) /= '/'
-                      && Map.findWithDefault False (j + 1, i) acc)
-            DStar ->
-              Map.findWithDefault False (j, i + 1) acc
-                || (j < m && Map.findWithDefault False (j + 1, i) acc)
-            DStarSlash ->
-              Map.findWithDefault False (j, i + 1) acc
-                || case nextSlash j of
-                     Just k  -> Map.findWithDefault False (k + 1, i) acc
-                     Nothing -> False
-      nextSlash j
-        | j >= m = Nothing
-        | target !! j == '/' = Just j
-        | otherwise = nextSlash (j + 1)
-  in Map.findWithDefault False (0, 0) table
+matchToks toks target = cell 0 0
+  where
+    tokSufs = tails toks
+    tgtSufs = tails target
+
+    table :: Map.Map (Int, Int) Bool
+    table = Map.fromList
+      [ ((i, j), eval i j ts tgt)
+      | (i, ts)  <- zip [0..] tokSufs
+      , (j, tgt) <- zip [0..] tgtSufs
+      ]
+
+    cell i j = Map.findWithDefault False (i, j) table
+
+    eval i j ts tgt = case ts of
+      [] ->
+        null tgt
+      Lit c : _ ->
+        case tgt of
+          t : _ | t == c -> cell (i + 1) (j + 1)
+          _              -> False
+      Star : _ ->
+        cell (i + 1) j
+          || case tgt of
+               (c : _) | c /= '/' -> cell i (j + 1)
+               _                  -> False
+      DStar : _ ->
+        cell (i + 1) j
+          || case tgt of
+               (_ : _) -> cell i (j + 1)
+               []      -> False
+      DStarSlash : _ ->
+        cell (i + 1) j
+          || case break (== '/') tgt of
+               (pre, '/' : _) -> cell i (j + length pre + 1)
+               _              -> False
 
 -- | '*' matches any sequence of characters (including '/').
 --
 -- Linear in the combined length of pattern and string: only the most
 -- recent '*' is remembered, which is sufficient when a star may consume
--- any character.
+-- any character.  The resume point is a 'Maybe' of remaining texts,
+-- not a sentinel index.
 matchStarGlob :: Text -> Text -> Bool
-matchStarGlob pat str = go 0 0 (-1) 0
+matchStarGlob pat str = go pat str Nothing
   where
-    plen = T.length pat
-    slen = T.length str
-    pAt i = T.index pat i
-    sAt j = T.index str j
-
-    go i j star match
-      | j < slen && i < plen && pAt i == '*' =
-          go (i + 1) j i j
-      | j < slen && i < plen && pAt i == sAt j =
-          go (i + 1) (j + 1) star match
-      | j < slen && star >= 0 =
-          go (star + 1) (match + 1) star (match + 1)
-      | j == slen =
-          eatStars i == plen
-      | otherwise = False
-
-    eatStars i
-      | i < plen && pAt i == '*' = eatStars (i + 1)
-      | otherwise = i
+    go p s star
+      | Just p' <- T.stripPrefix "*" p =
+          go p' s (Just (p', s))
+      | Just (pc, p') <- T.uncons p
+      , Just (sc, s') <- T.uncons s
+      , pc == sc =
+          go p' s' star
+      | Just (p', s0) <- star
+      , Just (_, s') <- T.uncons s0 =
+          go p' s' (Just (p', s'))
+      | T.null s =
+          T.all (== '*') p
+      | otherwise =
+          False
 
 -- | Check if a single rule matches the given tool and path.
 matchRule :: PermissionRule -> Text -> Maybe FilePath -> Maybe PermissionDecision
