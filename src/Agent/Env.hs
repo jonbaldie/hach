@@ -55,7 +55,9 @@ parseCliArgs args = go args Nothing False []
     go [] mModel noTui promptWords =
       let mPrompt = case promptWords of
             [] -> Nothing
-            ws -> Just (T.pack (unwords ws))
+            ws ->
+              let raw = T.strip (T.pack (unwords ws))
+              in if T.null raw then Nothing else Just raw
       in Right CliOptions { optModel = mModel, optPrompt = mPrompt, optNoTui = noTui }
 
     go ("--no-tui" : rest) mModel _ promptWords =

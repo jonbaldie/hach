@@ -110,6 +110,13 @@ spec = do
         , optNoTui = False
         }
 
+    it "treats whitespace-only arguments as Nothing for optPrompt" $ do
+      parseCliArgs ["", "   "] `shouldBe` Right CliOptions
+        { optModel = Nothing
+        , optPrompt = Nothing
+        , optNoTui = False
+        }
+
     it "fails when --model has no argument" $ do
       case parseCliArgs ["--model"] of
         Left _ -> pure ()

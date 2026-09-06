@@ -23,6 +23,7 @@ module Agent.Core
 import Agent.Types
 import Control.Monad (forM)
 import Data.Maybe (fromMaybe)
+import Data.Text (Text)
 
 -- | The core signature of interaction steps for an autonomous agent.
 --
@@ -31,7 +32,7 @@ import Data.Maybe (fromMaybe)
 -- are modeled as a signature functor, separating the pure orchestration
 -- strategy from operational interpreters.
 data AgentF next
-  = PromptLLM ![Message] ![ToolDef] (AssistantResponse -> next)
+  = PromptLLM ![Message] ![ToolDef] (Either Text AssistantResponse -> next)
   | ExecuteTool !ToolCall (ToolResult -> next)
   | LogEvent !AgentEvent next
   deriving Functor
@@ -53,7 +54,7 @@ instance Monad AgentProgram where
   Free m >>= f = Free (fmap (>>= f) m)
 
 -- | Request an inference turn from the model given the dialogue context.
-promptLLM :: [Message] -> [ToolDef] -> AgentProgram AssistantResponse
+promptLLM :: [Message] -> [ToolDef] -> AgentProgram (Either Text AssistantResponse)
 promptLLM msgs tools = Free (PromptLLM msgs tools Pure)
 
 -- | Invoke a specific tool in the execution environment.
@@ -66,7 +67,7 @@ logEvent ev = Free (LogEvent ev (Pure ()))
 
 -- | An algebra for interpreting an 'AgentProgram' in a target monad @m@.
 data AgentAlgebra m = AgentAlgebra
-  { interpPrompt  :: [Message] -> [ToolDef] -> m AssistantResponse
+  { interpPrompt  :: [Message] -> [ToolDef] -> m (Either Text AssistantResponse)
   , interpTool    :: ToolCall -> m ToolResult
   , interpLog     :: AgentEvent -> m ()
   }
@@ -103,31 +104,35 @@ agentStep cfg tools turn currentHistory
   | otherwise = do
       logEvent (EvTurnStart turn)
       logEvent (EvPromptingLLM (length currentHistory))
-      resp <- promptLLM currentHistory tools
-      logEvent (EvLLMResponse (respContent resp) (respToolCalls resp) (respUsage resp))
+      promptLLM currentHistory tools >>= \case
+        Left err -> do
+          logEvent (EvError err)
+          pure $ Left (AgentFailed err, currentHistory)
+        Right resp -> do
+          logEvent (EvLLMResponse (respContent resp) (respToolCalls resp) (respUsage resp))
 
-      case respToolCalls resp of
-        [] -> do
-          -- The assistant did not call any tools; return its final message.
-          let content = fromMaybe "" (respContent resp)
-              finalHistory = currentHistory ++ [AssistantMsg (respContent resp) []]
-          logEvent (EvDone content)
-          pure $ Left (AgentCompleted content, finalHistory)
+          case respToolCalls resp of
+            [] -> do
+              -- The assistant did not call any tools; return its final message.
+              let content = fromMaybe "" (respContent resp)
+                  finalHistory = currentHistory ++ [AssistantMsg (respContent resp) []]
+              logEvent (EvDone content)
+              pure $ Left (AgentCompleted content, finalHistory)
 
-        calls -> do
-          -- The assistant invoked one or more tools.
-          -- Record the assistant's intention in history first.
-          let asstMsg = AssistantMsg (respContent resp) calls
-          -- Execute each tool call in sequence, collecting results.
-          toolMsgs <- forM calls $ \call -> do
-            logEvent (EvToolCall (functionName call) (callArgsRaw call))
-            res <- executeTool call
-            logEvent (EvToolResult (functionName call) res)
-            pure $ ToolMsg (callId call) (functionName call) (toolResultToText res)
+            calls -> do
+              -- The assistant invoked one or more tools.
+              -- Record the assistant's intention in history first.
+              let asstMsg = AssistantMsg (respContent resp) calls
+              -- Execute each tool call in sequence, collecting results.
+              toolMsgs <- forM calls $ \call -> do
+                logEvent (EvToolCall (functionName call) (callArgsRaw call))
+                res <- executeTool call
+                logEvent (EvToolResult (functionName call) res)
+                pure $ ToolMsg (callId call) (functionName call) (toolResultToText res)
 
-          let updatedHistory = currentHistory ++ [asstMsg] ++ toolMsgs
-          logEvent (EvTurnComplete turn)
-          pure $ Right updatedHistory
+              let updatedHistory = currentHistory ++ [asstMsg] ++ toolMsgs
+              logEvent (EvTurnComplete turn)
+              pure $ Right updatedHistory
 
 -- | The pure, recursive agent harness loop.
 -- Unfolds turns until completion or the maximum turn limit is reached.

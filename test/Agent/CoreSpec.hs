@@ -19,7 +19,7 @@ spec = do
 
   describe "agentLoop with Pure Interpreter" $ do
     it "completes immediately when model returns direct answer" $ do
-      let step1 _ _ = AssistantResponse (Just "Hello world!") [] Nothing
+      let step1 _ _ = Right $ AssistantResponse (Just "Hello world!") [] Nothing
           env = emptyMockEnv { mockLLMSteps = [step1] }
           initHist = [UserMsg "Hi"]
           ((result, finalHist), endEnv) = runPure env (agentLoop baseConfig [] initHist)
@@ -37,14 +37,14 @@ spec = do
             , callArgsRaw = "{\"path\":\"hello.txt\"}"
             }
           -- Turn 1: model calls read_file
-          step1 _ _ = AssistantResponse Nothing [toolCall1] Nothing
+          step1 _ _ = Right $ AssistantResponse Nothing [toolCall1] Nothing
           -- Turn 2: model sees file content and completes
           step2 hist _ =
             case last hist of
               ToolMsg "call_1" "read_file" content ->
-                AssistantResponse (Just ("The file says: " <> content)) [] Nothing
+                Right $ AssistantResponse (Just ("The file says: " <> content)) [] Nothing
               _ ->
-                AssistantResponse (Just "Failed to get tool output") [] Nothing
+                Right $ AssistantResponse (Just "Failed to get tool output") [] Nothing
 
           env = emptyMockEnv
             { mockLLMSteps = [step1, step2]
@@ -75,8 +75,8 @@ spec = do
             , functionName = "write_file"
             , callArgsRaw = "{\"path\":\"out.txt\",\"content\":\"Pearls in Haskell\"}"
             }
-          step1 _ _ = AssistantResponse Nothing [writeCall] Nothing
-          step2 _ _ = AssistantResponse (Just "Wrote successfully!") [] Nothing
+          step1 _ _ = Right $ AssistantResponse Nothing [writeCall] Nothing
+          step2 _ _ = Right $ AssistantResponse (Just "Wrote successfully!") [] Nothing
           env = emptyMockEnv { mockLLMSteps = [step1, step2] }
           initHist = [UserMsg "Write out.txt"]
           ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
@@ -86,7 +86,7 @@ spec = do
 
     it "propagates token usage metadata in EvLLMResponse" $ do
       let usage = TokenUsage 150 40 190
-          step1 _ _ = AssistantResponse (Just "Tokens measured") [] (Just usage)
+          step1 _ _ = Right $ AssistantResponse (Just "Tokens measured") [] (Just usage)
           env = emptyMockEnv { mockLLMSteps = [step1] }
           initHist = [UserMsg "Check tokens"]
           (_, endEnv) = runPure env (agentLoop baseConfig [] initHist)
@@ -95,12 +95,12 @@ spec = do
 
     it "terminates when maximum turns are reached" $ do
       let loopConfig = baseConfig { cfgMaxTurns = 2 }
-          infiniteToolCall = ToolCall
+      let infiniteToolCall = ToolCall
             { callId = "loop_call"
             , functionName = "read_file"
             , callArgsRaw = "{\"path\":\"hello.txt\"}"
             }
-          stepLoop _ _ = AssistantResponse Nothing [infiniteToolCall] Nothing
+          stepLoop _ _ = Right $ AssistantResponse Nothing [infiniteToolCall] Nothing
           -- Model keeps calling the tool infinitely
           env = emptyMockEnv
             { mockLLMSteps = repeat stepLoop
@@ -109,3 +109,13 @@ spec = do
           ((result, _), _) = runPure env (agentLoop loopConfig allToolDefs [UserMsg "Run forever"])
 
       result `shouldBe` AgentMaxTurnsReached 2
+
+    it "terminates with AgentFailed when model returns an error" $ do
+      let stepError _ _ = Left "401 Unauthorized"
+          env = emptyMockEnv { mockLLMSteps = [stepError] }
+          initHist = [UserMsg "Fail please"]
+          ((result, finalHist), endEnv) = runPure env (agentLoop baseConfig [] initHist)
+
+      result `shouldBe` AgentFailed "401 Unauthorized"
+      finalHist `shouldBe` initHist
+      mockEvents endEnv `shouldContain` [EvError "401 Unauthorized"]

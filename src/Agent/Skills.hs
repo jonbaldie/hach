@@ -17,6 +17,7 @@ import Control.Applicative ((<|>))
 import Control.Exception (try, SomeException)
 import qualified Data.ByteString as BS
 import Data.Char (isSpace)
+import Data.List (nubBy)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe)
@@ -139,7 +140,7 @@ parseSkillInvocations catalog rawInput =
   in case potentialCmds of
        [] -> (rawInput, [])
        cmds ->
-         let matchedSkills = map snd cmds
+         let uniqueSkills = nubBy (\s1 s2 -> skillName s1 == skillName s2) (map snd cmds)
              cleanOne acc (cmdTok, _) =
                let withTrailingSpace = cmdTok <> " "
                    withLeadingSpace  = " " <> cmdTok
@@ -149,7 +150,7 @@ parseSkillInvocations catalog rawInput =
                       then T.replace withLeadingSpace "" acc
                       else T.replace cmdTok "" acc
              cleaned = T.strip (foldl cleanOne rawInput cmds)
-         in (cleaned, matchedSkills)
+         in (cleaned, uniqueSkills)
 
 -- | Inject skill instructions into the user prompt.
 injectSkillsIntoPrompt :: [Skill] -> Text -> Text

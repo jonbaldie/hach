@@ -138,6 +138,12 @@ spec = do
         skills `shouldBe` [skillA]
         cleaned `shouldBe` "Please use to build this feature"
 
+      it "deduplicates skill invocations when the same skill is mentioned multiple times" $ do
+        let input = "Please run /to-spec and also /to-spec"
+            (cleaned, skills) = parseSkillInvocations catalog input
+        skills `shouldBe` [skillA]
+        cleaned `shouldBe` "Please run and also"
+
       it "leaves input untouched if slash token is not in catalog" $ do
         let input = "/unknown do something"
             (cleaned, skills) = parseSkillInvocations catalog input

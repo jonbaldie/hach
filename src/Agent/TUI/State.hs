@@ -28,20 +28,32 @@ updateTui event state = case event of
   EvHarness agentEv ->
     (handleAgentEvent agentEv state, [])
 
+-- | Whether the agent harness is currently busy running an inference turn or tool.
+isBusy :: TuiStatus -> Bool
+isBusy = \case
+  StatusThinking      -> True
+  StatusRunningTool _ -> True
+  _                   -> False
+
 -- | Handle submitting a user task prompt.
 handleSubmitPrompt :: T.Text -> TuiState -> (TuiState, [TuiAction])
 handleSubmitPrompt rawPrompt state
   | T.null trimmed = (state, [])
   | trimmed == "/clear" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          busy = isBusy (tsStatus state)
+          actions = if busy then [ActionCancelAgent] else []
+          newStatus = if busy then StatusIdle else tsStatus state
       in ( state { tsHistory            = []
                  , tsHistoryScroll      = 0
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
+                 , tsStatus             = newStatus
+                 , tsCancelRequested    = if busy then True else tsCancelRequested state
                  }
-         , []
+         , actions
          )
   | trimmed == "/help" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
@@ -175,11 +187,6 @@ handleUserKey key state@TuiState{..} =
 
       FocusTools ->
         handleToolsKey key state
-  where
-    isBusy = \case
-      StatusThinking      -> True
-      StatusRunningTool _ -> True
-      _                   -> False
 
 -- | Key handling inside the input text area.
 handleInputKey :: UserKey -> TuiState -> (TuiState, [TuiAction])
@@ -226,6 +233,9 @@ handleInputKey key state@TuiState{..} = case key of
     (state { tsInputBuffer = tsInputBuffer `T.snoc` c }, [])
 
   KeyBackspace ->
+    (state { tsInputBuffer = if T.null tsInputBuffer then "" else T.init tsInputBuffer }, [])
+
+  KeyDelete ->
     (state { tsInputBuffer = if T.null tsInputBuffer then "" else T.init tsInputBuffer }, [])
 
   KeyCtrl 'u' ->
