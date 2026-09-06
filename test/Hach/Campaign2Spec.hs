@@ -89,12 +89,15 @@ genTranscriptItem = frequency
 genTranscript :: Gen [TranscriptItem]
 genTranscript = listOf genTranscriptItem
 
--- MCP name parts must be non-empty and must not contain the '__' delimiter.
+-- MCP name parts must be non-empty, must not contain the '__' delimiter,
+-- and must not start or end with '_' (either edge fuses with '__' into '___').
 genMcpPart :: Gen Text
 genMcpPart =
   (T.pack <$> listOf1 (elements (['a'..'z'] ++ ['0'..'9'] ++ "-_")))
     `suchThat` (not . T.null)
     `suchThat` (not . T.isInfixOf "__")
+    `suchThat` (not . T.isPrefixOf "_")
+    `suchThat` (not . T.isSuffixOf "_")
 
 genCustomTaskId :: Gen Text
 genCustomTaskId = oneof
@@ -143,6 +146,10 @@ spec = do
     it "reproducer: mcp__sqlite__query still round-trips" $
       parseMcpToolName (formatMcpToolName "sqlite" "query")
         `shouldBe` Just ("sqlite", "query")
+
+    it "a server name ending in _ or a tool name starting with _ fuses the delimiter and is rejected" $ do
+      parseMcpToolName (formatMcpToolName "srv_" "tool") `shouldBe` Nothing
+      parseMcpToolName (formatMcpToolName "srv" "_tool") `shouldBe` Nothing
 
   describe "CGPT wave-2: task-id uniqueness" $ do
     it "createTask never overwrites an existing custom id" $ vigorous $

@@ -424,12 +424,16 @@ spec = do
         in collect (length [() | AssistantMsg{} <- msgs]) $
              null bad
 
-    it "always starts with SystemMsg and ends with the current UserMsg" $ vigorous $
+    it "always starts with SystemMsg and ends with a UserMsg carrying the current prompt" $ vigorous $
       forAll arbitrary $ \(items :: [TranscriptItem]) ->
         let msgs = dialogueToMessages "sys" "follow-up" items
         in case msgs of
-             (SystemMsg "sys" : rest) ->
-               not (null rest) && last rest == UserMsg "follow-up"
+             (SystemMsg "sys" : rest@(_:_)) ->
+               case last rest of
+                 -- A leftover prior user turn is merged into the new prompt
+                 -- so the suffix is always the current prompt text.
+                 UserMsg u -> "follow-up" `T.isSuffixOf` u
+                 _         -> False
              _ -> False
 
     it "reproducer: consecutive DiAssistant items collapse instead of adjoining" $ do

@@ -94,17 +94,35 @@ formatMcpToolName :: Text -> Text -> Text
 formatMcpToolName server tool = "mcp__" <> server <> "__" <> tool
 
 -- | Parse a qualified MCP tool name back into server name and tool name.
--- Requires exactly two segments after the @mcp__@ prefix, so a server
--- name containing @__@ cannot be confused with a tool name.
+--
+-- Splits on the first @__@ delimiter that is not fused into a longer
+-- underscore run.  @mcp__srv___tool@ (server name ending in @_@) is
+-- therefore rejected rather than silently reparsed as @("srv", "_tool")@.
+-- Extra @__@ segments in the tool name are also rejected.
 parseMcpToolName :: Text -> Maybe (Text, Text)
 parseMcpToolName t =
   case T.stripPrefix "mcp__" t of
     Nothing   -> Nothing
     Just rest ->
-      case T.splitOn "__" rest of
-        [srv, tool]
-          | not (T.null srv) && not (T.null tool) -> Just (srv, tool)
+      case unfusedSplit rest of
+        Just (srv, tool)
+          | not (T.null srv)
+          , not (T.null tool)
+          , not ("__" `T.isInfixOf` srv)
+          , not ("__" `T.isInfixOf` tool) -> Just (srv, tool)
         _ -> Nothing
+  where
+    unfusedSplit rest =
+      let n = T.length rest
+          go i
+            | i + 1 >= n = Nothing
+            | T.index rest i == '_'
+              && T.index rest (i + 1) == '_'
+              && (i == 0 || T.index rest (i - 1) /= '_')
+              && (i + 2 >= n || T.index rest (i + 2) /= '_') =
+                Just (T.take i rest, T.drop (i + 2) rest)
+            | otherwise = go (i + 1)
+      in go 0
 
 -- | Search tool definitions by substring matching.
 searchMcpTools :: Text -> [ToolDef] -> [ToolDef]

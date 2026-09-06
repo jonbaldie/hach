@@ -129,8 +129,16 @@ dialogueToMessages :: Text -> Text -> [DialogueItem] -> [Message]
 dialogueToMessages sysPrompt currentPrompt items =
   let priorItems = dropLastUser items
       priorMsgs  = transcriptItemsToMessages priorItems
-  in SystemMsg sysPrompt : priorMsgs ++ [UserMsg currentPrompt]
+  in collapseAdjacentUserMsgs (SystemMsg sysPrompt : priorMsgs ++ [UserMsg currentPrompt])
   where
+    -- A prior user turn with no assistant reply plus the new prompt would
+    -- otherwise emit two adjoining UserMsg values, which OpenRouter rejects.
+    collapseAdjacentUserMsgs [] = []
+    collapseAdjacentUserMsgs (UserMsg a : UserMsg b : rest) =
+      collapseAdjacentUserMsgs (UserMsg (a <> "\n\n" <> b) : rest)
+    collapseAdjacentUserMsgs (x : xs) =
+      x : collapseAdjacentUserMsgs xs
+
     dropLastUser [] = []
     dropLastUser xs =
       let rev = reverse xs
