@@ -7,6 +7,7 @@ import Hach.Types
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Text as T
 import Test.Hspec
 
 spec :: Spec
@@ -42,6 +43,18 @@ spec = do
       case parseChatResponse rawJson of
         Left err -> err `shouldBe` "OpenRouter API error: Invalid API key provided"
         Right _  -> expectationFailure "Expected parseChatResponse to fail on API error"
+
+    it "extracts error details when error envelope lacks message field" $ do
+      let rawJson1 = "{\"error\":{\"code\":429,\"metadata\":{\"raw\":\"Rate limit exceeded\"}}}"
+      case parseChatResponse rawJson1 of
+        Left err -> ("OpenRouter API error:" `T.isPrefixOf` err) `shouldBe` True
+        Right _  -> expectationFailure "Expected parseChatResponse to fail on API error"
+
+      let rawJson2 = "{\"error\":{\"code\":503,\"detail\":\"Service unavailable\"}}"
+      case parseChatResponse rawJson2 of
+        Left err -> err `shouldBe` "OpenRouter API error: Service unavailable"
+        Right _  -> expectationFailure "Expected parseChatResponse to fail on API error"
+
 
     it "parses token usage metadata from response envelope" $ do
       let rawJson = LBS.concat

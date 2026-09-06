@@ -9,12 +9,13 @@ module Hach.Git
   , getGitDiff
   , createWorktree
   , removeWorktree
+  , isValidWorktreeName
   , createPullRequest
   ) where
 
 import Hach.Types
 import Control.Exception (SomeException, try)
-import Data.Char (isSpace)
+import Data.Char (isAlphaNum, isSpace)
 import Data.Text (Text)
 import qualified Data.Text as T
 import System.Exit (ExitCode(..))
@@ -97,25 +98,44 @@ getGitDiff root = do
     then pure (T.pack out)
     else pure ("Git diff error: " <> T.pack err)
 
+-- | Validate that a worktree name is safe (alphanumeric, no traversal, no leading dashes, no path separators).
+isValidWorktreeName :: Text -> Bool
+isValidWorktreeName name =
+  let s = T.unpack (T.strip name)
+  in not (null s)
+     && not ("-" `isPrefixOfText` name)
+     && not (".." `isSubstringOfText` name)
+     && not (any (\c -> c == '/' || c == '\\' || c == ':') s)
+     && all (\c -> isAlphaNum c || c `elem` ['-', '_', '.']) s
+  where
+    isPrefixOfText p t = p `T.isPrefixOf` t
+    isSubstringOfText sub t = sub `T.isInfixOf` t
+
 -- | Create a git worktree for a branch or feature name.
 createWorktree :: FilePath -> Text -> IO (Either Text FilePath)
-createWorktree root name = do
-  let targetPath = worktreePath root name
-      args = ["worktree", "add", "-B", T.unpack name, targetPath]
-  (code, out, err) <- runGit root args
-  if code == ExitSuccess
-    then pure (Right targetPath)
-    else pure (Left ("Failed to create worktree: " <> T.pack (if null err then out else err)))
+createWorktree root name
+  | not (isValidWorktreeName name) =
+      pure (Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes.")
+  | otherwise = do
+      let targetPath = worktreePath root name
+          args = ["worktree", "add", "-B", T.unpack name, targetPath]
+      (code, out, err) <- runGit root args
+      if code == ExitSuccess
+        then pure (Right targetPath)
+        else pure (Left ("Failed to create worktree: " <> T.pack (if null err then out else err)))
 
 -- | Remove an active git worktree.
 removeWorktree :: FilePath -> Text -> IO (Either Text ())
-removeWorktree root name = do
-  let targetPath = worktreePath root name
-      args = ["worktree", "remove", "--force", targetPath]
-  (code, out, err) <- runGit root args
-  if code == ExitSuccess
-    then pure (Right ())
-    else pure (Left ("Failed to remove worktree: " <> T.pack (if null err then out else err)))
+removeWorktree root name
+  | not (isValidWorktreeName name) =
+      pure (Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes.")
+  | otherwise = do
+      let targetPath = worktreePath root name
+          args = ["worktree", "remove", "--force", targetPath]
+      (code, out, err) <- runGit root args
+      if code == ExitSuccess
+        then pure (Right ())
+        else pure (Left ("Failed to remove worktree: " <> T.pack (if null err then out else err)))
 
 -- | Create a PR via gh CLI using direct argument vector.
 createPullRequest :: FilePath -> Text -> Text -> IO (Either Text Text)

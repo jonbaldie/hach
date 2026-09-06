@@ -8,6 +8,7 @@ module Hach.OpenRouter
   ) where
 
 import Hach.Types
+import Control.Applicative ((<|>))
 import Control.Exception (SomeException, try)
 import Data.Aeson
   ( FromJSON(..), ToJSON(..), Value, object, withObject, (.:), (.:?), (.=)
@@ -99,6 +100,9 @@ parseChatResponse body =
         Just (Aeson.String msg) -> Just msg
         Just (Aeson.Object errObj) ->
           AesonTypes.parseMaybe (\obj -> obj .: "message") errObj
+            <|> AesonTypes.parseMaybe (\obj -> obj .: "detail") errObj
+            <|> (fmap (\c -> "Error code " <> T.pack (show (c :: Int))) (AesonTypes.parseMaybe (\obj -> obj .: "code") errObj))
+            <|> Just (TE.decodeUtf8 (LBS.toStrict (Aeson.encode errObj)))
         _ ->
           AesonTypes.parseMaybe (\obj -> obj .: "message") o
 

@@ -24,3 +24,11 @@ spec = describe "Hach.Notifications" $ do
       injected <- doesFileExist marker
       if injected then removeFile marker else pure ()
       injected `shouldBe` False
+
+    it "correctly escapes double quotes without doubling backslashes in AppleScript" $ do
+      let procSpec = notificationCreateProcess "Hach" "He said \"hello\""
+      case cmdspec procSpec of
+        RawCommand _ args -> do
+          args `shouldContain` ["display notification \"He said \\\"hello\\\"\" with title \"Hach\""]
+        ShellCommand _ -> expectationFailure "Expected RawCommand (proc) but got ShellCommand"
+

@@ -58,8 +58,9 @@ runHookHandler root payload HookHandler{..} = case hhType of
       Right (ExitFailure 2, out, err) ->
         let combined = if null out then err else out
         in pure (parseHookOutput 2 (T.pack combined))
-      Right (ExitFailure code, _, err) ->
-        pure (parseHookOutput code (T.pack err))
+      Right (ExitFailure code, out, err) ->
+        let errMsg = if T.null (T.strip (T.pack err)) then out else err
+        in pure (parseHookOutput code (T.pack errMsg))
 
   HookHttp _url -> do
     -- HTTP hooks can be dispatched over HTTP client

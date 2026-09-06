@@ -108,7 +108,7 @@ pureAlgebra = AgentAlgebra
 
   , interpTool = \call -> do
       case functionName call of
-        "read_file" ->
+        name | name `elem` ["read_file", "ReadFile"] ->
           case parseReadFileArgs call of
             Left err -> pure $ ToolError ("Parse error: " <> T.pack err)
             Right (ReadFileArgs path) -> do
@@ -117,7 +117,7 @@ pureAlgebra = AgentAlgebra
                 Just content -> pure $ ToolSuccess content
                 Nothing      -> pure $ ToolError ("File not found: " <> T.pack path)
 
-        "write_file" ->
+        name | name `elem` ["write_file", "WriteFile"] ->
           case parseWriteFileArgs call of
             Left err -> pure $ ToolError ("Parse error: " <> T.pack err)
             Right (WriteFileArgs path content) -> do
@@ -125,10 +125,10 @@ pureAlgebra = AgentAlgebra
                 env { mockFiles = Map.insert path content (mockFiles env) }
               pure $ ToolSuccess ("Wrote " <> T.pack (show (T.length content)) <> " characters to " <> T.pack path)
 
-        "run_command" ->
-          case parseRunCommandArgs call of
+        name | name `elem` ["run_command", "Bash", "bash"] ->
+          case parseBashArgs call of
             Left err -> pure $ ToolError ("Parse error: " <> T.pack err)
-            Right (RunCommandArgs cmd) -> do
+            Right (BashArgs cmd _) -> do
               env <- getEnv
               let (code, out, errOut) = fromMaybe (0, "", "") (Map.lookup cmd (mockCommandOutputs env))
                   summary = T.unlines
@@ -138,7 +138,7 @@ pureAlgebra = AgentAlgebra
                     ]
               pure $ ToolSuccess summary
 
-        "list_dir" ->
+        name | name `elem` ["list_dir", "ListDir"] ->
           case parseListDirArgs call of
             Left err -> pure $ ToolError ("Parse error: " <> T.pack err)
             Right (ListDirArgs path) -> do
@@ -148,10 +148,10 @@ pureAlgebra = AgentAlgebra
                   matching = filter (\k -> if null prefix then True else takeDirectory k == prefix) keys
               pure $ ToolSuccess (T.unlines (map T.pack matching))
 
-        "replace_file_content" ->
-          case parseReplaceFileContentArgs call of
+        name | name `elem` ["replace_file_content", "Edit", "edit"] ->
+          case parseEditArgs call of
             Left err -> pure $ ToolError ("Parse error: " <> T.pack err)
-            Right (ReplaceFileContentArgs path oldContent newContent) -> do
+            Right (EditArgs path oldContent newContent) -> do
               env <- getEnv
               case Map.lookup path (mockFiles env) of
                 Nothing -> pure $ ToolError ("File not found: " <> T.pack path)
@@ -166,19 +166,19 @@ pureAlgebra = AgentAlgebra
                         modifyEnv $ \e -> e { mockFiles = Map.insert path updated (mockFiles e) }
                         pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
 
-        "find_files" ->
-          case parseFindFilesArgs call of
+        name | name `elem` ["find_files", "Glob", "glob"] ->
+          case parseGlobArgs call of
             Left err -> pure $ ToolError ("Parse error: " <> T.pack err)
-            Right (FindFilesArgs pat _) -> do
+            Right (GlobArgs pat _) -> do
               env <- getEnv
               let keys = Map.keys (mockFiles env)
                   matching = filter (\k -> pat `T.isInfixOf` T.pack k || ("*" `T.isInfixOf` pat && not (null keys))) keys
               pure $ ToolSuccess (T.unlines (map T.pack matching))
 
-        "grep_search" ->
-          case parseGrepSearchArgs call of
+        name | name `elem` ["grep_search", "Grep", "grep"] ->
+          case parseGrepArgs call of
             Left err -> pure $ ToolError ("Parse error: " <> T.pack err)
-            Right (GrepSearchArgs query _ caseSens) -> do
+            Right (GrepArgs query _ caseSens) -> do
               env <- getEnv
               let matches = concatMap (searchInFile query caseSens) (Map.toList (mockFiles env))
               pure $ ToolSuccess (T.unlines matches)

@@ -28,8 +28,10 @@ notificationCreateProcess title msg =
          proc "notify-send" [T.unpack (T.take 100 title), T.unpack (T.take 200 msg)]
   where
     -- In AppleScript string literals: backslash and double quotes are escaped with backslash.
+    -- Backslashes must be escaped before double quotes so that the escape backslashes
+    -- introduced for quotes are not doubled.
     escapeAppleScript t =
-      T.replace "\\" "\\\\" (T.replace "\"" "\\\"" t)
+      T.replace "\"" "\\\"" (T.replace "\\" "\\\\" t)
 
 -- | Dispatch an OS desktop notification.
 sendOsNotification :: Text -> IO ()

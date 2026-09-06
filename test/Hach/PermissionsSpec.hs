@@ -35,12 +35,33 @@ spec = describe "Hach.Permissions" $ do
           editArgs = object ["path" .= ("src/Hach.hs" :: String), "old_content" .= ("a" :: String), "new_content" .= ("b" :: String)]
       evalPermission ModeAcceptEdits [] "write_file" writeArgs `shouldBe` PermAllow
       evalPermission ModeAcceptEdits [] "replace_file_content" editArgs `shouldBe` PermAllow
+      evalPermission ModeAcceptEdits [] "Edit" editArgs `shouldBe` PermAllow
+      evalPermission ModeAcceptEdits [] "edit" editArgs `shouldBe` PermAllow
 
-    it "still asks for command execution" $ do
+    it "still asks for command execution including bash and Bash" $ do
       let args = object ["command" .= ("rm -rf /" :: String)]
       case evalPermission ModeAcceptEdits [] "run_command" args of
         PermAsk _ -> pure ()
-        other     -> expectationFailure ("Expected PermAsk, got " <> show other)
+        other     -> expectationFailure ("Expected PermAsk for run_command, got " <> show other)
+      case evalPermission ModeAcceptEdits [] "bash" args of
+        PermAsk _ -> pure ()
+        other     -> expectationFailure ("Expected PermAsk for bash, got " <> show other)
+      case evalPermission ModeAcceptEdits [] "Bash" args of
+        PermAsk _ -> pure ()
+        other     -> expectationFailure ("Expected PermAsk for Bash, got " <> show other)
+
+    it "denies protected path writes when called via edit tool alias" $ do
+      let editArgs = object ["path" .= (".git/config" :: String), "old_content" .= ("a" :: String), "new_content" .= ("b" :: String)]
+      case evalPermission ModeAcceptEdits [] "edit" editArgs of
+        PermDeny _ -> pure ()
+        other      -> expectationFailure ("Expected PermDeny for edit on .git, got " <> show other)
+
+    it "defaults to ask for unknown or unspecified tools in AcceptEdits mode" $ do
+      let args = object []
+      case evalPermission ModeAcceptEdits [] "unknown_tool" args of
+        PermAsk _ -> pure ()
+        other     -> expectationFailure ("Expected PermAsk for unknown tool in AcceptEdits, got " <> show other)
+
 
   describe "Plan mode" $ do
     it "allows read operations" $ do
