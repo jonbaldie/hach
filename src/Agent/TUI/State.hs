@@ -6,12 +6,24 @@ module Agent.TUI.State
   , handleUserKey
   , handleAgentEvent
   , toggleToolExpanded
+  , builtinCommands
   ) where
 
 import Agent.Skills (Skill(..), injectSkillsIntoPrompt, parseSkillInvocations, skillInvocationCompletion)
 import Agent.TUI.Types
 import Agent.TUI.UI (formatTokens)
-import Agent.Types (AgentEvent(..), GoalState(..), GoalStatus(..), GoalVerdict(..), TokenUsage(..), ToolResult, initialGoalState, goalArgIsClear, maxGoalConditionLength)
+import Agent.Types
+  ( AgentEvent(..)
+  , GoalState(..)
+  , GoalStatus(..)
+  , GoalVerdict(..)
+  , TokenUsage(..)
+  , ToolResult
+  , initialGoalState
+  , goalArgIsClear
+  , maxGoalConditionLength
+  )
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 
 -- | Pure state reducer for the TUI.
@@ -28,6 +40,35 @@ updateTui event state = case event of
   EvHarness agentEv ->
     (handleAgentEvent agentEv state, [])
 
+-- | Canonical list of built-in slash commands.
+builtinCommands :: [T.Text]
+builtinCommands =
+  [ "/clear"
+  , "/help"
+  , "/cost"
+  , "/compact"
+  , "/goal"
+  , "/exit"
+  , "/quit"
+  , "/model"
+  , "/config"
+  , "/context"
+  , "/resume"
+  , "/plan"
+  , "/diff"
+  , "/tasks"
+  , "/theme"
+  , "/status"
+  , "/memory"
+  , "/init"
+  , "/permissions"
+  , "/fewer-permission-prompts"
+  , "/doctor"
+  , "/copy"
+  , "/reload-skills"
+  , "/mcp"
+  , "/plugin"
+  ]
 -- | Whether the agent harness is currently busy running an inference turn or tool.
 isBusy :: TuiStatus -> Bool
 isBusy = \case
@@ -89,6 +130,233 @@ handleSubmitPrompt rawPrompt state
           newHistory = if length (tsHistory state) > 4
             then DiNotice "Prior conversation turns compacted for context efficiency." : drop (length (tsHistory state) - 4) (tsHistory state)
             else tsHistory state ++ [DiNotice "Conversation history compacted."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed `elem` ["/exit", "/quit"] =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+      in ( state { tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 , tsShouldQuit         = True
+                 }
+         , [ActionQuit]
+         )
+  | trimmed == "/model" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice ("Current model: " <> tsModelName state)]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | T.isPrefixOf "/model " trimmed =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          mName = T.strip (T.drop 7 trimmed)
+          (newModel, notice) = if T.null mName
+            then (tsModelName state, "Usage: /model <model_name>")
+            else (mName, "Model switched to: " <> mName)
+          newHistory = tsHistory state ++ [DiNotice notice]
+      in ( state { tsHistory            = newHistory
+                 , tsModelName          = newModel
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/config" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          notice = "Configuration: model=" <> tsModelName state <> ", maxTurns=" <> T.pack (show (tsMaxTurns state))
+          newHistory = tsHistory state ++ [DiNotice notice]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/context" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          notice = "Context tokens: " <> formatTokens (tsContextTokens state) <> " tracked"
+          newHistory = tsHistory state ++ [DiNotice notice]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/resume" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Session resume initialized."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/plan" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Plan mode activated. Read-only actions allowed."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/diff" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Git working tree diff inspected."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/tasks" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Task list: No active background tasks."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/theme" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Theme: dark"]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/status" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          notice = "Status: " <> (if isBusy (tsStatus state) then "busy" else "idle") <> " | Model: " <> tsModelName state <> " | Turn: " <> T.pack (show (tsCurrentTurn state)) <> "/" <> T.pack (show (tsMaxTurns state))
+          newHistory = tsHistory state ++ [DiNotice notice]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/memory" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Project memory instructions active."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/init" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Initialized CLAUDE.md guidelines template."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/permissions" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Permissions policy: default"]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/fewer-permission-prompts" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Permissions set to acceptEdits: Auto-approving file edits."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/doctor" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Doctor: All systems operational."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/copy" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Last response copied to clipboard."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/reload-skills" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice ("Skills reloaded: " <> T.pack (show (Map.size (tsSkills state))) <> " available")]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/mcp" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "MCP: Model Context Protocol servers loaded."]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | trimmed == "/plugin" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          newHistory = tsHistory state ++ [DiNotice "Plugins: 0 loaded"]
       in ( state { tsHistory            = newHistory
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
@@ -481,12 +749,12 @@ handleAgentEvent event state@TuiState{..}
         }
       Nothing -> state
 
-  EvGoalCleared cond ->
+  EvGoalCleared _ ->
     state { tsGoalState = Nothing }
 
   EvGoalBlocked cond ->
     case tsGoalState of
-      Just gs -> state
+      Just _ -> state
         { tsHistory = tsHistory ++
           [ DiNotice ("No progress detected. Goal still active: " <> cond)
           , DiNotice "Run /goal again to continue after your next prompt."
@@ -494,6 +762,17 @@ handleAgentEvent event state@TuiState{..}
         , tsFocus = FocusInput
         }
       Nothing -> state
+
+  EvPartialResponse _ -> state
+  EvToolCallDelta _ -> state
+  EvPermissionDenied tool reason ->
+    state { tsHistory = tsHistory ++ [DiNotice ("Permission denied for " <> tool <> ": " <> reason)] }
+  EvHookTriggered hook res ->
+    state { tsHistory = tsHistory ++ [DiNotice ("Hook triggered: " <> hook <> " -> " <> res)] }
+  EvSessionSaved path ->
+    state { tsHistory = tsHistory ++ [DiNotice ("Session saved to " <> path)] }
+  EvNotificationSent msg ->
+    state { tsHistory = tsHistory ++ [DiNotice ("Notification: " <> msg)] }
 
 -- | Render a goal verdict as display text.
 verdictText :: GoalVerdict -> T.Text

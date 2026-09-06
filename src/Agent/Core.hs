@@ -15,6 +15,25 @@ module Agent.Core
   , executeTool
   , logEvent
   , evaluateGoal
+  , checkPermission
+  , runHook
+  , saveSession
+  , loadSession
+  , spawnAgent
+  , sendMessageToAgent
+  , listRunningAgents
+  , callMcpTool
+  , listMcpTools
+  , runBackground
+  , getTaskOutput
+  , stopTask
+  , sendNotification
+  , gitStatus
+  , createWorktree
+  , enterWorktree
+  , exitWorktree
+  , loadMemory
+  , resolveImport
 
     -- * Pure Agent Harness Loop
   , agentLoop
@@ -41,6 +60,25 @@ data AgentF next
   | ExecuteTool !ToolCall (ToolResult -> next)
   | LogEvent !AgentEvent next
   | EvaluateGoal !Text ![Message] (GoalEvaluation -> next)
+  | CheckPermission !Text !Text (Bool -> next)
+  | RunHook !HookEvent !Text (HookResult -> next)
+  | SaveSession !SessionInfo (Text -> next)
+  | LoadSession !SessionId (Maybe SessionInfo -> next)
+  | SpawnAgent !Text !Text (AgentId -> next)
+  | SendMessageToAgent !AgentId !Text (Text -> next)
+  | ListRunningAgents ([AgentInfo] -> next)
+  | CallMcpTool !Text !Text !Text (ToolResult -> next)
+  | ListMcpTools ([ToolDef] -> next)
+  | RunBackground !Text (TaskId -> next)
+  | GetTaskOutput !TaskId (TaskInfo -> next)
+  | StopTask !TaskId (Bool -> next)
+  | SendNotification !Text !Text (() -> next)
+  | GitStatus (GitStatusInfo -> next)
+  | CreateWorktree !Text (FilePath -> next)
+  | EnterWorktree !FilePath (() -> next)
+  | ExitWorktree (() -> next)
+  | LoadMemory !FilePath (Text -> next)
+  | ResolveImport !FilePath (Text -> next)
   deriving Functor
 
 -- | The free monad over 'AgentF', describing an interactive agent script.
@@ -76,12 +114,88 @@ logEvent ev = Free (LogEvent ev (Pure ()))
 evaluateGoal :: Text -> [Message] -> AgentProgram GoalEvaluation
 evaluateGoal condition transcript = Free (EvaluateGoal condition transcript Pure)
 
+checkPermission :: Text -> Text -> AgentProgram Bool
+checkPermission tool args = Free (CheckPermission tool args Pure)
+
+runHook :: HookEvent -> Text -> AgentProgram HookResult
+runHook ev payload = Free (RunHook ev payload Pure)
+
+saveSession :: SessionInfo -> AgentProgram Text
+saveSession sinfo = Free (SaveSession sinfo Pure)
+
+loadSession :: SessionId -> AgentProgram (Maybe SessionInfo)
+loadSession sid = Free (LoadSession sid Pure)
+
+spawnAgent :: Text -> Text -> AgentProgram AgentId
+spawnAgent role desc = Free (SpawnAgent role desc Pure)
+
+sendMessageToAgent :: AgentId -> Text -> AgentProgram Text
+sendMessageToAgent aid msg = Free (SendMessageToAgent aid msg Pure)
+
+listRunningAgents :: AgentProgram [AgentInfo]
+listRunningAgents = Free (ListRunningAgents Pure)
+
+callMcpTool :: Text -> Text -> Text -> AgentProgram ToolResult
+callMcpTool srv tool args = Free (CallMcpTool srv tool args Pure)
+
+listMcpTools :: AgentProgram [ToolDef]
+listMcpTools = Free (ListMcpTools Pure)
+
+runBackground :: Text -> AgentProgram TaskId
+runBackground cmd = Free (RunBackground cmd Pure)
+
+getTaskOutput :: TaskId -> AgentProgram TaskInfo
+getTaskOutput tid = Free (GetTaskOutput tid Pure)
+
+stopTask :: TaskId -> AgentProgram Bool
+stopTask tid = Free (StopTask tid Pure)
+
+sendNotification :: Text -> Text -> AgentProgram ()
+sendNotification title body = Free (SendNotification title body Pure)
+
+gitStatus :: AgentProgram GitStatusInfo
+gitStatus = Free (GitStatus Pure)
+
+createWorktree :: Text -> AgentProgram FilePath
+createWorktree name = Free (CreateWorktree name Pure)
+
+enterWorktree :: FilePath -> AgentProgram ()
+enterWorktree path = Free (EnterWorktree path Pure)
+
+exitWorktree :: AgentProgram ()
+exitWorktree = Free (ExitWorktree Pure)
+
+loadMemory :: FilePath -> AgentProgram Text
+loadMemory path = Free (LoadMemory path Pure)
+
+resolveImport :: FilePath -> AgentProgram Text
+resolveImport path = Free (ResolveImport path Pure)
+
 -- | An algebra for interpreting an 'AgentProgram' in a target monad @m@.
 data AgentAlgebra m = AgentAlgebra
-  { interpPrompt   :: [Message] -> [ToolDef] -> m (Either Text AssistantResponse)
-  , interpTool     :: ToolCall -> m ToolResult
-  , interpLog      :: AgentEvent -> m ()
-  , interpEvaluate :: Text -> [Message] -> m GoalEvaluation
+  { interpPrompt           :: [Message] -> [ToolDef] -> m (Either Text AssistantResponse)
+  , interpTool             :: ToolCall -> m ToolResult
+  , interpLog              :: AgentEvent -> m ()
+  , interpEvaluate         :: Text -> [Message] -> m GoalEvaluation
+  , interpCheckPermission  :: Text -> Text -> m Bool
+  , interpRunHook          :: HookEvent -> Text -> m HookResult
+  , interpSaveSession      :: SessionInfo -> m Text
+  , interpLoadSession      :: SessionId -> m (Maybe SessionInfo)
+  , interpSpawnAgent       :: Text -> Text -> m AgentId
+  , interpSendMessage      :: AgentId -> Text -> m Text
+  , interpListAgents       :: m [AgentInfo]
+  , interpCallMcpTool      :: Text -> Text -> Text -> m ToolResult
+  , interpListMcpTools     :: m [ToolDef]
+  , interpRunBackground    :: Text -> m TaskId
+  , interpGetTaskOutput    :: TaskId -> m TaskInfo
+  , interpStopTask         :: TaskId -> m Bool
+  , interpSendNotification :: Text -> Text -> m ()
+  , interpGitStatus        :: m GitStatusInfo
+  , interpCreateWorktree   :: Text -> m FilePath
+  , interpEnterWorktree    :: FilePath -> m ()
+  , interpExitWorktree     :: m ()
+  , interpLoadMemory       :: FilePath -> m Text
+  , interpResolveImport    :: FilePath -> m Text
   }
 
 -- | Catamorphism: fold an 'AgentProgram' with an 'AgentAlgebra'.
@@ -101,6 +215,63 @@ foldAgentProgram alg = \case
     EvaluateGoal cond msgs k -> do
       eval <- interpEvaluate alg cond msgs
       foldAgentProgram alg (k eval)
+    CheckPermission tool args k -> do
+      b <- interpCheckPermission alg tool args
+      foldAgentProgram alg (k b)
+    RunHook ev payload k -> do
+      res <- interpRunHook alg ev payload
+      foldAgentProgram alg (k res)
+    SaveSession sinfo k -> do
+      sid <- interpSaveSession alg sinfo
+      foldAgentProgram alg (k sid)
+    LoadSession sid k -> do
+      res <- interpLoadSession alg sid
+      foldAgentProgram alg (k res)
+    SpawnAgent role desc k -> do
+      aid <- interpSpawnAgent alg role desc
+      foldAgentProgram alg (k aid)
+    SendMessageToAgent aid msg k -> do
+      reply <- interpSendMessage alg aid msg
+      foldAgentProgram alg (k reply)
+    ListRunningAgents k -> do
+      agents <- interpListAgents alg
+      foldAgentProgram alg (k agents)
+    CallMcpTool srv tool args k -> do
+      res <- interpCallMcpTool alg srv tool args
+      foldAgentProgram alg (k res)
+    ListMcpTools k -> do
+      tools <- interpListMcpTools alg
+      foldAgentProgram alg (k tools)
+    RunBackground cmd k -> do
+      tid <- interpRunBackground alg cmd
+      foldAgentProgram alg (k tid)
+    GetTaskOutput tid k -> do
+      info <- interpGetTaskOutput alg tid
+      foldAgentProgram alg (k info)
+    StopTask tid k -> do
+      ok <- interpStopTask alg tid
+      foldAgentProgram alg (k ok)
+    SendNotification title body k -> do
+      interpSendNotification alg title body
+      foldAgentProgram alg (k ())
+    GitStatus k -> do
+      st <- interpGitStatus alg
+      foldAgentProgram alg (k st)
+    CreateWorktree name k -> do
+      path <- interpCreateWorktree alg name
+      foldAgentProgram alg (k path)
+    EnterWorktree path k -> do
+      interpEnterWorktree alg path
+      foldAgentProgram alg (k ())
+    ExitWorktree k -> do
+      interpExitWorktree alg
+      foldAgentProgram alg (k ())
+    LoadMemory path k -> do
+      content <- interpLoadMemory alg path
+      foldAgentProgram alg (k content)
+    ResolveImport path k -> do
+      content <- interpResolveImport alg path
+      foldAgentProgram alg (k content)
 
 -- | Execute a single turn of the agent harness.
 -- Returns either 'Left (finalResult, updatedHistory)' if the interaction
@@ -138,12 +309,37 @@ agentStep cfg tools turn currentHistory
               -- The assistant invoked one or more tools.
               -- Record the assistant's intention in history first.
               let asstMsg = AssistantMsg (respContent resp) calls
-              -- Execute each tool call in sequence, collecting results.
+              -- Execute each tool call in sequence, checking hooks and permissions.
               toolMsgs <- forM calls $ \call -> do
                 logEvent (EvToolCall (functionName call) (callArgsRaw call))
-                res <- executeTool call
-                logEvent (EvToolResult (functionName call) res)
-                pure $ ToolMsg (callId call) (functionName call) (toolResultToText res)
+                -- 1. Hook PreToolUse
+                preHook <- runHook HookPreToolUse (functionName call <> " " <> callArgsRaw call)
+                let isBlocked = case hrDecision preHook of
+                      Just (PermDeny _) -> True
+                      _                 -> False
+                if isBlocked
+                  then do
+                    logEvent (EvHookTriggered "PreToolUse" "Blocked tool execution")
+                    logEvent (EvPermissionDenied (functionName call) "Blocked by PreToolUse hook")
+                    pure $ ToolMsg (callId call) (functionName call) "Execution blocked by PreToolUse hook."
+                  else do
+                    -- 2. Check permissions
+                    allowed <- checkPermission (functionName call) (callArgsRaw call)
+                    if not allowed
+                      then do
+                        logEvent (EvPermissionDenied (functionName call) "Permission denied by policy")
+                        pure $ ToolMsg (callId call) (functionName call) "Execution denied by permission policy."
+                      else do
+                        -- 3. Execute tool
+                        res <- executeTool call
+                        logEvent (EvToolResult (functionName call) res)
+                        -- 4. Hook PostToolUse
+                        postHook <- runHook HookPostToolUse (functionName call <> " " <> toolResultToText res)
+                        let baseOutput = toolResultToText res
+                            finalOutput = case hrAdditionalContext postHook of
+                              Just extra -> baseOutput <> "\n[Additional Context]: " <> extra
+                              Nothing    -> baseOutput
+                        pure $ ToolMsg (callId call) (functionName call) finalOutput
 
               let updatedHistory = currentHistory ++ [asstMsg] ++ toolMsgs
               logEvent (EvTurnComplete turn)

@@ -3,8 +3,8 @@
 module Agent.TUISpec (spec) where
 
 import Agent.Core (AgentAlgebra(..))
-import Agent.Interpreter.IO (newIOEnv)
-import Agent.Skills (Skill(..), SkillSource(..))
+import Agent.Interpreter.IO (ioAlgebra, newIOEnv)
+import Agent.Skills (SkillSource(..), mkSkill)
 import Agent.TUI.App (dialogueToMessages, goalAgentConfig, runGoalWorker, vtyToUserKey)
 import Agent.TUI.State
 import Agent.TUI.Types
@@ -435,7 +435,7 @@ spec = do
         tsHistory s1 `shouldSatisfy` \h -> any (\case DiNotice msg -> "compacted" `T.isInfixOf` msg; _ -> False) h
 
       it "invokes discovered skill when user types /skill-name" $ do
-        let skillA = Skill "to-spec" "Generate spec" "Spec rules here" "/p" SkillGlobal
+        let skillA = mkSkill "to-spec" "Generate spec" "Spec rules here" "/p" SkillGlobal
             s0 = baseState
               { tsSkills = Map.fromList [("to-spec", skillA)]
               , tsInputBuffer = "/to-spec create auth"
@@ -621,7 +621,7 @@ spec = do
         tsGoalState s1 `shouldBe` Nothing
 
     describe "Skill Invocation Autocomplete (Tab accepts ghost text)" $ do
-      let goal = Skill "goal" "Goal skill" "body" "/p" SkillGlobal
+      let goal = mkSkill "goal" "Goal skill" "body" "/p" SkillGlobal
           skillState = baseState { tsSkills = Map.fromList [("goal", goal)] }
 
       it "accepts the inline completion on Tab when a skill prefix is being typed" $ do
@@ -679,7 +679,7 @@ spec = do
                 then pure $ Right (AssistantResponse Nothing [mockTool] Nothing)
                 else pure $ Right (AssistantResponse (Just "All tests pass.") [] Nothing)
             evalAction _ _ = pure (GoalEvaluation GoalMet "Done.")
-            mockAlgebra = AgentAlgebra
+            mockAlgebra = (ioAlgebra mockIOEnv)
               { interpPrompt   = promptAction
               , interpTool     = \_ -> pure (ToolSuccess "ok")
               , interpLog      = \_ -> pure ()
@@ -690,3 +690,89 @@ spec = do
         events <- readIORef eventsRef
         events `shouldNotContain` [EvError "Maximum turns reached (20)"]
         events `shouldContain` [EvDone "All tests pass."]
+
+    describe "Built-in Slash Commands" $ do
+      it "registers all standard built-in slash commands" $ do
+        let expected =
+              [ "/clear", "/help", "/cost", "/compact", "/goal", "/exit", "/quit"
+              , "/model", "/config", "/context", "/resume", "/plan", "/diff"
+              , "/tasks", "/theme", "/status", "/memory", "/init", "/permissions"
+              , "/fewer-permission-prompts", "/doctor", "/copy", "/reload-skills"
+              , "/mcp", "/plugin"
+              ]
+        mapM_ (\cmd -> cmd `shouldSatisfy` (`elem` builtinCommands)) expected
+
+      it "handles /exit and /quit by emitting ActionQuit" $ do
+        let (sExit, aExit) = updateTui (EvSubmit "/exit") baseState
+        tsShouldQuit sExit `shouldBe` True
+        aExit `shouldBe` [ActionQuit]
+
+        let (sQuit, aQuit) = updateTui (EvSubmit "/quit") baseState
+        tsShouldQuit sQuit `shouldBe` True
+        aQuit `shouldBe` [ActionQuit]
+
+      it "handles /model query and /model switch" $ do
+        let (sQuery, _) = updateTui (EvSubmit "/model") baseState
+        tsHistory sQuery `shouldContain` [DiNotice ("Current model: " <> tsModelName baseState)]
+
+        let (sSwitch, _) = updateTui (EvSubmit "/model anthropic/claude-3.5-sonnet") baseState
+        tsModelName sSwitch `shouldBe` "anthropic/claude-3.5-sonnet"
+        tsHistory sSwitch `shouldContain` [DiNotice "Model switched to: anthropic/claude-3.5-sonnet"]
+
+      it "handles /config" $ do
+        let (s, _) = updateTui (EvSubmit "/config") baseState
+        tsHistory s `shouldSatisfy` \h -> any (\case DiNotice n -> "Configuration:" `T.isInfixOf` n; _ -> False) h
+
+      it "handles /context" $ do
+        let (s, _) = updateTui (EvSubmit "/context") baseState
+        tsHistory s `shouldSatisfy` \h -> any (\case DiNotice n -> "Context tokens:" `T.isInfixOf` n; _ -> False) h
+
+      it "handles /plan mode" $ do
+        let (s, _) = updateTui (EvSubmit "/plan") baseState
+        tsHistory s `shouldContain` [DiNotice "Plan mode activated. Read-only actions allowed."]
+
+      it "handles /diff" $ do
+        let (s, _) = updateTui (EvSubmit "/diff") baseState
+        tsHistory s `shouldContain` [DiNotice "Git working tree diff inspected."]
+
+      it "handles /tasks" $ do
+        let (s, _) = updateTui (EvSubmit "/tasks") baseState
+        tsHistory s `shouldContain` [DiNotice "Task list: No active background tasks."]
+
+      it "handles /theme" $ do
+        let (s, _) = updateTui (EvSubmit "/theme") baseState
+        tsHistory s `shouldContain` [DiNotice "Theme: dark"]
+
+      it "handles /status" $ do
+        let (s, _) = updateTui (EvSubmit "/status") baseState
+        tsHistory s `shouldSatisfy` \h -> any (\case DiNotice n -> "Status:" `T.isInfixOf` n; _ -> False) h
+
+      it "handles /memory and /init" $ do
+        let (sMem, _) = updateTui (EvSubmit "/memory") baseState
+        tsHistory sMem `shouldContain` [DiNotice "Project memory instructions active."]
+
+        let (sInit, _) = updateTui (EvSubmit "/init") baseState
+        tsHistory sInit `shouldContain` [DiNotice "Initialized CLAUDE.md guidelines template."]
+
+      it "handles /permissions and /fewer-permission-prompts" $ do
+        let (sPerm, _) = updateTui (EvSubmit "/permissions") baseState
+        tsHistory sPerm `shouldContain` [DiNotice "Permissions policy: default"]
+
+        let (sFew, _) = updateTui (EvSubmit "/fewer-permission-prompts") baseState
+        tsHistory sFew `shouldContain` [DiNotice "Permissions set to acceptEdits: Auto-approving file edits."]
+
+      it "handles /doctor, /copy, /reload-skills, /mcp, and /plugin" $ do
+        let (sDoc, _) = updateTui (EvSubmit "/doctor") baseState
+        tsHistory sDoc `shouldContain` [DiNotice "Doctor: All systems operational."]
+
+        let (sCopy, _) = updateTui (EvSubmit "/copy") baseState
+        tsHistory sCopy `shouldContain` [DiNotice "Last response copied to clipboard."]
+
+        let (sReload, _) = updateTui (EvSubmit "/reload-skills") baseState
+        tsHistory sReload `shouldSatisfy` \h -> any (\case DiNotice n -> "Skills reloaded:" `T.isInfixOf` n; _ -> False) h
+
+        let (sMcp, _) = updateTui (EvSubmit "/mcp") baseState
+        tsHistory sMcp `shouldContain` [DiNotice "MCP: Model Context Protocol servers loaded."]
+
+        let (sPlug, _) = updateTui (EvSubmit "/plugin") baseState
+        tsHistory sPlug `shouldContain` [DiNotice "Plugins: 0 loaded"]

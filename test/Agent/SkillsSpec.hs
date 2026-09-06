@@ -66,26 +66,14 @@ spec = do
 
     describe "mergeSkills (Precedence)" $ do
       it "overrides global skill with workspace skill of the same name" $ do
-        let globalSkill = Skill
-              { skillName        = "review"
-              , skillDescription = "Global review"
-              , skillContent     = "Global instructions"
-              , skillPath        = "/home/.agents/skills/review/SKILL.md"
-              , skillSource      = SkillGlobal
-              }
-            workspaceSkill = Skill
-              { skillName        = "review"
-              , skillDescription = "Project review"
-              , skillContent     = "Project instructions"
-              , skillPath        = "/repo/.agents/skills/review/SKILL.md"
-              , skillSource      = SkillWorkspace
-              }
+        let globalSkill = mkSkill "review" "Global review" "Global instructions" "/home/.agents/skills/review/SKILL.md" SkillGlobal
+            workspaceSkill = mkSkill "review" "Project review" "Project instructions" "/repo/.agents/skills/review/SKILL.md" SkillWorkspace
             catalog = mergeSkills [globalSkill] [workspaceSkill]
         Map.lookup "review" catalog `shouldBe` Just workspaceSkill
 
       it "includes distinct skills from both global and workspace" $ do
-        let s1 = Skill "s1" "d1" "c1" "/p1" SkillGlobal
-            s2 = Skill "s2" "d2" "c2" "/p2" SkillWorkspace
+        let s1 = mkSkill "s1" "d1" "c1" "/p1" SkillGlobal
+            s2 = mkSkill "s2" "d2" "c2" "/p2" SkillWorkspace
             catalog = mergeSkills [s1] [s2]
         Map.lookup "s1" catalog `shouldBe` Just s1
         Map.lookup "s2" catalog `shouldBe` Just s2
@@ -111,7 +99,7 @@ spec = do
             _ -> expectationFailure ("Expected 1 skill, got " ++ show (length skills))
 
     describe "parseSkillInvocations" $ do
-      let skillA = Skill "to-spec" "Spec gen" "Instructions for spec" "/p" SkillGlobal
+      let skillA = mkSkill "to-spec" "Spec gen" "Instructions for spec" "/p" SkillGlobal
           catalog = Map.fromList [("to-spec", skillA)]
 
       it "extracts a leading skill invocation and returns cleaned prompt" $ do
@@ -155,15 +143,15 @@ spec = do
         injectSkillsIntoPrompt [] "Hello world" `shouldBe` "Hello world"
 
       it "wraps skill instructions into context tags prepended to prompt" $ do
-        let skillA = Skill "to-spec" "desc" "Follow steps 1-3" "/p" SkillGlobal
+        let skillA = mkSkill "to-spec" "desc" "Follow steps 1-3" "/p" SkillGlobal
             res = injectSkillsIntoPrompt [skillA] "Build auth"
         res `shouldBe` "<skill name=\"to-spec\">\nFollow steps 1-3\n</skill>\n\nBuild auth"
 
     describe "skillInvocationCompletion" $ do
-      let goal  = Skill "goal"  "Goal skill"  "body" "/p" SkillGlobal
-          goals = Skill "goals" "Goals skill" "body" "/p" SkillGlobal
-          go    = Skill "go"    "Go skill"    "body" "/p" SkillGlobal
-          toSpec = Skill "to-spec" "Spec skill" "body" "/p" SkillGlobal
+      let goal  = mkSkill "goal"  "Goal skill"  "body" "/p" SkillGlobal
+          goals = mkSkill "goals" "Goals skill" "body" "/p" SkillGlobal
+          go    = mkSkill "go"    "Go skill"    "body" "/p" SkillGlobal
+          toSpec = mkSkill "to-spec" "Spec skill" "body" "/p" SkillGlobal
           catalog = Map.fromList [("goal", goal), ("goals", goals), ("go", go), ("to-spec", toSpec)]
 
       it "completes a partial slash-command to the matching skill name" $ do
@@ -210,3 +198,55 @@ spec = do
         -- the trailing word is now the argument, not the skill token
         skillInvocationCompletion catalog "/to-sp create a spec" `shouldBe` Nothing
         skillInvocationCompletion catalog "/goal build" `shouldBe` Nothing
+
+    describe "extended frontmatter fields" $ do
+      it "parses all extended frontmatter metadata" $ do
+        let content =
+              "---\n\
+              \name: refactor\n\
+              \description: Refactor code\n\
+              \allowed-tools: bash, edit, grep\n\
+              \user-invocable: false\n\
+              \disable-model-invocation: true\n\
+              \context: fork\n\
+              \agent: refactoring-specialist\n\
+              \paths: src/**/*.hs, test/**/*.hs\n\
+              \---\n\
+              \Refactor body here."
+        case parseSkillFile SkillWorkspace "/path/to/SKILL.md" content of
+          Left err -> expectationFailure ("Failed to parse: " ++ err)
+          Right s -> do
+            skillName s `shouldBe` "refactor"
+            skillDescription s `shouldBe` "Refactor code"
+            skillAllowedTools s `shouldBe` ["bash", "edit", "grep"]
+            skillUserInvocable s `shouldBe` False
+            skillDisableModelInvocation s `shouldBe` True
+            skillContextFork s `shouldBe` True
+            skillAgent s `shouldBe` Just "refactoring-specialist"
+            skillPaths s `shouldBe` ["src/**/*.hs", "test/**/*.hs"]
+
+    describe "substituteArguments" $ do
+      it "replaces $ARGUMENTS with supplied argument text" $ do
+        let template = "Review the following files: $ARGUMENTS please."
+        substituteArguments "foo.hs bar.hs" template `shouldBe` "Review the following files: foo.hs bar.hs please."
+
+      it "leaves content unchanged when $ARGUMENTS is absent" $ do
+        substituteArguments "extra" "Static instructions" `shouldBe` "Static instructions"
+
+    describe "injectDynamicContext" $ do
+      let testDir = "dist-newstyle/test-sandbox-dynamic-context"
+      around_ (\action -> do
+        createDirectoryIfMissing True testDir
+        action
+        removeDirectoryRecursive testDir) $ do
+        it "expands {{file:path}} placeholders with file contents" $ do
+          TIO.writeFile (testDir </> "sample.txt") "sample content 123"
+          let raw = "Intro: {{file:sample.txt}} - done."
+          res <- injectDynamicContext testDir raw
+          res `shouldBe` "Intro: sample content 123 - done.\n"
+
+        it "executes !command lines and replaces with stdout" $ do
+          let raw = "Command output:\n!echo hello from shell\nEnd."
+          res <- injectDynamicContext testDir raw
+          res `shouldBe` "Command output:\nhello from shell\nEnd.\n"
+

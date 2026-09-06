@@ -426,3 +426,99 @@ spec = do
       Aeson.decodeStrict "\"met\"" `shouldBe` Just GoalMet
       Aeson.decodeStrict "\"not_yet_met\"" `shouldBe` Just GoalNotYetMet
       Aeson.decodeStrict "\"impossible\"" `shouldBe` Just GoalImpossible
+
+  describe "Feature Gap Closure AgentF Operations" $ do
+    it "saves and loads session through AgentF" $ do
+      let sinfo = SessionInfo "sess-1" "2026-09-06" "claude-3-5-sonnet" 3 0.05
+          prog = do
+            sid <- saveSession sinfo
+            loadSession sid
+          (loaded, endEnv) = runPure emptyMockEnv prog
+      loaded `shouldBe` Just sinfo
+      Map.lookup "sess-1" (mockSavedSessions endEnv) `shouldBe` Just sinfo
+
+    it "spawns agents and manages agent messaging" $ do
+      let prog = do
+            aid <- spawnAgent "researcher" "Conducts codebase research"
+            msg <- sendMessageToAgent aid "Check tests"
+            agents <- listRunningAgents
+            pure (aid, msg, agents)
+          ((aid, msg, agents), _) = runPure emptyMockEnv prog
+      aid `shouldBe` AgentId "agent_researcher"
+      msg `shouldBe` "Delivered to agent_researcher: Check tests"
+      length agents `shouldBe` 1
+
+    it "handles git status and worktrees purely" $ do
+      let prog = do
+            st <- gitStatus
+            wtPath <- createWorktree "feat/branch"
+            enterWorktree wtPath
+            exitWorktree
+            pure (st, wtPath)
+          ((st, wtPath), endEnv) = runPure emptyMockEnv prog
+      gsiBranch st `shouldBe` "main"
+      wtPath `shouldBe` ".agents/worktrees/feat/branch"
+      mockWorktrees endEnv `shouldContain` [wtPath]
+
+    it "manages background tasks and output retrieval" $ do
+      let prog = do
+            tid <- runBackground "cargo test"
+            info <- getTaskOutput tid
+            stopped <- stopTask tid
+            pure (tid, info, stopped)
+          ((tid, info, stopped), _) = runPure emptyMockEnv prog
+      tid `shouldBe` TaskId "task_bg"
+      tiStatus info `shouldBe` "running"
+      stopped `shouldBe` True
+
+    it "records desktop notifications" $ do
+      let prog = sendNotification "Build Finished" "All 258 tests passed."
+          ((), endEnv) = runPure emptyMockEnv prog
+      mockNotifications endEnv `shouldBe` [("Build Finished", "All 258 tests passed.")]
+
+    it "invokes MCP tools and lists registered tools" $ do
+      let prog = do
+            tools <- listMcpTools
+            res <- callMcpTool "git-server" "diff" "{}"
+            pure (tools, res)
+          ((tools, res), _) = runPure emptyMockEnv prog
+      tools `shouldBe` []
+      res `shouldBe` ToolSuccess "mcp ok"
+
+    it "loads memory and resolves imports purely" $ do
+      let prog = do
+            mem <- loadMemory "CLAUDE.md"
+            imp <- resolveImport "doc.md"
+            pure (mem, imp)
+          ((mem, imp), _) = runPure emptyMockEnv prog
+      mem `shouldBe` ""
+      imp `shouldBe` ""
+
+    it "blocks tool execution when PreToolUse hook denies permission" $ do
+      let toolCall1 = ToolCall "c1" "write_file" "{\"path\":\"foo.txt\",\"content\":\"bar\"}"
+          step1 _ _ = Right $ AssistantResponse Nothing [toolCall1] Nothing
+          step2 _ _ = Right $ AssistantResponse (Just "done") [] Nothing
+          denyHook _ _ = defaultHookResult { hrDecision = Just (PermDeny "PreToolUse blocked by hook") }
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockHooks = denyHook
+            }
+          initHist = [UserMsg "Write foo"]
+          ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
+      result `shouldBe` AgentCompleted "done"
+      Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Nothing
+      mockEvents endEnv `shouldContain` [EvPermissionDenied "write_file" "Blocked by PreToolUse hook"]
+
+    it "blocks tool execution when permission policy check fails" $ do
+      let toolCall1 = ToolCall "c1" "write_file" "{\"path\":\"foo.txt\",\"content\":\"bar\"}"
+          step1 _ _ = Right $ AssistantResponse Nothing [toolCall1] Nothing
+          step2 _ _ = Right $ AssistantResponse (Just "done") [] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockPermissions = \_ _ -> False
+            }
+          initHist = [UserMsg "Write foo"]
+          ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
+      result `shouldBe` AgentCompleted "done"
+      Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Nothing
+      mockEvents endEnv `shouldContain` [EvPermissionDenied "write_file" "Permission denied by policy"]

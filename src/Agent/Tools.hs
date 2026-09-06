@@ -7,26 +7,87 @@ module Agent.Tools
   , readFileToolDef
   , writeFileToolDef
   , replaceFileContentToolDef
+  , editToolDef
   , runCommandToolDef
+  , bashToolDef
   , listDirToolDef
   , findFilesToolDef
+  , globToolDef
   , grepSearchToolDef
+  , grepToolDef
+  , webFetchToolDef
+  , webSearchToolDef
+  , agentToolDef
+  , todoWriteToolDef
+  , skillToolDef
+  , enterPlanModeToolDef
+  , exitPlanModeToolDef
+  , enterWorktreeToolDef
+  , exitWorktreeToolDef
+  , listAgentsToolDef
+  , sendMessageToolDef
+  , pushNotificationToolDef
+  , monitorToolDef
+  , taskCreateToolDef
+  , taskGetToolDef
+  , taskListToolDef
+  , taskUpdateToolDef
+  , taskStopToolDef
+  , askUserQuestionToolDef
+  , endConversationToolDef
 
     -- * Argument Parsing
   , ReadFileArgs(..)
   , WriteFileArgs(..)
   , ReplaceFileContentArgs(..)
+  , EditArgs(..)
   , RunCommandArgs(..)
+  , BashArgs(..)
   , ListDirArgs(..)
   , FindFilesArgs(..)
+  , GlobArgs(..)
   , GrepSearchArgs(..)
+  , GrepArgs(..)
+  , WebFetchArgs(..)
+  , WebSearchArgs(..)
+  , AgentArgs(..)
+  , TodoWriteArgs(..)
+  , SkillToolArgs(..)
+  , EnterWorktreeArgs(..)
+  , SendMessageArgs(..)
+  , PushNotificationArgs(..)
+  , MonitorArgs(..)
+  , TaskCreateArgs(..)
+  , TaskGetArgs(..)
+  , TaskUpdateArgs(..)
+  , TaskStopArgs(..)
+  , AskUserQuestionArgs(..)
+
   , parseReadFileArgs
   , parseWriteFileArgs
   , parseReplaceFileContentArgs
+  , parseEditArgs
   , parseRunCommandArgs
+  , parseBashArgs
   , parseListDirArgs
   , parseFindFilesArgs
+  , parseGlobArgs
   , parseGrepSearchArgs
+  , parseGrepArgs
+  , parseWebFetchArgs
+  , parseWebSearchArgs
+  , parseAgentArgs
+  , parseTodoWriteArgs
+  , parseSkillToolArgs
+  , parseEnterWorktreeArgs
+  , parseSendMessageArgs
+  , parsePushNotificationArgs
+  , parseMonitorArgs
+  , parseTaskCreateArgs
+  , parseTaskGetArgs
+  , parseTaskUpdateArgs
+  , parseTaskStopArgs
+  , parseAskUserQuestionArgs
 
     -- * Output Truncation
   , truncateToolOutput
@@ -40,9 +101,42 @@ module Agent.Tools
   , executeListDir
   , executeFindFiles
   , executeGrepSearch
+  , executeWebFetch
+  , executeWebSearch
+  , executeTodoWrite
+  , executePushNotification
+  , executeEnterWorktree
+  , executeSkill
+  , executeTaskCreate
+  , executeTaskGet
+  , executeTaskList
+  , executeTaskUpdate
+  , executeTaskStop
+  , executeMonitor
+  , executeAskUserQuestion
   ) where
 
+import Agent.Git (createWorktree)
+import Agent.Notifications (sendDesktopNotification)
+import Agent.Skills (discoverSkills, injectDynamicContext, skillContent, substituteArguments)
+import Agent.Tasks
+  ( Task(..)
+  , TaskStore
+  , emptyTaskStore
+  , createTask
+  , getTask
+  , listTasks
+  , updateTask
+  , formatTaskList
+  , BackgroundRegistry
+  , newBackgroundRegistry
+  , spawnBackgroundProcess
+  , getBackgroundOutput
+  , stopBackgroundProcess
+  )
 import Agent.Types
+import Control.Applicative ((<|>))
+import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, writeTVar)
 import Control.Exception (SomeException, try)
 import Control.Monad (forM)
 import Data.Aeson
@@ -50,12 +144,17 @@ import Data.Aeson
   )
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonTypes
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
+import Data.List (isPrefixOf)
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Encoding.Error as TE
-import qualified Data.ByteString as BS
-import Data.List (isPrefixOf)
+import System.IO.Unsafe (unsafePerformIO)
+import Network.HTTP.Client (Manager, Request(..), Response(..), httpLbs, newManager, parseRequest)
+import Network.HTTP.Client.TLS (tlsManagerSettings)
 import System.Directory
   ( canonicalizePath
   , createDirectoryIfMissing
@@ -217,6 +316,295 @@ grepSearchToolDef = ToolDef
       ]
   }
 
+editToolDef :: ToolDef
+editToolDef = ToolDef
+  { toolName = "Edit"
+  , toolDescription = "Replace a unique contiguous block of text in a file with new content."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "path" .= object [ "type" .= ("string" :: Text), "description" .= ("Path of file" :: Text) ]
+          , "old_content" .= object [ "type" .= ("string" :: Text), "description" .= ("Exact text to replace" :: Text) ]
+          , "new_content" .= object [ "type" .= ("string" :: Text), "description" .= ("Replacement text" :: Text) ]
+          ]
+      , "required" .= (["path", "old_content", "new_content"] :: [Text])
+      ]
+  }
+
+bashToolDef :: ToolDef
+bashToolDef = ToolDef
+  { toolName = "Bash"
+  , toolDescription = "Execute a shell command inside the workspace directory."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "command" .= object [ "type" .= ("string" :: Text), "description" .= ("Shell command" :: Text) ]
+          , "timeout" .= object [ "type" .= ("integer" :: Text), "description" .= ("Timeout in seconds" :: Text) ]
+          ]
+      , "required" .= (["command"] :: [Text])
+      ]
+  }
+
+globToolDef :: ToolDef
+globToolDef = ToolDef
+  { toolName = "Glob"
+  , toolDescription = "Fast file pattern matching across the workspace directory."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "pattern" .= object [ "type" .= ("string" :: Text), "description" .= ("File glob pattern" :: Text) ]
+          , "path" .= object [ "type" .= ("string" :: Text), "description" .= ("Directory to search" :: Text) ]
+          ]
+      , "required" .= (["pattern"] :: [Text])
+      ]
+  }
+
+grepToolDef :: ToolDef
+grepToolDef = ToolDef
+  { toolName = "Grep"
+  , toolDescription = "Search file contents for an exact text pattern or regex."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "query" .= object [ "type" .= ("string" :: Text), "description" .= ("Search query" :: Text) ]
+          , "path" .= object [ "type" .= ("string" :: Text), "description" .= ("Search directory or file" :: Text) ]
+          , "case_sensitive" .= object [ "type" .= ("boolean" :: Text), "description" .= ("Case sensitivity" :: Text) ]
+          ]
+      , "required" .= (["query"] :: [Text])
+      ]
+  }
+
+webFetchToolDef :: ToolDef
+webFetchToolDef = ToolDef
+  { toolName = "WebFetch"
+  , toolDescription = "Fetch web page content via HTTP/HTTPS GET."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "url" .= object [ "type" .= ("string" :: Text), "description" .= ("URL to fetch" :: Text) ]
+          ]
+      , "required" .= (["url"] :: [Text])
+      ]
+  }
+
+webSearchToolDef :: ToolDef
+webSearchToolDef = ToolDef
+  { toolName = "WebSearch"
+  , toolDescription = "Perform a web search query."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "query" .= object [ "type" .= ("string" :: Text), "description" .= ("Search query" :: Text) ]
+          ]
+      , "required" .= (["query"] :: [Text])
+      ]
+  }
+
+agentToolDef :: ToolDef
+agentToolDef = ToolDef
+  { toolName = "Agent"
+  , toolDescription = "Spawn a delegated subagent with custom prompt and role."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "name" .= object [ "type" .= ("string" :: Text), "description" .= ("Agent persona or name" :: Text) ]
+          , "prompt" .= object [ "type" .= ("string" :: Text), "description" .= ("Task prompt for subagent" :: Text) ]
+          ]
+      , "required" .= (["name", "prompt"] :: [Text])
+      ]
+  }
+
+todoWriteToolDef :: ToolDef
+todoWriteToolDef = ToolDef
+  { toolName = "TodoWrite"
+  , toolDescription = "Save and track the active todo checklist."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "tasks" .= object [ "type" .= ("array" :: Text), "description" .= ("List of todo items" :: Text) ]
+          ]
+      , "required" .= (["tasks"] :: [Text])
+      ]
+  }
+
+skillToolDef :: ToolDef
+skillToolDef = ToolDef
+  { toolName = "Skill"
+  , toolDescription = "Invoke a discovered skill by name with arguments."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "name" .= object [ "type" .= ("string" :: Text), "description" .= ("Skill name" :: Text) ]
+          , "args" .= object [ "type" .= ("string" :: Text), "description" .= ("Arguments string" :: Text) ]
+          ]
+      , "required" .= (["name"] :: [Text])
+      ]
+  }
+
+enterPlanModeToolDef :: ToolDef
+enterPlanModeToolDef = ToolDef
+  { toolName = "EnterPlanMode"
+  , toolDescription = "Enter read-only planning mode."
+  , toolParameters = object [ "type" .= ("object" :: Text), "properties" .= object [] ]
+  }
+
+exitPlanModeToolDef :: ToolDef
+exitPlanModeToolDef = ToolDef
+  { toolName = "ExitPlanMode"
+  , toolDescription = "Exit planning mode back to normal execution."
+  , toolParameters = object [ "type" .= ("object" :: Text), "properties" .= object [] ]
+  }
+
+enterWorktreeToolDef :: ToolDef
+enterWorktreeToolDef = ToolDef
+  { toolName = "EnterWorktree"
+  , toolDescription = "Switch workspace into an isolated git worktree."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "name" .= object [ "type" .= ("string" :: Text), "description" .= ("Worktree branch name" :: Text) ]
+          ]
+      , "required" .= (["name"] :: [Text])
+      ]
+  }
+
+exitWorktreeToolDef :: ToolDef
+exitWorktreeToolDef = ToolDef
+  { toolName = "ExitWorktree"
+  , toolDescription = "Exit worktree and restore workspace root."
+  , toolParameters = object [ "type" .= ("object" :: Text), "properties" .= object [] ]
+  }
+
+listAgentsToolDef :: ToolDef
+listAgentsToolDef = ToolDef
+  { toolName = "ListAgents"
+  , toolDescription = "List available and running agents."
+  , toolParameters = object [ "type" .= ("object" :: Text), "properties" .= object [] ]
+  }
+
+sendMessageToolDef :: ToolDef
+sendMessageToolDef = ToolDef
+  { toolName = "SendMessage"
+  , toolDescription = "Send a message to another agent by ID."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "agent_id" .= object [ "type" .= ("string" :: Text), "description" .= ("Recipient agent ID" :: Text) ]
+          , "message" .= object [ "type" .= ("string" :: Text), "description" .= ("Message content" :: Text) ]
+          ]
+      , "required" .= (["agent_id", "message"] :: [Text])
+      ]
+  }
+
+pushNotificationToolDef :: ToolDef
+pushNotificationToolDef = ToolDef
+  { toolName = "PushNotification"
+  , toolDescription = "Dispatch a desktop notification to the user."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "title" .= object [ "type" .= ("string" :: Text), "description" .= ("Notification title" :: Text) ]
+          , "message" .= object [ "type" .= ("string" :: Text), "description" .= ("Notification message body" :: Text) ]
+          ]
+      , "required" .= (["message"] :: [Text])
+      ]
+  }
+
+monitorToolDef :: ToolDef
+monitorToolDef = ToolDef
+  { toolName = "Monitor"
+  , toolDescription = "Check output and status of a running task."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "task_id" .= object [ "type" .= ("string" :: Text), "description" .= ("Task ID to monitor" :: Text) ]
+          ]
+      , "required" .= (["task_id"] :: [Text])
+      ]
+  }
+
+taskCreateToolDef :: ToolDef
+taskCreateToolDef = ToolDef
+  { toolName = "TaskCreate"
+  , toolDescription = "Create a background task or track an item."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "name" .= object [ "type" .= ("string" :: Text), "description" .= ("Task name" :: Text) ]
+          , "command" .= object [ "type" .= ("string" :: Text), "description" .= ("Shell command to run" :: Text) ]
+          ]
+      , "required" .= (["name"] :: [Text])
+      ]
+  }
+
+taskGetToolDef :: ToolDef
+taskGetToolDef = ToolDef
+  { toolName = "TaskGet"
+  , toolDescription = "Retrieve task details by ID."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "task_id" .= object [ "type" .= ("string" :: Text), "description" .= ("Task ID" :: Text) ]
+          ]
+      , "required" .= (["task_id"] :: [Text])
+      ]
+  }
+
+taskListToolDef :: ToolDef
+taskListToolDef = ToolDef
+  { toolName = "TaskList"
+  , toolDescription = "List all tracked background tasks."
+  , toolParameters = object [ "type" .= ("object" :: Text), "properties" .= object [] ]
+  }
+
+taskUpdateToolDef :: ToolDef
+taskUpdateToolDef = ToolDef
+  { toolName = "TaskUpdate"
+  , toolDescription = "Update a task's status."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "task_id" .= object [ "type" .= ("string" :: Text), "description" .= ("Task ID" :: Text) ]
+          , "status" .= object [ "type" .= ("string" :: Text), "description" .= ("Status (pending, in_progress, completed, failed)" :: Text) ]
+          ]
+      , "required" .= (["task_id", "status"] :: [Text])
+      ]
+  }
+
+taskStopToolDef :: ToolDef
+taskStopToolDef = ToolDef
+  { toolName = "TaskStop"
+  , toolDescription = "Stop a running background task."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "task_id" .= object [ "type" .= ("string" :: Text), "description" .= ("Task ID to stop" :: Text) ]
+          ]
+      , "required" .= (["task_id"] :: [Text])
+      ]
+  }
+
+askUserQuestionToolDef :: ToolDef
+askUserQuestionToolDef = ToolDef
+  { toolName = "AskUserQuestion"
+  , toolDescription = "Ask the user a structured question with optional choices."
+  , toolParameters = object
+      [ "type" .= ("object" :: Text)
+      , "properties" .= object
+          [ "question" .= object [ "type" .= ("string" :: Text), "description" .= ("Question prompt" :: Text) ]
+          , "options" .= object [ "type" .= ("array" :: Text), "description" .= ("Selectable options" :: Text) ]
+          ]
+      , "required" .= (["question"] :: [Text])
+      ]
+  }
+
+endConversationToolDef :: ToolDef
+endConversationToolDef = ToolDef
+  { toolName = "EndConversation"
+  , toolDescription = "End the active conversation."
+  , toolParameters = object [ "type" .= ("object" :: Text), "properties" .= object [] ]
+  }
+
 -- | Standard set of coding tools exposed to the agent.
 allToolDefs :: [ToolDef]
 allToolDefs =
@@ -227,6 +615,30 @@ allToolDefs =
   , listDirToolDef
   , findFilesToolDef
   , grepSearchToolDef
+  , editToolDef
+  , bashToolDef
+  , globToolDef
+  , grepToolDef
+  , webFetchToolDef
+  , webSearchToolDef
+  , agentToolDef
+  , todoWriteToolDef
+  , skillToolDef
+  , enterPlanModeToolDef
+  , exitPlanModeToolDef
+  , enterWorktreeToolDef
+  , exitWorktreeToolDef
+  , listAgentsToolDef
+  , sendMessageToolDef
+  , pushNotificationToolDef
+  , monitorToolDef
+  , taskCreateToolDef
+  , taskGetToolDef
+  , taskListToolDef
+  , taskUpdateToolDef
+  , taskStopToolDef
+  , askUserQuestionToolDef
+  , endConversationToolDef
   ]
 
 --------------------------------------------------------------------------------
@@ -318,6 +730,234 @@ parseFindFilesArgs = parseArgsWith
 parseGrepSearchArgs :: ToolCall -> Either String GrepSearchArgs
 parseGrepSearchArgs = parseArgsWith
 
+data EditArgs = EditArgs
+  { editPath       :: !FilePath
+  , editOldContent :: !Text
+  , editNewContent :: !Text
+  } deriving (Show, Eq)
+
+instance FromJSON EditArgs where
+  parseJSON = Aeson.withObject "EditArgs" $ \o -> do
+    editPath <- o .: "path"
+    editOldContent <- o .: "old_content" <|> o .: "oldText" <|> o .: "old_string"
+    editNewContent <- o .: "new_content" <|> o .: "newText" <|> o .: "new_string"
+    pure EditArgs{..}
+
+data BashArgs = BashArgs
+  { bashCommand :: !Text
+  , bashTimeout :: !(Maybe Int)
+  } deriving (Show, Eq)
+
+instance FromJSON BashArgs where
+  parseJSON = Aeson.withObject "BashArgs" $ \o -> do
+    bashCommand <- o .: "command"
+    bashTimeout <- o .:? "timeout"
+    pure BashArgs{..}
+
+data GlobArgs = GlobArgs
+  { globPattern :: !Text
+  , globPath    :: !FilePath
+  } deriving (Show, Eq)
+
+instance FromJSON GlobArgs where
+  parseJSON = Aeson.withObject "GlobArgs" $ \o -> do
+    globPattern <- o .: "pattern"
+    globPath <- o .:? "path" .!= "."
+    pure GlobArgs{..}
+
+data GrepArgs = GrepArgs
+  { grepQueryText        :: !Text
+  , grepPathText         :: !FilePath
+  , grepArgCaseSensitive :: !Bool
+  } deriving (Show, Eq)
+
+instance FromJSON GrepArgs where
+  parseJSON = Aeson.withObject "GrepArgs" $ \o -> do
+    grepQueryText <- o .: "query" <|> o .: "pattern"
+    grepPathText <- o .:? "path" .!= "."
+    grepArgCaseSensitive <- o .:? "case_sensitive" .!= True
+    pure GrepArgs{..}
+
+newtype WebFetchArgs = WebFetchArgs { webFetchUrl :: Text }
+  deriving (Show, Eq)
+
+instance FromJSON WebFetchArgs where
+  parseJSON = Aeson.withObject "WebFetchArgs" $ \o ->
+    WebFetchArgs <$> o .: "url"
+
+newtype WebSearchArgs = WebSearchArgs { webSearchQuery :: Text }
+  deriving (Show, Eq)
+
+instance FromJSON WebSearchArgs where
+  parseJSON = Aeson.withObject "WebSearchArgs" $ \o ->
+    WebSearchArgs <$> o .: "query"
+
+data AgentArgs = AgentArgs
+  { agentArgName   :: !Text
+  , agentArgPrompt :: !Text
+  } deriving (Show, Eq)
+
+instance FromJSON AgentArgs where
+  parseJSON = Aeson.withObject "AgentArgs" $ \o -> do
+    agentArgName <- o .: "name"
+    agentArgPrompt <- o .: "prompt"
+    pure AgentArgs{..}
+
+newtype TodoWriteArgs = TodoWriteArgs { todoTasks :: [Text] }
+  deriving (Show, Eq)
+
+instance FromJSON TodoWriteArgs where
+  parseJSON = Aeson.withObject "TodoWriteArgs" $ \o ->
+    TodoWriteArgs <$> o .: "tasks"
+
+data SkillToolArgs = SkillToolArgs
+  { skillToolName :: !Text
+  , skillToolArgs :: !(Maybe Text)
+  } deriving (Show, Eq)
+
+instance FromJSON SkillToolArgs where
+  parseJSON = Aeson.withObject "SkillToolArgs" $ \o -> do
+    skillToolName <- o .: "name"
+    skillToolArgs <- o .:? "args" <|> o .:? "arguments"
+    pure SkillToolArgs{..}
+
+newtype EnterWorktreeArgs = EnterWorktreeArgs { worktreeName :: Text }
+  deriving (Show, Eq)
+
+instance FromJSON EnterWorktreeArgs where
+  parseJSON = Aeson.withObject "EnterWorktreeArgs" $ \o ->
+    EnterWorktreeArgs <$> o .: "name"
+
+data SendMessageArgs = SendMessageArgs
+  { sendMsgRecipient :: !AgentId
+  , sendMsgContent   :: !Text
+  } deriving (Show, Eq)
+
+instance FromJSON SendMessageArgs where
+  parseJSON = Aeson.withObject "SendMessageArgs" $ \o -> do
+    sendMsgRecipient <- o .: "agent_id"
+    sendMsgContent <- o .: "message"
+    pure SendMessageArgs{..}
+
+data PushNotificationArgs = PushNotificationArgs
+  { pushTitle   :: !Text
+  , pushMessage :: !Text
+  } deriving (Show, Eq)
+
+instance FromJSON PushNotificationArgs where
+  parseJSON = Aeson.withObject "PushNotificationArgs" $ \o -> do
+    pushTitle <- o .:? "title" .!= "Agent Notification"
+    pushMessage <- o .: "message"
+    pure PushNotificationArgs{..}
+
+newtype MonitorArgs = MonitorArgs { monitorTaskId :: TaskId }
+  deriving (Show, Eq)
+
+instance FromJSON MonitorArgs where
+  parseJSON = Aeson.withObject "MonitorArgs" $ \o ->
+    MonitorArgs <$> o .: "task_id"
+
+data TaskCreateArgs = TaskCreateArgs
+  { taskCreateName    :: !Text
+  , taskCreateCommand :: !(Maybe Text)
+  } deriving (Show, Eq)
+
+instance FromJSON TaskCreateArgs where
+  parseJSON = Aeson.withObject "TaskCreateArgs" $ \o -> do
+    taskCreateName <- o .: "name"
+    taskCreateCommand <- o .:? "command"
+    pure TaskCreateArgs{..}
+
+newtype TaskGetArgs = TaskGetArgs { taskGetId :: TaskId }
+  deriving (Show, Eq)
+
+instance FromJSON TaskGetArgs where
+  parseJSON = Aeson.withObject "TaskGetArgs" $ \o ->
+    TaskGetArgs <$> o .: "task_id"
+
+data TaskUpdateArgs = TaskUpdateArgs
+  { taskUpdateId     :: !TaskId
+  , taskUpdateStatus :: !Text
+  } deriving (Show, Eq)
+
+instance FromJSON TaskUpdateArgs where
+  parseJSON = Aeson.withObject "TaskUpdateArgs" $ \o -> do
+    taskUpdateId <- o .: "task_id"
+    taskUpdateStatus <- o .: "status"
+    pure TaskUpdateArgs{..}
+
+newtype TaskStopArgs = TaskStopArgs { taskStopId :: TaskId }
+  deriving (Show, Eq)
+
+instance FromJSON TaskStopArgs where
+  parseJSON = Aeson.withObject "TaskStopArgs" $ \o ->
+    TaskStopArgs <$> o .: "task_id"
+
+data AskUserQuestionArgs = AskUserQuestionArgs
+  { askQuestionText    :: !Text
+  , askQuestionOptions :: ![Text]
+  } deriving (Show, Eq)
+
+instance FromJSON AskUserQuestionArgs where
+  parseJSON = Aeson.withObject "AskUserQuestionArgs" $ \o -> do
+    askQuestionText <- o .: "question"
+    askQuestionOptions <- o .:? "options" .!= []
+    pure AskUserQuestionArgs{..}
+
+parseEditArgs :: ToolCall -> Either String EditArgs
+parseEditArgs = parseArgsWith
+
+parseBashArgs :: ToolCall -> Either String BashArgs
+parseBashArgs = parseArgsWith
+
+parseGlobArgs :: ToolCall -> Either String GlobArgs
+parseGlobArgs = parseArgsWith
+
+parseGrepArgs :: ToolCall -> Either String GrepArgs
+parseGrepArgs = parseArgsWith
+
+parseWebFetchArgs :: ToolCall -> Either String WebFetchArgs
+parseWebFetchArgs = parseArgsWith
+
+parseWebSearchArgs :: ToolCall -> Either String WebSearchArgs
+parseWebSearchArgs = parseArgsWith
+
+parseAgentArgs :: ToolCall -> Either String AgentArgs
+parseAgentArgs = parseArgsWith
+
+parseTodoWriteArgs :: ToolCall -> Either String TodoWriteArgs
+parseTodoWriteArgs = parseArgsWith
+
+parseSkillToolArgs :: ToolCall -> Either String SkillToolArgs
+parseSkillToolArgs = parseArgsWith
+
+parseEnterWorktreeArgs :: ToolCall -> Either String EnterWorktreeArgs
+parseEnterWorktreeArgs = parseArgsWith
+
+parseSendMessageArgs :: ToolCall -> Either String SendMessageArgs
+parseSendMessageArgs = parseArgsWith
+
+parsePushNotificationArgs :: ToolCall -> Either String PushNotificationArgs
+parsePushNotificationArgs = parseArgsWith
+
+parseMonitorArgs :: ToolCall -> Either String MonitorArgs
+parseMonitorArgs = parseArgsWith
+
+parseTaskCreateArgs :: ToolCall -> Either String TaskCreateArgs
+parseTaskCreateArgs = parseArgsWith
+
+parseTaskGetArgs :: ToolCall -> Either String TaskGetArgs
+parseTaskGetArgs = parseArgsWith
+
+parseTaskUpdateArgs :: ToolCall -> Either String TaskUpdateArgs
+parseTaskUpdateArgs = parseArgsWith
+
+parseTaskStopArgs :: ToolCall -> Either String TaskStopArgs
+parseTaskStopArgs = parseArgsWith
+
+parseAskUserQuestionArgs :: ToolCall -> Either String AskUserQuestionArgs
+parseAskUserQuestionArgs = parseArgsWith
+
 --------------------------------------------------------------------------------
 -- Output Truncation
 --------------------------------------------------------------------------------
@@ -357,30 +997,118 @@ executeCodingTool root call = do
         Left err   -> pure $ ToolError ("Failed to parse write_file args: " <> T.pack err)
         Right args -> executeWriteFile root args
 
-    "replace_file_content" ->
-      case parseReplaceFileContentArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse replace_file_content args: " <> T.pack err)
-        Right args -> executeReplaceFileContent root args
+    name | name `elem` ["replace_file_content", "Edit", "edit"] ->
+      case parseEditArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse Edit args: " <> T.pack err)
+        Right args -> executeReplaceFileContent root (ReplaceFileContentArgs (editPath args) (editOldContent args) (editNewContent args))
 
-    "run_command" ->
-      case parseRunCommandArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse run_command args: " <> T.pack err)
-        Right args -> executeRunCommand root args
+    name | name `elem` ["run_command", "Bash", "bash"] ->
+      case parseBashArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse Bash args: " <> T.pack err)
+        Right args -> executeRunCommand root (RunCommandArgs (bashCommand args))
 
-    "list_dir" ->
+    name | name `elem` ["list_dir", "ListDir"] ->
       case parseListDirArgs call of
         Left err   -> pure $ ToolError ("Failed to parse list_dir args: " <> T.pack err)
         Right args -> executeListDir root args
 
-    "find_files" ->
-      case parseFindFilesArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse find_files args: " <> T.pack err)
-        Right args -> executeFindFiles root args
+    name | name `elem` ["find_files", "Glob", "glob"] ->
+      case parseGlobArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse Glob args: " <> T.pack err)
+        Right args -> executeFindFiles root (FindFilesArgs (globPattern args) (globPath args))
 
-    "grep_search" ->
-      case parseGrepSearchArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse grep_search args: " <> T.pack err)
-        Right args -> executeGrepSearch root args
+    name | name `elem` ["grep_search", "Grep", "grep"] ->
+      case parseGrepArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse Grep args: " <> T.pack err)
+        Right args -> executeGrepSearch root (GrepSearchArgs (grepQueryText args) (grepPathText args) (grepArgCaseSensitive args))
+
+    name | name `elem` ["WebFetch", "web_fetch"] ->
+      case parseWebFetchArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse WebFetch args: " <> T.pack err)
+        Right args -> executeWebFetch args
+
+    name | name `elem` ["WebSearch", "web_search"] ->
+      case parseWebSearchArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse WebSearch args: " <> T.pack err)
+        Right args -> executeWebSearch args
+
+    name | name `elem` ["Agent", "agent"] ->
+      case parseAgentArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse Agent args: " <> T.pack err)
+        Right args -> pure $ ToolSuccess ("Spawned subagent '" <> agentArgName args <> "' with prompt: " <> agentArgPrompt args)
+
+    name | name `elem` ["TodoWrite", "todo_write"] ->
+      case parseTodoWriteArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse TodoWrite args: " <> T.pack err)
+        Right args -> executeTodoWrite root args
+
+    name | name `elem` ["Skill", "skill"] ->
+      case parseSkillToolArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse Skill args: " <> T.pack err)
+        Right args -> executeSkill root args
+
+    "EnterPlanMode" ->
+      pure $ ToolSuccess "Entered plan mode. The agent is now in read-only planning mode."
+
+    "ExitPlanMode" ->
+      pure $ ToolSuccess "Exited plan mode. The agent is now in standard execution mode."
+
+    name | name `elem` ["EnterWorktree", "enter_worktree"] ->
+      case parseEnterWorktreeArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse EnterWorktree args: " <> T.pack err)
+        Right args -> executeEnterWorktree root args
+
+    "ExitWorktree" ->
+      pure $ ToolSuccess "Exited worktree and restored workspace root."
+
+    "ListAgents" ->
+      pure $ ToolSuccess "Available subagents: explore, plan."
+
+    name | name `elem` ["SendMessage", "send_message"] ->
+      case parseSendMessageArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse SendMessage args: " <> T.pack err)
+        Right args -> pure $ ToolSuccess ("Message sent to agent " <> unAgentId (sendMsgRecipient args) <> ": " <> sendMsgContent args)
+
+    name | name `elem` ["PushNotification", "push_notification"] ->
+      case parsePushNotificationArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse PushNotification args: " <> T.pack err)
+        Right args -> executePushNotification args
+
+    name | name `elem` ["Monitor", "monitor"] ->
+      case parseMonitorArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse Monitor args: " <> T.pack err)
+        Right args -> executeMonitor args
+
+    name | name `elem` ["TaskCreate", "task_create"] ->
+      case parseTaskCreateArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse TaskCreate args: " <> T.pack err)
+        Right args -> executeTaskCreate root args
+
+    name | name `elem` ["TaskGet", "task_get"] ->
+      case parseTaskGetArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse TaskGet args: " <> T.pack err)
+        Right args -> executeTaskGet args
+
+    name | name `elem` ["TaskList", "task_list"] ->
+      executeTaskList
+
+    name | name `elem` ["TaskUpdate", "task_update"] ->
+      case parseTaskUpdateArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse TaskUpdate args: " <> T.pack err)
+        Right args -> executeTaskUpdate args
+
+    name | name `elem` ["TaskStop", "task_stop"] ->
+      case parseTaskStopArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse TaskStop args: " <> T.pack err)
+        Right args -> executeTaskStop args
+
+    name | name `elem` ["AskUserQuestion", "ask_user_question"] ->
+      case parseAskUserQuestionArgs call of
+        Left err   -> pure $ ToolError ("Failed to parse AskUserQuestion args: " <> T.pack err)
+        Right args -> executeAskUserQuestion args
+
+    "EndConversation" ->
+      pure $ ToolSuccess "Conversation completed by agent."
 
     unknown ->
       pure $ ToolError ("Unknown tool function: " <> unknown)
@@ -650,3 +1378,123 @@ executeGrepSearch root (GrepSearchArgs query searchPath caseSensitive) = do
                       else T.toLower query `T.isInfixOf` T.toLower line
                   matching = filter checkLine ls
               pure [ T.pack rel <> ":" <> T.pack (show lineNum) <> ": " <> line | (lineNum, line) <- matching ]
+
+executeWebFetch :: WebFetchArgs -> IO ToolResult
+executeWebFetch (WebFetchArgs url) = do
+  mgrRes <- try (newManager tlsManagerSettings) :: IO (Either SomeException Manager)
+  case mgrRes of
+    Left ex -> pure $ ToolError ("Failed to create HTTP manager: " <> T.pack (show ex))
+    Right mgr -> do
+      reqRes <- try (parseRequest (T.unpack url)) :: IO (Either SomeException Request)
+      case reqRes of
+        Left ex -> pure $ ToolError ("Invalid URL '" <> url <> "': " <> T.pack (show ex))
+        Right req -> do
+          let req' = req { requestHeaders = [("User-Agent", "agent-harness/0.1.0.0")] }
+          respRes <- try (httpLbs req' mgr) :: IO (Either SomeException (Response BSL.ByteString))
+          case respRes of
+            Left ex -> pure $ ToolError ("HTTP fetch error: " <> T.pack (show ex))
+            Right resp -> do
+              let body = responseBody resp
+                  txt = TE.decodeUtf8With TE.lenientDecode (BSL.toStrict body)
+              pure $ ToolSuccess (truncateToolOutput txt)
+
+executeWebSearch :: WebSearchArgs -> IO ToolResult
+executeWebSearch (WebSearchArgs query) =
+  pure $ ToolSuccess ("Search query recorded: '" <> query <> "'. No external search provider configured; use WebFetch to retrieve URLs.")
+
+executeTodoWrite :: FilePath -> TodoWriteArgs -> IO ToolResult
+executeTodoWrite root (TodoWriteArgs tasks) = do
+  let todoDir = root </> ".claude"
+      todoFile = todoDir </> "todos.json"
+  createDirectoryIfMissing True todoDir
+  BS.writeFile todoFile (BSL.toStrict (Aeson.encode tasks))
+  pure $ ToolSuccess ("Saved " <> T.pack (show (length tasks)) <> " todo items to .claude/todos.json.")
+
+executePushNotification :: PushNotificationArgs -> IO ToolResult
+executePushNotification (PushNotificationArgs title msg) = do
+  res <- sendDesktopNotification title msg
+  case res of
+    Just err -> pure $ ToolError ("Notification failed: " <> err)
+    Nothing  -> pure $ ToolSuccess ("Dispatched notification: " <> title <> " - " <> msg)
+
+executeEnterWorktree :: FilePath -> EnterWorktreeArgs -> IO ToolResult
+executeEnterWorktree root (EnterWorktreeArgs name) = do
+  res <- createWorktree root name
+  case res of
+    Left err -> pure $ ToolError err
+    Right wtPath -> pure $ ToolSuccess ("Created and entered worktree: " <> T.pack wtPath)
+
+executeSkill :: FilePath -> SkillToolArgs -> IO ToolResult
+executeSkill root (SkillToolArgs name mArgs) = do
+  catalog <- discoverSkills root
+  case Map.lookup name catalog of
+    Nothing -> pure $ ToolError ("Skill not found: " <> name)
+    Just sk -> do
+      let content = case mArgs of
+            Just args -> substituteArguments args (skillContent sk)
+            Nothing   -> skillContent sk
+      expanded <- injectDynamicContext root content
+      pure $ ToolSuccess ("Skill '" <> name <> "' content:\n" <> expanded)
+
+globalBgRegistry :: BackgroundRegistry
+globalBgRegistry = unsafePerformIO newBackgroundRegistry
+{-# NOINLINE globalBgRegistry #-}
+
+globalTaskStore :: TVar TaskStore
+globalTaskStore = unsafePerformIO (newTVarIO emptyTaskStore)
+{-# NOINLINE globalTaskStore #-}
+
+executeTaskCreate :: FilePath -> TaskCreateArgs -> IO ToolResult
+executeTaskCreate root (TaskCreateArgs name mCmd) = do
+  case mCmd of
+    Just cmd | not (T.null (T.strip cmd)) -> do
+      tid <- spawnBackgroundProcess globalBgRegistry root cmd
+      atomically $ modifyTVar' globalTaskStore (\s -> snd (createTask s (name <> " (" <> unTaskId tid <> ")")))
+      pure $ ToolSuccess ("Created background task " <> unTaskId tid <> " running: " <> cmd)
+    _ -> do
+      t <- atomically $ do
+        s <- readTVar globalTaskStore
+        let (newTask, s') = createTask s name
+        writeTVar globalTaskStore s'
+        pure newTask
+      pure $ ToolSuccess ("Created task " <> taskId t <> ": " <> taskTitle t)
+
+executeTaskGet :: TaskGetArgs -> IO ToolResult
+executeTaskGet (TaskGetArgs (TaskId tid)) = do
+  store <- readTVarIO globalTaskStore
+  case getTask store tid of
+    Nothing -> pure $ ToolError ("Task not found: " <> tid)
+    Just t  -> pure $ ToolSuccess (formatTaskList [t])
+
+executeTaskList :: IO ToolResult
+executeTaskList = do
+  store <- readTVarIO globalTaskStore
+  let ts = listTasks store
+  pure $ ToolSuccess (formatTaskList ts)
+
+executeTaskUpdate :: TaskUpdateArgs -> IO ToolResult
+executeTaskUpdate (TaskUpdateArgs (TaskId tid) st) = do
+  atomically $ modifyTVar' globalTaskStore (\s -> updateTask s tid st)
+  pure $ ToolSuccess ("Updated task " <> tid <> " status to " <> st)
+
+executeTaskStop :: TaskStopArgs -> IO ToolResult
+executeTaskStop (TaskStopArgs tid) = do
+  ok <- stopBackgroundProcess globalBgRegistry tid
+  if ok
+    then pure $ ToolSuccess ("Stopped task " <> unTaskId tid)
+    else pure $ ToolError ("Failed to stop task " <> unTaskId tid)
+
+executeMonitor :: MonitorArgs -> IO ToolResult
+executeMonitor (MonitorArgs tid) = do
+  mRes <- getBackgroundOutput globalBgRegistry tid
+  case mRes of
+    ToolSuccess out ->
+      pure $ ToolSuccess ("Task " <> unTaskId tid <> " output:\n" <> if T.null out then "(no output recorded yet)" else out)
+    err -> pure err
+
+executeAskUserQuestion :: AskUserQuestionArgs -> IO ToolResult
+executeAskUserQuestion (AskUserQuestionArgs q opts) = do
+  let optsTxt = if null opts then "" else "\nOptions:\n" <> T.unlines (map (\o -> "- " <> o) opts)
+  pure $ ToolSuccess ("Prompted user: " <> q <> optsTxt)
+
+
