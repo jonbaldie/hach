@@ -23,9 +23,10 @@ import qualified Graphics.Vty.Span as Span
 import Test.Hspec
 
 -- | A screen with content in both panels, including a tool card (which carries
--- the ⏺ bullet) and both panel labels (💬 and ⚡).
-sampleState :: TuiState
-sampleState = (initialTuiState "test/model" 10)
+-- the ⏺ bullet) and both panel labels (💬 and ⚡). Parameterised over the turn
+-- limit so both header forms are covered: a turn count, and the unlimited ∞.
+sampleState :: Maybe Int -> TuiState
+sampleState maxTurns = (initialTuiState "test/model" maxTurns)
   { tsCurrentTurn = 3
   , tsStatus      = StatusThinking
   , tsFocus       = FocusHistory
@@ -39,9 +40,9 @@ sampleState = (initialTuiState "test/model" 10)
 
 -- | Render the UI and flatten each row to the characters vty places, in vty's
 -- own column order.
-renderRows :: (Int, Int) -> [T.Text]
-renderRows region =
-  let pic = M.renderWidget (Just tuiAttrMap) (drawUI sampleState) region
+renderRows :: Maybe Int -> (Int, Int) -> [T.Text]
+renderRows maxTurns region =
+  let pic = M.renderWidget (Just tuiAttrMap) (drawUI (sampleState maxTurns)) region
   in map flattenRow (V.toList (PTS.displayOpsForPic pic region))
   where
     flattenRow = V.foldl' step ""
@@ -93,7 +94,7 @@ spec = do
   describe "panel borders" $ do
     it "land in identical terminal columns on every row of the panel band" $ do
       let region@(cols, _) = (259, 54)
-          band = panelBand (renderRows region)
+          band = panelBand (renderRows (Just 10) region)
       band `shouldSatisfy` (not . null)
       nub band `shouldBe` [head band]
       -- and nothing is pushed off the right-hand edge
@@ -101,17 +102,24 @@ spec = do
 
     it "stays aligned at other terminal widths" $
       mapM_ (\cols -> do
-        let band = panelBand (renderRows (cols, 40))
+        let band = panelBand (renderRows (Just 10) (cols, 40))
         (cols, nub band) `shouldBe` (cols, [head band]))
         [80, 100, 120, 160, 200, 259]
 
+    it "stays aligned with an unlimited turn count" $
+      mapM_ (\cols -> do
+        let band = panelBand (renderRows Nothing (cols, 40))
+        (cols, nub band) `shouldBe` (cols, [head band]))
+        [80, 120, 259]
+
   describe "glyph inventory" $ do
     it "renders no unclassified double-width glyph" $ do
-      let chars = nub (concatMap T.unpack (renderRows (259, 54)))
+      let chars = nub (concatMap T.unpack
+                        (renderRows (Just 10) (259, 54) ++ renderRows Nothing (259, 54)))
           -- every glyph the UI is allowed to draw, all of them one column
           -- wide apart from those declared in 'wideGlyphs'
           known = wideGlyphs ++ " —•↵⇄⇥⎿│─┌┐└┘"
                              ++ "━┃┏┓┗┛╭╮╯╰"
-                             ++ "▸◌●⚙✓✔✖✦✻❯"
+                             ++ "▸◌●⚙✓✔✖✦✻❯∞"
           stray = sort [c | c <- chars, c > '\x7F', c `notElem` known]
       stray `shouldBe` []
