@@ -64,9 +64,12 @@ formatCostReport TuiState{..} =
       contextLine = case tsTokenUsage of
         Just TokenUsage{..} ->
           let cachePart = if tuCachedTokens > 0 then ", " <> formatTokens tuCachedTokens <> " cached" else ""
+              costPart = case tuCost of
+                Just c  -> ", $" <> T.pack (printf "%.4f" c)
+                Nothing -> ""
           in "Tokens: " <> formatTokens tsContextTokens <> " in context window (" <>
              formatTokens tuPromptTokens <> " prompt" <> cachePart <> ", " <>
-             formatTokens tuCompletionTokens <> " completion) — " <>
+             formatTokens tuCompletionTokens <> " completion" <> costPart <> ") — " <>
              formatTokens tsContextTokens <> "/" <> formatTokens limit <> " capacity (" <> T.pack (show pct) <> "%)"
         Nothing ->
           "Tokens: " <> formatTokens tsContextTokens <> " in context window — " <>

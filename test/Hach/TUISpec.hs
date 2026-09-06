@@ -645,6 +645,7 @@ spec = do
             (s2, _) = updateTui (EvSubmit "/cost") s1
         let notices = [ m | DiNotice m <- tsHistory s2 ]
         notices `shouldSatisfy` (\l -> any ("Tokens: 150 in context window" `T.isInfixOf`) l)
+        notices `shouldSatisfy` (\l -> any (", $0.0012) —" `T.isInfixOf`) l)
         notices `shouldSatisfy` (\l -> any ("Session Cumulative: 150 tokens" `T.isInfixOf`) l)
         notices `shouldSatisfy` (\l -> any ("Reported API Cost: $0.0012" `T.isInfixOf`) l)
 
