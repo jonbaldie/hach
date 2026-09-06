@@ -51,7 +51,7 @@ import Data.Text (Text)
 
 -- | The core signature of interaction steps for an autonomous agent.
 --
--- In the spirit of Functional Pearls, the interactions of an agent with its
+-- The interactions of an agent with its
 -- environment (the LLM oracle, external tool runtime, and telemetry channels)
 -- are modeled as a signature functor, separating the pure orchestration
 -- strategy from operational interpreters.

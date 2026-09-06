@@ -49,7 +49,7 @@ main = do
     then runTui ioEnv optPrompt
     else do
       putStrLn "========================================================"
-      putStrLn "  Haskell Agentic Coding Harness (Functional Pearl)     "
+      putStrLn "  Haskell Agentic Coding Harness (hach)                 "
       putStrLn "========================================================"
       putStrLn ("Workspace: " <> cwd)
       putStrLn ("Model:     " <> T.unpack envModel)

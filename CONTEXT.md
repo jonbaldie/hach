@@ -1,6 +1,6 @@
 # Hach
 
-A minimalist, principled agentic coding harness in Haskell following a Functional Pearl architecture.
+A minimalist, principled agentic coding harness in Haskell.
 
 ## Language
 
@@ -12,7 +12,7 @@ _Avoid_: Agent, Hatch, agent-harness
 The autonomous interaction runtime coordinating the policy loop between an LLM and local workspace tools.
 _Avoid_: Framework, wrapper
 
-**Free Pearl**:
+**Free Monad Core**:
 The core design pattern structuring agent interactions as a free monad over an interaction signature functor.
 _Avoid_: Callback framework, reactive engine
 

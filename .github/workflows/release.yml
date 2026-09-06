@@ -155,7 +155,7 @@ jobs:
 
             parts = []
             parts << "class Hach < Formula"
-            parts << "  desc \"Minimalist, principled agentic coding harness in Haskell (Functional Pearl)\""
+            parts << "  desc \"Minimalist, principled agentic coding harness in Haskell\""
             parts << "  homepage \"https://github.com/jonbaldie/hach\""
             parts << "  license \"MIT\""
             parts << "  version_scheme 1"

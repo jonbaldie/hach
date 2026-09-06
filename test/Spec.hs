@@ -26,7 +26,7 @@ import qualified Hach.NotificationsSpec as NotificationsSpec
 main :: IO ()
 main = hspec $ do
   describe "Hach.Env" EnvSpec.spec
-  describe "Hach.Core (Functional Pearl)" CoreSpec.spec
+  describe "Hach.Core" CoreSpec.spec
   describe "Hach.Tools" ToolsSpec.spec
   describe "Hach.OpenRouter" OpenRouterSpec.spec
   describe "Hach.TUI (Pure Reducer Seam)" TUISpec.spec

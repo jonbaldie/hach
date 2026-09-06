@@ -1,9 +1,9 @@
-# Hach: Haskell Agentic Coding Harness (Functional Pearl)
+# Hach: Haskell Agentic Coding Harness
 
 [![CI](https://github.com/jonbaldie/hach/actions/workflows/ci.yml/badge.svg)](https://github.com/jonbaldie/hach/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A minimalist, principled agentic coding harness written in idiomatic Haskell following a **Functional Pearl** architecture.
+A minimalist, principled agentic coding harness written in idiomatic Haskell.
 
 The harness implements an autonomous interaction loop between an LLM policy (via the OpenRouter API) and a coding environment (file inspection, file creation/modification, directory listing, and shell command execution).
 
@@ -32,7 +32,7 @@ cabal run hach
 
 ---
 
-## The Pearl: Interaction as a Free Monad
+## Architecture: Interaction as a Free Monad
 
 Most agent frameworks in Python rely on imperative callbacks, implicit mutable state, and complicated mocking frameworks. In this harness, an agent interaction is modeled as a free monad over an interaction signature functor:
 
