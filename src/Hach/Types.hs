@@ -483,8 +483,9 @@ goalClearAliases = ["clear", "stop", "off", "reset", "none", "cancel"]
 -- after the @\"/goal \"@ prefix (optionally with leading\/trailing spaces).
 goalArgIsClear :: Text -> Bool
 goalArgIsClear argText =
-  let argWord = T.toLower (T.takeWhile (not . isSpace) argText)
-      rest    = T.strip (T.dropWhile (not . isSpace) argText)
+  let clean   = T.stripStart argText
+      argWord = T.toLower (T.takeWhile (not . isSpace) clean)
+      rest    = T.strip (T.dropWhile (not . isSpace) clean)
   in argWord `elem` goalClearAliases && T.null rest
 
 -- | Configuration parameters for the agent.

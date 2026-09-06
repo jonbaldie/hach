@@ -1074,6 +1074,17 @@ spec = do
         tsHistory s1 `shouldSatisfy` \h ->
           any (\case DiNotice msg -> "Goal cleared: all tests pass" `T.isInfixOf` msg; _ -> False) h
 
+      it "clears the goal when multiple spaces precede clear (e.g. /goal  clear)" $ do
+        let gs = initialGoalState "all tests pass"
+            s0 = baseState { tsInputBuffer = "/goal  clear", tsGoalState = Just gs }
+            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
+        actions `shouldBe` []
+        tsGoalState s1 `shouldSatisfy` \case
+          Just gs' -> gsStatus gs' == GoalCleared
+          Nothing -> False
+        tsHistory s1 `shouldSatisfy` \h ->
+          any (\case DiNotice msg -> "Goal cleared: all tests pass" `T.isInfixOf` msg; _ -> False) h
+
       it "supports stop as an alias for clear" $ do
         let gs = initialGoalState "my goal"
             s0 = baseState { tsInputBuffer = "/goal stop", tsGoalState = Just gs }
