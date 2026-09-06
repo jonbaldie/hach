@@ -24,6 +24,9 @@ jobs:
           - os: macos-14
             platform: darwin_arm64
             ghc: "9.12.1"
+          - os: macos-15-intel
+            platform: darwin_amd64
+            ghc: "9.12.1"
           - os: ubuntu-latest
             platform: linux_amd64
             ghc: "9.12.1"
@@ -150,11 +153,6 @@ jobs:
               macos_blocks << "    on_intel do\n      url \"https://github.com/jonbaldie/hach/releases/download/v#{version}/#{amd64_archive}\"\n      sha256 \"#{amd64_sha}\"\n    end"
             end
 
-            linux_blocks = []
-            if !linux_sha.to_s.strip.empty?
-              linux_blocks << "  on_linux do\n    on_intel do\n      url \"https://github.com/jonbaldie/hach/releases/download/v#{version}/#{linux_archive}\"\n      sha256 \"#{linux_sha}\"\n    end\n  end"
-            end
-
             parts = []
             parts << "class Hach < Formula"
             parts << "  desc \"Minimalist, principled agentic coding harness in Haskell (Functional Pearl)\""
@@ -166,10 +164,6 @@ jobs:
             parts << macos_blocks.join("\n\n")
             parts << "  end"
             parts << ""
-            if !linux_blocks.empty?
-              parts << linux_blocks.join("\n\n")
-              parts << ""
-            end
             parts << "  def install"
             parts << "    bin.install \"hach\""
             parts << "    prefix.install \"LICENSE\""
