@@ -229,20 +229,19 @@ parseSkillInvocations catalog rawInput =
                       | w <- allWords
                       , "/" `T.isPrefixOf` w
                       , Just skill <- [Map.lookup (T.drop 1 w) catalog]
+                      , skillUserInvocable skill
                       ]
   in case potentialCmds of
        [] -> (rawInput, [])
        cmds ->
          let uniqueSkills = nubBy (\s1 s2 -> skillName s1 == skillName s2) (map snd cmds)
-             cleanOne acc (cmdTok, _) =
-               let withTrailingSpace = cmdTok <> " "
-                   withLeadingSpace  = " " <> cmdTok
-               in if withTrailingSpace `T.isInfixOf` acc
-                    then T.replace withTrailingSpace "" acc
-                    else if withLeadingSpace `T.isInfixOf` acc
-                      then T.replace withLeadingSpace "" acc
-                      else T.replace cmdTok "" acc
-             cleaned = T.strip (foldl cleanOne rawInput cmds)
+             invokedToks  = map fst cmds
+             -- Filter exact whitespace-delimited tokens per line so a skill
+             -- token that is only a prefix of another word (e.g. /foo vs
+             -- /foo-bar) is left intact, and so newlines survive.
+             cleanLine line =
+               T.unwords (filter (`notElem` invokedToks) (T.words line))
+             cleaned = T.strip (T.intercalate "\n" (map cleanLine (T.splitOn "\n" rawInput)))
          in (cleaned, uniqueSkills)
 
 -- | Inject skill instructions into the user prompt.

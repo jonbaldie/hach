@@ -122,6 +122,7 @@ test-suite hach-test
         Hach.TUILayoutSpec
         Hach.PropertySpec
         Hach.GoalFuzzSpec
+        Hach.CampaignSpec
         Hach.SkillsSpec
         Hach.PermissionsSpec
         Hach.SettingsSpec

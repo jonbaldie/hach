@@ -72,8 +72,8 @@ initialTuiLaunch (Just p) st
   | otherwise          = updateTui (EvSubmit p) st
 
 -- | Run the full modern TUI application.
-runTui :: IOEnv -> Maybe Text -> IO ()
-runTui ioEnv initialPrompt = do
+runTui :: IOEnv -> Maybe Text -> Maybe Int -> IO ()
+runTui ioEnv initialPrompt mMaxTurns = do
   eventChan <- newBChan 100
   workerVar <- newTVarIO (Nothing :: Maybe (Async ()))
 
@@ -81,7 +81,7 @@ runTui ioEnv initialPrompt = do
   mGuidelines <- loadProjectInstructions (ioWorkspace ioEnv)
   let sysPrompt = buildSystemPrompt mGuidelines
 
-  let baseState = (initialTuiState (ioModel ioEnv) Nothing) { tsSkills = skills }
+  let baseState = (initialTuiState (ioModel ioEnv) mMaxTurns) { tsSkills = skills }
       (startingState, initialActions) = initialTuiLaunch initialPrompt baseState
 
   let app :: App TuiState AgentEvent Name
@@ -147,12 +147,20 @@ transcriptToMessages = dialogueToMessages
 -- A run of consecutive tool cards following an assistant text item (or standing alone)
 -- becomes one assistant message carrying the text plus those tool calls,
 -- followed by one tool message per card keyed by call id.
--- Notices remain omitted.
+-- Notices remain omitted. Consecutive assistant text items (including those
+-- that become adjacent after notices are dropped) are collapsed so the
+-- resulting message list never contains two adjoining 'AssistantMsg' values.
 transcriptItemsToMessages :: [TranscriptItem] -> [Message]
-transcriptItemsToMessages = go . filter (not . isNotice)
+transcriptItemsToMessages = go . collapseAdjacentAssistants . filter (not . isNotice)
   where
     isNotice (TiNotice _) = True
     isNotice _            = False
+
+    collapseAdjacentAssistants [] = []
+    collapseAdjacentAssistants (TiAssistant a1 : TiAssistant a2 : rest) =
+      collapseAdjacentAssistants (TiAssistant (a1 <> "\n\n" <> a2) : rest)
+    collapseAdjacentAssistants (x : xs) =
+      x : collapseAdjacentAssistants xs
 
     extractCards (TiToolCard c : rest) =
       let (cs, remItems) = extractCards rest
