@@ -30,11 +30,12 @@ sampleState maxTurns = (initialTuiState "test/model" maxTurns)
   { tsCurrentTurn = 3
   , tsStatus      = StatusThinking
   , tsFocus       = FocusHistory
-  , tsHistory     = [DiUser "hello", DiAssistant "hi"]
-  , tsTools       =
-      [ ToolItem "list_dir" "{\"path\":\".\"}" (Just (ToolSuccess "ok")) False
-      , ToolItem "run_command" "{\"command\":\"wc -l ./src/Hach/Tools.hs\"}"
-          (Just (ToolSuccess "ok")) False
+  , tsTranscript  =
+      [ TiUser "hello"
+      , TiAssistant "hi"
+      , TiToolCard (ToolCard "call-1" "list_dir" "{\"path\":\".\"}" (Finished (ToolSuccess "ok")) False)
+      , TiToolCard (ToolCard "call-2" "run_command" "{\"command\":\"wc -l ./src/Hach/Tools.hs\"}"
+          (Finished (ToolSuccess "ok")) False)
       ]
   }
 

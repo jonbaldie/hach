@@ -124,9 +124,10 @@ spec = do
       it "preserves state invariants across arbitrary sequences of user keys" $ property $ \(events :: [TuiEvent]) ->
         let initialState = initialTuiState "meta/muse-glimmer-30b" (Just 10)
             finalState = foldl (\s ev -> fst (updateTui ev s)) initialState events
+            toolCards = [c | TiToolCard c <- tsTranscript finalState]
         in tsHistoryScroll finalState >= 0
            && tsSelectedToolIndex finalState >= 0
-           && (null (tsTools finalState) || tsSelectedToolIndex finalState < length (tsTools finalState))
+           && (null toolCards || tsSelectedToolIndex finalState < length toolCards)
 
       it "quits on 'q' when History or Tools panel is focused (User Story 19)" $ do
         let sHistory = (initialTuiState "m" (Just 10)) { tsFocus = FocusHistory }

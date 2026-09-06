@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Hach.TUI.Types
   ( -- * Status and Focus
@@ -8,12 +9,22 @@ module Hach.TUI.Types
   , prevFocus
 
     -- * Screen Elements
-  , ToolItem(..)
-  , DialogueItem(..)
+  , ToolLifecycle(..)
+  , ToolCard(..)
+  , TranscriptItem(..)
+  , pattern DiUser
+  , pattern DiAssistant
+  , pattern DiSystem
+  , pattern DiNotice
+  , pattern DiToolCard
+  , DialogueItem
+  , ToolItem
 
     -- * State
   , TuiState(..)
   , initialTuiState
+  , tsHistory
+  , tsTools
   , UsageStatus(..)
 
     -- * Events and Actions
@@ -61,21 +72,52 @@ prevFocus FocusInput   = FocusTools
 prevFocus FocusTools   = FocusHistory
 prevFocus FocusHistory = FocusInput
 
--- | Individual tool execution card shown in the activity panel.
-data ToolItem = ToolItem
-  { tiName     :: !Text
-  , tiArgs     :: !Text
-  , tiResult   :: !(Maybe ToolResult)
-  , tiExpanded :: !Bool
+-- | Tool execution lifecycle state in the transcript.
+data ToolLifecycle
+  = Pending
+  | Running
+  | Finished !ToolResult
+  | Denied !Text
+  | Cancelled
+  deriving (Show, Eq)
+
+-- | Tool card record carried in the transcript.
+data ToolCard = ToolCard
+  { tcId        :: !Text
+  , tcName      :: !Text
+  , tcArgs      :: !Text
+  , tcLifecycle :: !ToolLifecycle
+  , tcExpanded  :: !Bool
   } deriving (Show, Eq)
 
--- | Dialogue history entry shown in the conversation panel.
-data DialogueItem
-  = DiUser !Text
-  | DiAssistant !Text
-  | DiSystem !Text
-  | DiNotice !Text
+-- | Screen element representing a single chronological entry in the transcript.
+data TranscriptItem
+  = TiUser !Text
+  | TiAssistant !Text
+  | TiSystem !Text
+  | TiNotice !Text
+  | TiToolCard !ToolCard
   deriving (Show, Eq)
+
+type DialogueItem = TranscriptItem
+type ToolItem = ToolCard
+
+pattern DiUser :: Text -> TranscriptItem
+pattern DiUser u = TiUser u
+
+pattern DiAssistant :: Text -> TranscriptItem
+pattern DiAssistant a = TiAssistant a
+
+pattern DiSystem :: Text -> TranscriptItem
+pattern DiSystem s = TiSystem s
+
+pattern DiNotice :: Text -> TranscriptItem
+pattern DiNotice n = TiNotice n
+
+pattern DiToolCard :: ToolCard -> TranscriptItem
+pattern DiToolCard tc = TiToolCard tc
+
+{-# COMPLETE DiUser, DiAssistant, DiSystem, DiNotice, DiToolCard #-}
 
 -- | Full screen state for the TUI.
 data TuiState = TuiState
@@ -85,8 +127,7 @@ data TuiState = TuiState
   , tsStatus             :: !TuiStatus
   , tsFocus              :: !FocusArea
   , tsInputBuffer        :: !Text
-  , tsHistory            :: ![DialogueItem]
-  , tsTools              :: ![ToolItem]
+  , tsTranscript         :: ![TranscriptItem]
   , tsHistoryScroll      :: !Int
   , tsSelectedToolIndex  :: !Int
   , tsShowHelp           :: !Bool
@@ -103,6 +144,14 @@ data TuiState = TuiState
   , tsGoalState          :: !(Maybe GoalState)
   } deriving (Show, Eq)
 
+-- | Project tool cards from the transcript for the Tool Activity pane.
+tsTools :: TuiState -> [ToolCard]
+tsTools state = [tc | TiToolCard tc <- tsTranscript state]
+
+-- | Compatibility accessor for reading the transcript.
+tsHistory :: TuiState -> [TranscriptItem]
+tsHistory = tsTranscript
+
 -- | Initialize a clean TUI state.
 initialTuiState :: Text -> Maybe Int -> TuiState
 initialTuiState model maxTurns = TuiState
@@ -112,8 +161,7 @@ initialTuiState model maxTurns = TuiState
   , tsStatus             = StatusIdle
   , tsFocus              = FocusInput
   , tsInputBuffer        = ""
-  , tsHistory            = []
-  , tsTools              = []
+  , tsTranscript         = []
   , tsHistoryScroll      = 0
   , tsSelectedToolIndex  = 0
   , tsShowHelp           = False

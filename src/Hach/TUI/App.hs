@@ -139,10 +139,11 @@ dialogueToMessages sysPrompt currentPrompt items =
            _                  -> xs
 
     itemToMessages = \case
-      DiUser u      -> [UserMsg u]
-      DiAssistant a -> [AssistantMsg (Just a) []]
-      DiSystem s    -> [SystemMsg s]
-      DiNotice _    -> []
+      TiUser u      -> [UserMsg u]
+      TiAssistant a -> [AssistantMsg (Just a) []]
+      TiSystem s    -> [SystemMsg s]
+      TiNotice _    -> []
+      TiToolCard _  -> []
 
 -- | Trigger background agent task execution.
 triggerAgentRun
