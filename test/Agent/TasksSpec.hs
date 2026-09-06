@@ -3,7 +3,7 @@
 module Agent.TasksSpec (spec) where
 
 import Agent.Tasks
-import Agent.Types (TaskId(..), ToolResult(..))
+import Agent.Types (ToolResult(..))
 import Control.Concurrent (threadDelay)
 import qualified Data.Text as T
 import Test.Hspec
