@@ -8,6 +8,7 @@ module Agent.TUI.UI
   , Name(..)
   ) where
 
+import Agent.Skills (skillInvocationCompletion)
 import Agent.TUI.Types
 import Agent.Types (ToolResult(..))
 import Brick
@@ -393,6 +394,9 @@ renderToolCard selectedIdx isToolsFocused idx ToolItem{..} =
 --------------------------------------------------------------------------------
 
 -- | Modern prompt input bar.
+-- When the trailing word is a slash-command prefix with a matching skill,
+-- the completion suffix is shown as faded ghost text after the cursor
+-- (press Tab to accept).
 renderInputPanel :: TuiState -> Widget Name
 renderInputPanel TuiState{..} =
   let isFocused = tsFocus == FocusInput
@@ -400,9 +404,18 @@ renderInputPanel TuiState{..} =
       borderGlyph = if isFocused then unicodeBold else unicodeRounded
       promptLabel = if isFocused then " [ ❯ Prompt (Active) ] " else " ❯ Prompt "
       prefix = withAttr userPromptAttr (txt "❯ ")
-      body = if T.null tsInputBuffer
-               then prefix <+> withAttr dimAttr (txt "Type a task prompt and press Enter...")
-               else prefix <+> withAttr userTextAttr (txt tsInputBuffer)
+      body
+        | T.null tsInputBuffer =
+            prefix <+> withAttr dimAttr (txt "Type a task prompt and press Enter...")
+        | otherwise =
+            case skillInvocationCompletion tsSkills tsInputBuffer of
+              Just suffix ->
+                prefix <+> hBox
+                  [ withAttr userTextAttr (txt tsInputBuffer)
+                  , withAttr dimAttr (txt suffix)
+                  ]
+              Nothing ->
+                prefix <+> withAttr userTextAttr (txt tsInputBuffer)
       cursor = if isFocused
                  then showCursor VpInput (Location (T.length tsInputBuffer + 2, 0))
                  else id
@@ -422,7 +435,7 @@ renderFooter =
   hCenter $
   hBox
     [ withAttr shortcutKeyAttr (txt "⇥ tab")
-    , withAttr dimAttr (txt " panels  •  ")
+    , withAttr dimAttr (txt " complete/panels  •  ")
     , withAttr shortcutKeyAttr (txt "↵ enter")
     , withAttr dimAttr (txt " send  •  ")
     , withAttr shortcutKeyAttr (txt "esc")
@@ -447,6 +460,7 @@ helpOverlay =
     [ withAttr brandAttr (txt "Navigation & Global:")
     , padLeft (Pad 2) $ vBox
         [ hBox [withAttr shortcutKeyAttr (txt "Tab / Shift+Tab   "), withAttr dimAttr (txt "Switch panel focus (Input ⇄ History ⇄ Tools)")]
+        , hBox [withAttr shortcutKeyAttr (txt "Tab (in input)    "), withAttr dimAttr (txt "Accept a /skill autocomplete suggestion, else switch panel")]
         , hBox [withAttr shortcutKeyAttr (txt "Ctrl+Q            "), withAttr dimAttr (txt "Quit the application immediately")]
         , hBox [withAttr shortcutKeyAttr (txt "Esc / Ctrl+C      "), withAttr dimAttr (txt "Cancel running agent turn or dismiss help")]
         , hBox [withAttr shortcutKeyAttr (txt "? / F1            "), withAttr dimAttr (txt "Toggle this help overlay")]

@@ -8,7 +8,7 @@ module Agent.TUI.State
   , toggleToolExpanded
   ) where
 
-import Agent.Skills (Skill(..), injectSkillsIntoPrompt, parseSkillInvocations)
+import Agent.Skills (Skill(..), injectSkillsIntoPrompt, parseSkillInvocations, skillInvocationCompletion)
 import Agent.TUI.Types
 import Agent.TUI.UI (formatTokens)
 import Agent.Types (AgentEvent(..), TokenUsage(..), ToolResult)
@@ -145,7 +145,14 @@ handleUserKey key state@TuiState{..} =
           (state { tsShowHelp = not tsShowHelp }, [])
 
     KeyTab ->
-      (state { tsFocus = nextFocus tsFocus }, [])
+      -- Accept the inline skill-completion ghost text when the user is
+      -- typing a slash-command prefix in the input box; otherwise cycle
+      -- panel focus as usual.
+      case skillInvocationCompletion tsSkills tsInputBuffer of
+        Just suffix | tsFocus == FocusInput ->
+          (state { tsInputBuffer = tsInputBuffer `T.append` suffix }, [])
+        _ ->
+          (state { tsFocus = nextFocus tsFocus }, [])
 
     KeyBackTab ->
       (state { tsFocus = prevFocus tsFocus }, [])
