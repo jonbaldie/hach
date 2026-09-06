@@ -36,8 +36,7 @@ import Graphics.Vty.UnicodeWidthTable.Install (TableInstallException, installUni
 import Graphics.Vty.UnicodeWidthTable.Types (UnicodeWidthTable(..), WidthTableRange(..))
 
 data Name
-  = VpHistory
-  | VpTools
+  = VpTranscript
   | VpInput
   deriving (Show, Eq, Ord)
 
@@ -56,8 +55,7 @@ data Name
 -- with East_Asian_Width W/F or Emoji_Presentation=Yes belongs here.
 wideGlyphs :: [Char]
 wideGlyphs =
-  [ '\x1F4AC'  -- SPEECH BALLOON, in the Dialogue History border label
-  , '\x26A1'   -- HIGH VOLTAGE SIGN, in the Tool Activity border label
+  [ '\x1F4AC'  -- SPEECH BALLOON, in the Transcript border label
   , '\x23FA'   -- BLACK CIRCLE FOR RECORD, the tool card bullet
   ]
 
@@ -168,7 +166,7 @@ baseLayout :: TuiState -> Widget Name
 baseLayout state =
   vBox
     [ renderHeader state
-    , vLimitPercent 78 (hBox [hLimitPercent 62 (renderHistoryPanel state), vBorder, renderToolsPanel state])
+    , vLimitPercent 78 (renderTranscriptPanel state)
     , renderInputPanel state
     , renderFooter
     ]
@@ -260,62 +258,79 @@ renderStatus = \case
   StatusError err     -> withAttr statusErrorAttr (txt ("✖ error: " <> T.take 25 err))
 
 --------------------------------------------------------------------------------
--- Dialogue History Panel
+-- Transcript Panel (Claude Code Style Unified Stream)
 --------------------------------------------------------------------------------
 
--- | Left panel showing conversation dialogue with markdown code styling.
-renderHistoryPanel :: TuiState -> Widget Name
-renderHistoryPanel TuiState{..} =
-  let isFocused = tsFocus == FocusHistory
+-- | Full-width panel showing conversation dialogue and tool cards interleaved in chronological order.
+renderTranscriptPanel :: TuiState -> Widget Name
+renderTranscriptPanel state@TuiState{..} =
+  let isFocused = tsFocus == FocusTranscript
       borderMod = if isFocused then withAttr activeBorderAttr else withAttr inactiveBorderAttr
       borderGlyph = if isFocused then unicodeBold else unicodeRounded
       headerText = if isFocused
-                     then " [ 💬 Dialogue History (Active) ] "
-                     else " 💬 Dialogue History "
-      dialogueItems = [item | item <- tsTranscript, case item of TiToolCard _ -> False; _ -> True]
-      items = if null dialogueItems
+                     then " [ 💬 Transcript (Active) ] "
+                     else " 💬 Transcript "
+      items = if null tsTranscript
                 then [padAll 1 (withAttr dimAttr (txtWrap "No dialogue yet. Type a prompt below and press Enter to start."))]
-                else map renderDialogue dialogueItems
+                else renderTranscriptItems state
   in borderMod $
      withBorderStyle borderGlyph $
      borderWithLabel (txt headerText) $
-     viewport VpHistory Vertical (vBox items)
+     viewport VpTranscript Vertical (vBox items)
 
-renderDialogue :: DialogueItem -> Widget Name
-renderDialogue = \case
-  TiUser u ->
-    padBottom (Pad 1) $
-    vBox
-      [ hBox
-          [ withAttr userPromptAttr (txt "❯ ")
-          , withAttr userAttr (txt "You")
-          ]
-      , padLeft (Pad 2) $
-        withAttr userTextAttr (txtWrap u)
-      ]
+-- | Render all items in the transcript in chronological emission order.
+renderTranscriptItems :: TuiState -> [Widget Name]
+renderTranscriptItems TuiState{..} =
+  let isFocused = tsFocus == FocusTranscript
+      step (toolIdx, acc) item = case item of
+        TiUser u ->
+          (toolIdx, renderUser u : acc)
+        TiAssistant a ->
+          (toolIdx, renderAssistant a : acc)
+        TiSystem s ->
+          (toolIdx, renderSystem s : acc)
+        TiNotice n ->
+          (toolIdx, renderNotice n : acc)
+        TiToolCard tc ->
+          (toolIdx + 1, renderToolCard tsSelectedToolIndex isFocused toolIdx tc : acc)
+      (_, revWidgets) = foldl' step (0, []) tsTranscript
+  in reverse revWidgets
 
-  TiAssistant a ->
-    padBottom (Pad 1) $
-    vBox
-      [ hBox
-          [ withAttr asstAttr (txt "✦ ")
-          , withAttr asstAttr (txt "Assistant")
-          ]
-      , padLeft (Pad 2) $
-        renderAssistantBody a
-      ]
+renderUser :: Text -> Widget Name
+renderUser u =
+  padBottom (Pad 1) $
+  vBox
+    [ hBox
+        [ withAttr userPromptAttr (txt "❯ ")
+        , withAttr userAttr (txt "You")
+        ]
+    , padLeft (Pad 2) $
+      withAttr userTextAttr (txtWrap u)
+    ]
 
-  TiSystem s ->
-    padBottom (Pad 1) $
-    padLeft (Pad 2) $
-    withAttr sysAttr (txtWrap ("⚙ " <> s))
+renderAssistant :: Text -> Widget Name
+renderAssistant a =
+  padBottom (Pad 1) $
+  vBox
+    [ hBox
+        [ withAttr asstAttr (txt "✦ ")
+        , withAttr asstAttr (txt "Assistant")
+        ]
+    , padLeft (Pad 2) $
+      renderAssistantBody a
+    ]
 
-  TiNotice n ->
-    padBottom (Pad 1) $
-    padLeft (Pad 2) $
-    withAttr noticeAttr (txtWrap ("! " <> n))
+renderSystem :: Text -> Widget Name
+renderSystem s =
+  padBottom (Pad 1) $
+  padLeft (Pad 2) $
+  withAttr sysAttr (txtWrap ("⚙ " <> s))
 
-  TiToolCard _ -> emptyWidget
+renderNotice :: Text -> Widget Name
+renderNotice n =
+  padBottom (Pad 1) $
+  padLeft (Pad 2) $
+  withAttr noticeAttr (txtWrap ("! " <> n))
 
 -- | Render assistant response text, formatting code blocks cleanly.
 renderAssistantBody :: Text -> Widget Name
@@ -354,29 +369,6 @@ groupCodeBlocks = go []
           in before ++ [Right (lang, code)] ++ go [] after
       | otherwise =
           go (l:acc) ls
-
---------------------------------------------------------------------------------
--- Tool Activity Panel (Claude Code Activity Stream)
---------------------------------------------------------------------------------
-
--- | Right panel showing active and past tool calls.
-renderToolsPanel :: TuiState -> Widget Name
-renderToolsPanel TuiState{..} =
-  let isFocused = tsFocus == FocusTools
-      borderMod = if isFocused then withAttr activeBorderAttr else withAttr inactiveBorderAttr
-      borderGlyph = if isFocused then unicodeBold else unicodeRounded
-      toolCards = [tc | TiToolCard tc <- tsTranscript]
-      total = length toolCards
-      headerText = if isFocused
-                     then " [ ⚡ Tool Activity (" <> T.pack (show total) <> ") (Active) ] "
-                     else " ⚡ Tool Activity (" <> T.pack (show total) <> ") "
-      cards = if null toolCards
-                then [padAll 1 (withAttr dimAttr (txtWrap "No tools executed yet. Tool calls will stream here."))]
-                else zipWith (renderToolCard tsSelectedToolIndex isFocused) [0..] toolCards
-  in borderMod $
-     withBorderStyle borderGlyph $
-     borderWithLabel (txt headerText) $
-     viewport VpTools Vertical (vBox cards)
 
 -- | Extract a clean, human-readable summary of tool arguments (Claude Code style).
 formatToolTarget :: Text -> Text -> Text
@@ -443,8 +435,8 @@ formatLifecycleSummary = \case
     ("✖ cancelled", toolErrorAttr, toolErrorAttr)
 
 renderToolCard :: Int -> Bool -> Int -> ToolCard -> Widget Name
-renderToolCard selectedIdx isToolsFocused idx ToolCard{..} =
-  let isSelected = isToolsFocused && selectedIdx == idx
+renderToolCard selectedIdx isTranscriptFocused idx ToolCard{..} =
+  let isSelected = isTranscriptFocused && selectedIdx == idx
       cursorMark = if isSelected then withAttr userPromptAttr (txt "▸ ") else txt "  "
       (statusTxt, statusAttr, iconAttr) = formatLifecycleSummary tcLifecycle
       icon = withAttr iconAttr (txt "⏺ ")
@@ -501,7 +493,7 @@ renderToolCard selectedIdx isToolsFocused idx ToolCard{..} =
         padBottom (Pad 1) $
         vBox [headerLine, subLine, expandedBody]
 
-  in cardWidget
+  in if isSelected then visible cardWidget else cardWidget
 
 --------------------------------------------------------------------------------
 -- Task Input Panel
@@ -537,7 +529,7 @@ renderInputPanel TuiState{..} =
      withBorderStyle borderGlyph $
      borderWithLabel (txt promptLabel) $
      padLeftRight 1 $
-     cursor body
+     cursor (padRight Max body)
 
 --------------------------------------------------------------------------------
 -- Footer & Help
@@ -549,7 +541,7 @@ renderFooter =
   hCenter $
   hBox
     [ withAttr shortcutKeyAttr (txt "⇥ tab")
-    , withAttr dimAttr (txt " complete/panels  •  ")
+    , withAttr dimAttr (txt " complete/focus  •  ")
     , withAttr shortcutKeyAttr (txt "↵ enter")
     , withAttr dimAttr (txt " send  •  ")
     , withAttr shortcutKeyAttr (txt "esc")
@@ -573,8 +565,8 @@ helpOverlay =
   vBox
     [ withAttr brandAttr (txt "Navigation & Global:")
     , padLeft (Pad 2) $ vBox
-        [ hBox [withAttr shortcutKeyAttr (txt "Tab / Shift+Tab   "), withAttr dimAttr (txt "Switch panel focus (Input ⇄ History ⇄ Tools)")]
-        , hBox [withAttr shortcutKeyAttr (txt "Tab (in input)    "), withAttr dimAttr (txt "Accept a /skill autocomplete suggestion, else switch panel")]
+        [ hBox [withAttr shortcutKeyAttr (txt "Tab / Shift+Tab   "), withAttr dimAttr (txt "Switch focus (Input ⇄ Transcript)")]
+        , hBox [withAttr shortcutKeyAttr (txt "Tab (in input)    "), withAttr dimAttr (txt "Accept a /skill autocomplete suggestion, else switch focus")]
         , hBox [withAttr shortcutKeyAttr (txt "Ctrl+Q            "), withAttr dimAttr (txt "Quit the application immediately")]
         , hBox [withAttr shortcutKeyAttr (txt "Esc / Ctrl+C      "), withAttr dimAttr (txt "Cancel running agent turn or dismiss help")]
         , hBox [withAttr shortcutKeyAttr (txt "? / F1            "), withAttr dimAttr (txt "Toggle this help overlay")]
@@ -584,21 +576,16 @@ helpOverlay =
     , padLeft (Pad 2) $ vBox
         [ hBox [withAttr shortcutKeyAttr (txt "Enter             "), withAttr dimAttr (txt "Submit prompt to the autonomous agent")]
         , hBox [withAttr shortcutKeyAttr (txt "Up / Down         "), withAttr dimAttr (txt "Recall previous / next prompt history")]
+        , hBox [withAttr shortcutKeyAttr (txt "PgUp / PgDn       "), withAttr dimAttr (txt "Scroll transcript 5 lines")]
         , hBox [withAttr shortcutKeyAttr (txt "Ctrl+U            "), withAttr dimAttr (txt "Clear current input line")]
         ]
     , txt " "
-    , withAttr brandAttr (txt "Dialogue History:")
+    , withAttr brandAttr (txt "Transcript:")
     , padLeft (Pad 2) $ vBox
-        [ hBox [withAttr shortcutKeyAttr (txt "Up / Down         "), withAttr dimAttr (txt "Scroll conversation 1 line")]
-        , hBox [withAttr shortcutKeyAttr (txt "PgUp / PgDn       "), withAttr dimAttr (txt "Scroll conversation 5 lines")]
-        , hBox [withAttr shortcutKeyAttr (txt "c                 "), withAttr dimAttr (txt "Clear conversation history")]
-        , hBox [withAttr shortcutKeyAttr (txt "q                 "), withAttr dimAttr (txt "Quit application (when idle)")]
-        ]
-    , txt " "
-    , withAttr brandAttr (txt "Tool Activity:")
-    , padLeft (Pad 2) $ vBox
-        [ hBox [withAttr shortcutKeyAttr (txt "Up / Down         "), withAttr dimAttr (txt "Navigate tool execution cards")]
-        , hBox [withAttr shortcutKeyAttr (txt "Enter / Space     "), withAttr dimAttr (txt "Expand / collapse tool arguments & outputs")]
+        [ hBox [withAttr shortcutKeyAttr (txt "Up / Down         "), withAttr dimAttr (txt "Select tool card (when present) or scroll 1 line")]
+        , hBox [withAttr shortcutKeyAttr (txt "PgUp / PgDn       "), withAttr dimAttr (txt "Scroll transcript 5 lines")]
+        , hBox [withAttr shortcutKeyAttr (txt "Enter / Space     "), withAttr dimAttr (txt "Expand / collapse selected tool card")]
+        , hBox [withAttr shortcutKeyAttr (txt "c                 "), withAttr dimAttr (txt "Clear transcript and reset context")]
         , hBox [withAttr shortcutKeyAttr (txt "q                 "), withAttr dimAttr (txt "Quit application (when idle)")]
         ]
     ]

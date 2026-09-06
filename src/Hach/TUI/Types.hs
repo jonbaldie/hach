@@ -5,6 +5,7 @@ module Hach.TUI.Types
   ( -- * Status and Focus
     TuiStatus(..)
   , FocusArea(..)
+  , pattern FocusHistory
   , nextFocus
   , prevFocus
 
@@ -25,12 +26,15 @@ module Hach.TUI.Types
   , initialTuiState
   , tsHistory
   , tsTools
+  , tsHistoryScroll
   , UsageStatus(..)
 
     -- * Events and Actions
   , UserKey(..)
   , TuiEvent(..)
   , TuiAction(..)
+  , pattern ActionScrollHistory
+  , pattern ActionScrollHistoryToBottom
   ) where
 
 import Hach.Skills (SkillCatalog)
@@ -53,24 +57,27 @@ data TuiStatus
   | StatusError !Text
   deriving (Show, Eq)
 
--- | Focusable panels in the interface.
+-- | Focusable panels in the interface: prompt input and transcript.
 data FocusArea
   = FocusInput
-  | FocusHistory
-  | FocusTools
+  | FocusTranscript
   deriving (Show, Eq, Enum, Bounded)
+
+pattern FocusHistory :: FocusArea
+pattern FocusHistory = FocusTranscript
+
+{-# COMPLETE FocusInput, FocusTranscript #-}
+{-# COMPLETE FocusInput, FocusHistory #-}
 
 -- | Cycle to the next focusable panel.
 nextFocus :: FocusArea -> FocusArea
-nextFocus FocusInput   = FocusHistory
-nextFocus FocusHistory = FocusTools
-nextFocus FocusTools   = FocusInput
+nextFocus FocusInput      = FocusTranscript
+nextFocus FocusTranscript = FocusInput
 
 -- | Cycle to the previous focusable panel.
 prevFocus :: FocusArea -> FocusArea
-prevFocus FocusInput   = FocusTools
-prevFocus FocusTools   = FocusHistory
-prevFocus FocusHistory = FocusInput
+prevFocus FocusInput      = FocusTranscript
+prevFocus FocusTranscript = FocusInput
 
 -- | Tool execution lifecycle state in the transcript.
 data ToolLifecycle
@@ -128,7 +135,7 @@ data TuiState = TuiState
   , tsFocus              :: !FocusArea
   , tsInputBuffer        :: !Text
   , tsTranscript         :: ![TranscriptItem]
-  , tsHistoryScroll      :: !Int
+  , tsTranscriptScroll   :: !Int
   , tsSelectedToolIndex  :: !Int
   , tsShowHelp           :: !Bool
   , tsShouldQuit         :: !Bool
@@ -152,6 +159,10 @@ tsTools state = [tc | TiToolCard tc <- tsTranscript state]
 tsHistory :: TuiState -> [TranscriptItem]
 tsHistory = tsTranscript
 
+-- | Compatibility accessor for transcript scroll.
+tsHistoryScroll :: TuiState -> Int
+tsHistoryScroll = tsTranscriptScroll
+
 -- | Initialize a clean TUI state.
 initialTuiState :: Text -> Maybe Int -> TuiState
 initialTuiState model maxTurns = TuiState
@@ -162,7 +173,7 @@ initialTuiState model maxTurns = TuiState
   , tsFocus              = FocusInput
   , tsInputBuffer        = ""
   , tsTranscript         = []
-  , tsHistoryScroll      = 0
+  , tsTranscriptScroll   = 0
   , tsSelectedToolIndex  = 0
   , tsShowHelp           = False
   , tsShouldQuit         = False
@@ -210,7 +221,15 @@ data TuiAction
   | ActionRunGoal !Text
   | ActionCancelAgent
   | ActionQuit
-  | ActionScrollHistory !Int
-  | ActionScrollHistoryToBottom
-  | ActionScrollTools !Int
+  | ActionScrollTranscript !Int
+  | ActionScrollTranscriptToBottom
   deriving (Show, Eq)
+
+pattern ActionScrollHistory :: Int -> TuiAction
+pattern ActionScrollHistory delta = ActionScrollTranscript delta
+
+pattern ActionScrollHistoryToBottom :: TuiAction
+pattern ActionScrollHistoryToBottom = ActionScrollTranscriptToBottom
+
+{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionScrollTranscriptToBottom #-}
+{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionScrollHistoryToBottom #-}

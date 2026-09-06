@@ -129,16 +129,11 @@ spec = do
            && tsSelectedToolIndex finalState >= 0
            && (null toolCards || tsSelectedToolIndex finalState < length toolCards)
 
-      it "quits on 'q' when History or Tools panel is focused (User Story 19)" $ do
-        let sHistory = (initialTuiState "m" (Just 10)) { tsFocus = FocusHistory }
-            (s1, actions1) = updateTui (EvUserKey (KeyChar 'q')) sHistory
+      it "quits on 'q' when Transcript panel is focused (User Story 19)" $ do
+        let sTranscript = (initialTuiState "m" (Just 10)) { tsFocus = FocusTranscript }
+            (s1, actions1) = updateTui (EvUserKey (KeyChar 'q')) sTranscript
         tsShouldQuit s1 `shouldBe` True
         actions1 `shouldBe` [ActionQuit]
-
-        let sTools = (initialTuiState "m" (Just 10)) { tsFocus = FocusTools }
-            (s2, actions2) = updateTui (EvUserKey (KeyChar 'q')) sTools
-        tsShouldQuit s2 `shouldBe` True
-        actions2 `shouldBe` [ActionQuit]
 
       it "toggles help overlay on KeyF1 from any focus mode" $ do
         let s0 = initialTuiState "m" (Just 10)

@@ -8,7 +8,7 @@ import Hach.Skills (SkillSource(..), mkSkill)
 import Hach.TUI.App (dialogueToMessages, goalAgentConfig, initialTuiLaunch, runGoalWorker, vtyToUserKey)
 import Hach.TUI.State
 import Hach.TUI.Types
-import Hach.TUI.UI (formatCompactLimit, formatTokens, renderMaxTurns)
+import Hach.TUI.UI (drawUI, formatCompactLimit, formatTokens, renderMaxTurns, tuiAttrMap)
 import Hach.Types
   ( AgentConfig(..)
   , AgentEvent(..)
@@ -28,11 +28,27 @@ import Hach.Types
   , mkTokenUsage
   , modelContextLimit
   )
+import qualified Brick.Main as M
 import Data.IORef
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
+import qualified Data.Vector as V
 import qualified Graphics.Vty as Vty
+import qualified Graphics.Vty.PictureToSpans as PTS
+import qualified Graphics.Vty.Span as Span
 import Test.Hspec
+
+renderTestRows :: TuiState -> (Int, Int) -> [T.Text]
+renderTestRows st region =
+  let pic = M.renderWidget (Just tuiAttrMap) (drawUI st) region
+  in map flattenRow (V.toList (PTS.displayOpsForPic pic region))
+  where
+    flattenRow = V.foldl' step ""
+    step acc op = case op of
+      Span.TextSpan _ _ _ t -> acc <> TL.toStrict t
+      Span.Skip n           -> acc <> T.replicate n " "
+      Span.RowEnd n         -> acc <> T.replicate n " "
 
 spec :: Spec
 spec = do
@@ -74,18 +90,18 @@ spec = do
         actions `shouldBe` []
 
     describe "Focus Navigation" $ do
-      it "cycles focus with Tab: Input -> History -> Tools -> Input" $ do
+      it "cycles focus with Tab between Input and Transcript" $ do
         tsFocus baseState `shouldBe` FocusInput
         let s1 = fst $ updateTui (EvUserKey KeyTab) baseState
-        tsFocus s1 `shouldBe` FocusHistory
+        tsFocus s1 `shouldBe` FocusTranscript
         let s2 = fst $ updateTui (EvUserKey KeyTab) s1
-        tsFocus s2 `shouldBe` FocusTools
-        let s3 = fst $ updateTui (EvUserKey KeyTab) s2
-        tsFocus s3 `shouldBe` FocusInput
+        tsFocus s2 `shouldBe` FocusInput
 
-      it "cycles backwards with BackTab" $ do
+      it "cycles backwards with BackTab between Input and Transcript" $ do
         let s1 = fst $ updateTui (EvUserKey KeyBackTab) baseState
-        tsFocus s1 `shouldBe` FocusTools
+        tsFocus s1 `shouldBe` FocusTranscript
+        let s2 = fst $ updateTui (EvUserKey KeyBackTab) s1
+        tsFocus s2 `shouldBe` FocusInput
 
     describe "Cancellation and Quitting" $ do
       it "quits on Ctrl+Q" $ do
@@ -100,7 +116,7 @@ spec = do
 
       it "cancels turn on Esc or Ctrl+C when busy" $ do
         let busyState = baseState { tsStatus = StatusThinking }
-            (s1, actions) = updateTui (EvUserKey KeyEsc) busyState
+        let (s1, actions) = updateTui (EvUserKey KeyEsc) busyState
         tsCancelRequested s1 `shouldBe` True
         tsStatus s1 `shouldBe` StatusError "Turn cancelled by user."
         actions `shouldBe` [ActionCancelAgent]
@@ -109,7 +125,7 @@ spec = do
         let s0 = baseState { tsInputBuffer = "Initial prompt" }
             (s1, _) = updateTui (EvUserKey KeyEnter) s0
         tsStatus s1 `shouldBe` StatusThinking
-        tsFocus s1 `shouldBe` FocusHistory
+        tsFocus s1 `shouldBe` FocusTranscript
         let (s2, actions) = updateTui (EvUserKey KeyEsc) s1
         tsStatus s2 `shouldBe` StatusError "Turn cancelled by user."
         actions `shouldBe` [ActionCancelAgent]
@@ -123,7 +139,7 @@ spec = do
         let s0 = baseState { tsInputBuffer = "Initial prompt" }
             (s1, _) = updateTui (EvUserKey KeyEnter) s0
         tsStatus s1 `shouldBe` StatusThinking
-        tsFocus s1 `shouldBe` FocusHistory
+        tsFocus s1 `shouldBe` FocusTranscript
         let (s2, actions) = updateTui (EvUserKey (KeyCtrl 'c')) s1
         tsStatus s2 `shouldBe` StatusError "Turn cancelled by user."
         actions `shouldBe` [ActionCancelAgent]
@@ -262,18 +278,80 @@ spec = do
           , TiAssistant "All operations complete."
           ]
 
-      it "toggles tool expansion on Enter when FocusTools is active" $ do
+      it "toggles tool expansion on Enter and Space when FocusTranscript is active" $ do
         let calls = [ToolCall "c1" "run_command" "echo hi"]
             s0 = fst $ updateTui (EvHarness (EvLLMResponse (Just "reply") calls Nothing)) baseState
-            toolsFocus = s0 { tsFocus = FocusTools }
-            (s1, _) = updateTui (EvUserKey KeyEnter) toolsFocus
+            transcriptFocus = s0 { tsFocus = FocusTranscript }
+            (s1, _) = updateTui (EvUserKey KeyEnter) transcriptFocus
         case [tc | TiToolCard tc <- tsTranscript s1] of
           [card] -> tcExpanded card `shouldBe` True
           _      -> expectationFailure "Expected tool card"
-        let (s2, _) = updateTui (EvUserKey KeyEnter) s1
+        let (s2, _) = updateTui (EvUserKey (KeyChar ' ')) s1
         case [tc | TiToolCard tc <- tsTranscript s2] of
           [card] -> tcExpanded card `shouldBe` False
           _      -> expectationFailure "Expected tool card"
+
+      it "moves and clamps tool card selection on Up and Down in FocusTranscript" $ do
+        let tool1 = TiToolCard (ToolCard "c1" "read_file" "{}" Pending False)
+            tool2 = TiToolCard (ToolCard "c2" "write_file" "{}" Pending False)
+            tool3 = TiToolCard (ToolCard "c3" "run_command" "{}" Pending False)
+            s0 = baseState { tsFocus = FocusTranscript, tsTranscript = [tool1, tool2, tool3], tsSelectedToolIndex = 1 }
+            (sUp, aUp) = updateTui (EvUserKey KeyUp) s0
+        tsSelectedToolIndex sUp `shouldBe` 0
+        aUp `shouldBe` []
+        let (sUp2, aUp2) = updateTui (EvUserKey KeyUp) sUp
+        tsSelectedToolIndex sUp2 `shouldBe` 0
+        aUp2 `shouldBe` []
+        let (sDown, aDown) = updateTui (EvUserKey KeyDown) s0
+        tsSelectedToolIndex sDown `shouldBe` 2
+        aDown `shouldBe` []
+        let (sDown2, aDown2) = updateTui (EvUserKey KeyDown) sDown
+        tsSelectedToolIndex sDown2 `shouldBe` 2
+        aDown2 `shouldBe` []
+
+      it "scrolls transcript one line on Up and Down in FocusTranscript when no tool cards exist" $ do
+        let s0 = baseState { tsFocus = FocusTranscript, tsTranscript = [TiUser "hi", TiAssistant "hello"] }
+            (sDown, aDown) = updateTui (EvUserKey KeyDown) s0
+        aDown `shouldBe` [ActionScrollTranscript 1]
+        let (sUp, aUp) = updateTui (EvUserKey KeyUp) sDown
+        aUp `shouldBe` [ActionScrollTranscript (-1)]
+
+      it "scrolls transcript 5 lines on PgUp and PgDn in FocusTranscript" $ do
+        let s0 = baseState { tsFocus = FocusTranscript }
+            (sDown, aDown) = updateTui (EvUserKey KeyPageDown) s0
+        aDown `shouldBe` [ActionScrollTranscript 5]
+        let (sUp, aUp) = updateTui (EvUserKey KeyPageUp) sDown
+        aUp `shouldBe` [ActionScrollTranscript (-5)]
+
+      it "clears transcript and resets context token counters on 'c' in FocusTranscript" $ do
+        let tool1 = TiToolCard (ToolCard "c1" "read_file" "{}" Pending False)
+            s0 = baseState
+              { tsFocus = FocusTranscript
+              , tsTranscript = [TiUser "hello", tool1]
+              , tsSelectedToolIndex = 1
+              , tsTranscriptScroll = 10
+              , tsContextTokens = 1500
+              , tsTokenUsage = Just (mkTokenUsage 100 200 300)
+              }
+            (s1, a1) = updateTui (EvUserKey (KeyChar 'c')) s0
+        tsTranscript s1 `shouldBe` []
+        tsSelectedToolIndex s1 `shouldBe` 0
+        tsTranscriptScroll s1 `shouldBe` 0
+        tsContextTokens s1 `shouldBe` 0
+        tsTokenUsage s1 `shouldBe` Nothing
+        a1 `shouldBe` []
+
+      it "quits on 'q' when FocusTranscript is active and agent is idle" $ do
+        let s0 = baseState { tsFocus = FocusTranscript, tsStatus = StatusIdle }
+            (s1, actions) = updateTui (EvUserKey (KeyChar 'q')) s0
+        tsShouldQuit s1 `shouldBe` True
+        actions `shouldBe` [ActionQuit]
+
+      it "does not quit on 'q' when FocusTranscript is active but agent is busy" $ do
+        let s0 = baseState { tsFocus = FocusTranscript, tsStatus = StatusThinking }
+            (s1, actions) = updateTui (EvUserKey (KeyChar 'q')) s0
+        tsShouldQuit s1 `shouldBe` False
+        actions `shouldBe` []
 
       it "records final completion answer on EvDone" $ do
         let s1 = fst $ updateTui (EvHarness (EvDone "Task completed successfully.")) baseState
@@ -311,66 +389,56 @@ spec = do
         actions `shouldBe` [ActionRunAgent "M2"]
 
     describe "Viewport Scrolling Actions" $ do
-      it "emits ActionScrollHistory 1 on KeyDown in History panel" $ do
-        let sHistory = baseState { tsFocus = FocusHistory }
-            (_, actions) = updateTui (EvUserKey KeyDown) sHistory
-        actions `shouldBe` [ActionScrollHistory 1]
-
-      it "emits ActionScrollHistory (-1) on KeyUp in History panel" $ do
-        let sHistory = baseState { tsFocus = FocusHistory }
-            (_, actions) = updateTui (EvUserKey KeyUp) sHistory
-        actions `shouldBe` [ActionScrollHistory (-1)]
-
-      it "emits ActionScrollHistory 5 on KeyPageDown in History panel" $ do
-        let sHistory = baseState { tsFocus = FocusHistory }
-            (_, actions) = updateTui (EvUserKey KeyPageDown) sHistory
-        actions `shouldBe` [ActionScrollHistory 5]
-
-      it "emits ActionScrollHistory (-5) on KeyPageUp in History panel" $ do
-        let sHistory = baseState { tsFocus = FocusHistory }
-            (_, actions) = updateTui (EvUserKey KeyPageUp) sHistory
-        actions `shouldBe` [ActionScrollHistory (-5)]
-
-      it "emits ActionScrollTools 1 on KeyDown in Tools panel" $ do
-        let tool1 = TiToolCard (ToolCard "c1" "read_file" "{}" Pending False)
-            tool2 = TiToolCard (ToolCard "c2" "write_file" "{}" Pending False)
-            sTools = baseState { tsFocus = FocusTools, tsTranscript = [tool1, tool2] }
-            (_, actions) = updateTui (EvUserKey KeyDown) sTools
-        actions `shouldBe` [ActionScrollTools 1]
-
-      it "emits ActionScrollTools (-1) on KeyUp in Tools panel" $ do
-        let tool1 = TiToolCard (ToolCard "c1" "read_file" "{}" Pending False)
-            tool2 = TiToolCard (ToolCard "c2" "write_file" "{}" Pending False)
-            sTools = baseState { tsFocus = FocusTools, tsTranscript = [tool1, tool2], tsSelectedToolIndex = 1 }
-            (_, actions) = updateTui (EvUserKey KeyUp) sTools
-        actions `shouldBe` [ActionScrollTools (-1)]
-
-      it "scrolls history on KeyPageUp and KeyPageDown even when focused in FocusInput" $ do
+      it "scrolls transcript on KeyPageUp and KeyPageDown even when focused in FocusInput" $ do
         let sInput = baseState { tsFocus = FocusInput }
             (_, actionsUp) = updateTui (EvUserKey KeyPageUp) sInput
             (_, actionsDown) = updateTui (EvUserKey KeyPageDown) sInput
-        actionsUp `shouldBe` [ActionScrollHistory (-5)]
-        actionsDown `shouldBe` [ActionScrollHistory 5]
+        actionsUp `shouldBe` [ActionScrollTranscript (-5)]
+        actionsDown `shouldBe` [ActionScrollTranscript 5]
 
-      it "scrolls history on mouse wheel KeyScrollUp and KeyScrollDown in FocusInput" $ do
+      it "scrolls transcript on mouse wheel KeyScrollUp and KeyScrollDown in FocusInput" $ do
         let sInput = baseState { tsFocus = FocusInput }
             (_, actionsUp) = updateTui (EvUserKey KeyScrollUp) sInput
             (_, actionsDown) = updateTui (EvUserKey KeyScrollDown) sInput
-        actionsUp `shouldBe` [ActionScrollHistory (-2)]
-        actionsDown `shouldBe` [ActionScrollHistory 2]
+        actionsUp `shouldBe` [ActionScrollTranscript (-2)]
+        actionsDown `shouldBe` [ActionScrollTranscript 2]
 
-      it "scrolls tools on KeyScrollUp and KeyScrollDown in FocusTools" $ do
-        let sTools = baseState { tsFocus = FocusTools }
-            (_, actionsUp) = updateTui (EvUserKey KeyScrollUp) sTools
-            (_, actionsDown) = updateTui (EvUserKey KeyScrollDown) sTools
-        actionsUp `shouldBe` [ActionScrollTools (-2)]
-        actionsDown `shouldBe` [ActionScrollTools 2]
+    describe "Headless Render Tests" $ do
+      it "renders user text, assistant text and tool cards with strictly increasing row indices in transcript order" $ do
+        let card = ToolCard "call-1" "read_file" "{\"path\":\"foo.txt\"}" (Finished (ToolSuccess "file contents")) False
+            st = baseState
+              { tsTranscript =
+                  [ TiUser "Show me foo.txt"
+                  , TiAssistant "Here is the file"
+                  , TiToolCard card
+                  ]
+              }
+            rows = renderTestRows st (100, 30)
+            findRow needle = case [idx | (idx, r) <- zip [0..] rows, needle `T.isInfixOf` r] of
+              (i:_) -> Just i
+              []    -> Nothing
+        let mUserRow = findRow "Show me foo.txt"
+            mAsstRow = findRow "Here is the file"
+            mToolRow = findRow "read_file"
+        mUserRow `shouldSatisfy` (/= Nothing)
+        mAsstRow `shouldSatisfy` (/= Nothing)
+        mToolRow `shouldSatisfy` (/= Nothing)
+        let Just userRow = mUserRow
+            Just asstRow = mAsstRow
+            Just toolRow = mToolRow
+        userRow `shouldSatisfy` (< asstRow)
+        asstRow `shouldSatisfy` (< toolRow)
 
-      it "scrolls tool activity on KeyDown even when there is only 1 tool card" $ do
-        let tool1 = TiToolCard (ToolCard "c1" "read_file" "{}" Pending True)
-            sTools = baseState { tsFocus = FocusTools, tsTranscript = [tool1], tsSelectedToolIndex = 0 }
-            (_, actions) = updateTui (EvUserKey KeyDown) sTools
-        actions `shouldBe` [ActionScrollTools 1]
+      it "shows output when tool card is expanded and only summary when collapsed" $ do
+        let cardCollapsed = ToolCard "c1" "read_file" "{\"path\":\"a\"}" (Finished (ToolSuccess "SECRET_PAYLOAD_12345")) False
+            cardExpanded  = ToolCard "c1" "read_file" "{\"path\":\"a\"}" (Finished (ToolSuccess "SECRET_PAYLOAD_12345")) True
+            stCollapsed = baseState { tsTranscript = [TiToolCard cardCollapsed] }
+            stExpanded  = baseState { tsTranscript = [TiToolCard cardExpanded] }
+            rowsCollapsed = renderTestRows stCollapsed (100, 30)
+            rowsExpanded  = renderTestRows stExpanded (100, 30)
+        any ("✓ success" `T.isInfixOf`) rowsCollapsed `shouldBe` True
+        any ("SECRET_PAYLOAD_12345" `T.isInfixOf`) rowsCollapsed `shouldBe` False
+        any ("SECRET_PAYLOAD_12345" `T.isInfixOf`) rowsExpanded `shouldBe` True
 
     describe "Vty to UserKey Event Conversion" $ do
       it "converts mouse scroll wheel up to KeyScrollUp" $ do
@@ -871,9 +939,9 @@ spec = do
         tsInputBuffer s1 `shouldBe` "please run /goal"
 
       it "cycles focus on Tab from non-input panels even with skills present" $ do
-        let s0 = skillState { tsFocus = FocusHistory, tsInputBuffer = "/go" }
+        let s0 = skillState { tsFocus = FocusTranscript, tsInputBuffer = "/go" }
             (s1, _) = updateTui (EvUserKey KeyTab) s0
-        tsFocus s1 `shouldBe` FocusTools
+        tsFocus s1 `shouldBe` FocusInput
 
     describe "Goal Execution Unlimited Turns in TUI (Bug Repro)" $ do
       it "defaults cfgMaxTurns to Nothing (infinity) in goalAgentConfig" $ do
