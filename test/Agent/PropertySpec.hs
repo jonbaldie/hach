@@ -122,25 +122,25 @@ spec = do
 
     describe "TUI State Machine Invariants under Fuzzing" $ do
       it "preserves state invariants across arbitrary sequences of user keys" $ property $ \(events :: [TuiEvent]) ->
-        let initialState = initialTuiState "meta/muse-glimmer-30b" 10
+        let initialState = initialTuiState "meta/muse-glimmer-30b" (Just 10)
             finalState = foldl (\s ev -> fst (updateTui ev s)) initialState events
         in tsHistoryScroll finalState >= 0
            && tsSelectedToolIndex finalState >= 0
            && (null (tsTools finalState) || tsSelectedToolIndex finalState < length (tsTools finalState))
 
       it "quits on 'q' when History or Tools panel is focused (User Story 19)" $ do
-        let sHistory = (initialTuiState "m" 10) { tsFocus = FocusHistory }
+        let sHistory = (initialTuiState "m" (Just 10)) { tsFocus = FocusHistory }
             (s1, actions1) = updateTui (EvUserKey (KeyChar 'q')) sHistory
         tsShouldQuit s1 `shouldBe` True
         actions1 `shouldBe` [ActionQuit]
 
-        let sTools = (initialTuiState "m" 10) { tsFocus = FocusTools }
+        let sTools = (initialTuiState "m" (Just 10)) { tsFocus = FocusTools }
             (s2, actions2) = updateTui (EvUserKey (KeyChar 'q')) sTools
         tsShouldQuit s2 `shouldBe` True
         actions2 `shouldBe` [ActionQuit]
 
       it "toggles help overlay on KeyF1 from any focus mode" $ do
-        let s0 = initialTuiState "m" 10
+        let s0 = initialTuiState "m" (Just 10)
         tsShowHelp s0 `shouldBe` False
         let (s1, _) = updateTui (EvUserKey KeyF1) s0
         tsShowHelp s1 `shouldBe` True

@@ -14,7 +14,7 @@ spec = do
   let baseConfig = AgentConfig
         { cfgModel = "test-model"
         , cfgSystemPrompt = Just "You are an assistant."
-        , cfgMaxTurns = 5
+        , cfgMaxTurns = Just 5
         }
 
   describe "agentLoop with Pure Interpreter" $ do
@@ -94,7 +94,7 @@ spec = do
       mockEvents endEnv `shouldContain` [EvLLMResponse (Just "Tokens measured") [] (Just usage)]
 
     it "terminates when maximum turns are reached" $ do
-      let loopConfig = baseConfig { cfgMaxTurns = 2 }
+      let loopConfig = baseConfig { cfgMaxTurns = Just 2 }
       let infiniteToolCall = ToolCall
             { callId = "loop_call"
             , functionName = "read_file"
@@ -109,6 +109,42 @@ spec = do
           ((result, _), _) = runPure env (agentLoop loopConfig allToolDefs [UserMsg "Run forever"])
 
       result `shouldBe` AgentMaxTurnsReached 2
+
+    it "runs past the old default of 10 turns when cfgMaxTurns is Nothing (unlimited)" $ do
+      let toolCall = ToolCall
+            { callId = "call_loop"
+            , functionName = "read_file"
+            , callArgsRaw = "{\"path\":\"hello.txt\"}"
+            }
+          stepLoop _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
+          stepFinal _ _ = Right $ AssistantResponse (Just "Finally done!") [] Nothing
+          unlimitedConfig = baseConfig { cfgMaxTurns = Nothing }
+          -- 12 tool-calling turns, then a final answer on turn 13.
+          env = emptyMockEnv
+            { mockLLMSteps = replicate 12 stepLoop ++ [stepFinal]
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          ((result, _), _) = runPure env (agentLoop unlimitedConfig allToolDefs [UserMsg "Run long"])
+
+      result `shouldBe` AgentCompleted "Finally done!"
+
+    it "never terminates with AgentMaxTurnsReached when cfgMaxTurns is Nothing" $ do
+      let toolCall = ToolCall
+            { callId = "call_loop"
+            , functionName = "read_file"
+            , callArgsRaw = "{\"path\":\"hello.txt\"}"
+            }
+          stepLoop _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
+          stepFinal _ _ = Right $ AssistantResponse (Just "Done") [] Nothing
+          unlimitedConfig = baseConfig { cfgMaxTurns = Nothing }
+          env = emptyMockEnv
+            { mockLLMSteps = replicate 100 stepLoop ++ [stepFinal]
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          ((result, _), _) = runPure env (agentLoop unlimitedConfig allToolDefs [UserMsg "Run very long"])
+
+      result `shouldNotBe` AgentMaxTurnsReached 100
+      result `shouldBe` AgentCompleted "Done"
 
     it "terminates with AgentFailed when model returns an error" $ do
       let stepError _ _ = Left "401 Unauthorized"

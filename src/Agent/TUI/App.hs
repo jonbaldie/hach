@@ -81,7 +81,7 @@ runTui ioEnv initialPrompt = do
   mGuidelines <- loadProjectInstructions (ioWorkspace ioEnv)
   let sysPrompt = buildSystemPrompt mGuidelines
 
-  let baseState = (initialTuiState (ioModel ioEnv) 10) { tsSkills = skills }
+  let baseState = (initialTuiState (ioModel ioEnv) Nothing) { tsSkills = skills }
       startingState = case initialPrompt of
         Just p  -> fst $ updateTui (EvSubmit p) baseState
         Nothing -> baseState
@@ -159,7 +159,7 @@ triggerAgentRun eventChan workerVar ioEnv sysPrompt currentPrompt historyItems =
     let agentConfig = AgentConfig
           { cfgModel        = ioModel ioEnv
           , cfgSystemPrompt = Just sysPrompt
-          , cfgMaxTurns     = 10
+          , cfgMaxTurns     = Nothing
           }
         initHistory = dialogueToMessages sysPrompt currentPrompt historyItems
 

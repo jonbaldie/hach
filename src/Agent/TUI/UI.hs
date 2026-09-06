@@ -5,6 +5,7 @@ module Agent.TUI.UI
   ( drawUI
   , tuiAttrMap
   , formatTokens
+  , renderMaxTurns
   , Name(..)
   ) where
 
@@ -137,6 +138,10 @@ formatTokens n
       let s = show x
       in T.pack (replicate (3 - length s) '0' ++ s)
 
+-- | Render the max-turns display: the infinity sign when unlimited.
+renderMaxTurns :: Maybe Int -> Text
+renderMaxTurns = maybe "∞" (T.pack . show)
+
 -- | Modern, sleek status bar (Claude Code / AGY CLI style).
 renderHeader :: TuiState -> Widget Name
 renderHeader TuiState{..} =
@@ -148,7 +153,7 @@ renderHeader TuiState{..} =
     , withAttr dimAttr (txt "model: ")
     , withAttr modelAttr (txt tsModelName)
     , withAttr dimAttr (txt "  │  turn: ")
-    , withAttr turnAttr (txt (T.pack (show tsCurrentTurn) <> "/" <> T.pack (show tsMaxTurns)))
+    , withAttr turnAttr (txt (T.pack (show tsCurrentTurn) <> "/" <> renderMaxTurns tsMaxTurns))
     , withAttr dimAttr (txt "  │  tokens: ")
     , withAttr tokenAttr (txt (formatTokens tsContextTokens))
     , withAttr dimAttr (txt "  │  ")

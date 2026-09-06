@@ -6,7 +6,7 @@ import Agent.Skills (Skill(..), SkillSource(..))
 import Agent.TUI.App (dialogueToMessages, vtyToUserKey)
 import Agent.TUI.State
 import Agent.TUI.Types
-import Agent.TUI.UI (formatTokens)
+import Agent.TUI.UI (formatTokens, renderMaxTurns)
 import Agent.Types (AgentEvent(..), Message(..), TokenUsage(..), ToolResult(..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -15,7 +15,7 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
-  let baseState = initialTuiState "meta/muse-glimmer-30b" 10
+  let baseState = initialTuiState "meta/muse-glimmer-30b" (Just 10)
 
   describe "TUI Pure State Reducer (Pre-agreed Seam)" $ do
     describe "Text Input and Prompt Submission" $ do
@@ -334,6 +334,19 @@ spec = do
         formatTokens 1000 `shouldBe` "1,000"
         formatTokens 1520 `shouldBe` "1,520"
         formatTokens 128450 `shouldBe` "128,450"
+
+    describe "renderMaxTurns" $ do
+      it "shows the infinity sign when turns are unlimited (Nothing)" $ do
+        renderMaxTurns Nothing `shouldBe` "∞"
+
+      it "shows the numeric limit when turns are capped" $ do
+        renderMaxTurns (Just 10) `shouldBe` "10"
+        renderMaxTurns (Just 42) `shouldBe` "42"
+
+      it "renders the full header turn display as 0/∞ for the unlimited default" $ do
+        let unlimitedState = initialTuiState "m" Nothing
+            headerTurnText = T.pack (show (tsCurrentTurn unlimitedState)) <> "/" <> renderMaxTurns (tsMaxTurns unlimitedState)
+        headerTurnText `shouldBe` "0/∞"
 
     describe "Local Slash Commands and Skill Invocations" $ do
       it "handles /clear locally by emptying dialogue history without running agent" $ do
