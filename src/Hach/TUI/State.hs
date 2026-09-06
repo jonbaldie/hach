@@ -12,7 +12,7 @@ module Hach.TUI.State
   ) where
 
 import Hach.Sessions (estimateCostUsd)
-import Hach.Skills (injectSkillsIntoPrompt, inputSlashCompletion, parseSkillInvocations)
+import Hach.Skills (injectSkillsIntoPrompt, inputSlashCompletion, parseSkillInvocations, skillName)
 import Hach.TUI.Types
 import Hach.TUI.UI (formatTokens)
 import Hach.Types
