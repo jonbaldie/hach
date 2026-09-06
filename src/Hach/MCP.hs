@@ -94,16 +94,16 @@ formatMcpToolName :: Text -> Text -> Text
 formatMcpToolName server tool = "mcp__" <> server <> "__" <> tool
 
 -- | Parse a qualified MCP tool name back into server name and tool name.
+-- Requires exactly two segments after the @mcp__@ prefix, so a server
+-- name containing @__@ cannot be confused with a tool name.
 parseMcpToolName :: Text -> Maybe (Text, Text)
 parseMcpToolName t =
   case T.stripPrefix "mcp__" t of
     Nothing   -> Nothing
     Just rest ->
-      case T.breakOn "__" rest of
-        (srv, toolWithSep)
-          | not (T.null srv) && T.isPrefixOf "__" toolWithSep ->
-              let tool = T.drop 2 toolWithSep
-              in if T.null tool then Nothing else Just (srv, tool)
+      case T.splitOn "__" rest of
+        [srv, tool]
+          | not (T.null srv) && not (T.null tool) -> Just (srv, tool)
         _ -> Nothing
 
 -- | Search tool definitions by substring matching.

@@ -118,6 +118,7 @@ module Hach.Tools
 
 import Hach.Git (createWorktree)
 import Hach.Notifications (sendDesktopNotification)
+import Hach.Paths (resolveWorkspacePath)
 import Hach.Skills (discoverSkills, injectDynamicContext, skillContent, substituteArguments)
 import Hach.Tasks
   ( Task(..)
@@ -147,7 +148,6 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonTypes
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import Data.List (isPrefixOf)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -166,12 +166,7 @@ import System.Directory
 import System.Exit (ExitCode(..))
 import System.FilePath
   ( (</>)
-  , isAbsolute
-  , isPathSeparator
-  , joinPath
   , makeRelative
-  , pathSeparator
-  , splitDirectories
   , takeDirectory
   , takeFileName
   )
@@ -1116,51 +1111,6 @@ executeCodingTool root call = do
   pure $ case res of
     ToolSuccess out -> ToolSuccess (truncateToolOutput out)
     err             -> err
-
--- | Logically collapses '.' and '..' components in an absolute path.
-collapseLogicalPath :: FilePath -> FilePath
-collapseLogicalPath p =
-  let dirs = splitDirectories p
-      step acc d
-        | d == "." || d == "./" || d == ".\\" = acc
-        | d == ".." || d == "../" || d == "..\\" = case acc of
-            [] -> []
-            ["/"] -> ["/"]
-            (_:xs) -> xs
-        | otherwise = d : acc
-  in joinPath (reverse (foldl step [] dirs))
-
--- | Canonicalize an existing path or the deepest existing parent directory
--- of a non-existing path. This resolves symlinks while preserving target filename.
-canonicalizeCandidate :: FilePath -> IO FilePath
-canonicalizeCandidate path = do
-  existsFile <- doesFileExist path
-  existsDir  <- doesDirectoryExist path
-  if existsFile || existsDir
-    then canonicalizePath path
-    else do
-      let parent = takeDirectory path
-      if parent == path
-        then pure path
-        else do
-          canonParent <- canonicalizeCandidate parent
-          pure (canonParent </> takeFileName path)
-
--- | Resolve a target path against the workspace root.
--- Enforces that the resolved path is strictly located within the workspace root,
--- preventing directory traversal attacks via '..' or absolute paths.
-resolveWorkspacePath :: FilePath -> FilePath -> IO (Either String FilePath)
-resolveWorkspacePath root rawPath = do
-  rootCanon <- canonicalizePath root
-  let candidate = if isAbsolute rawPath
-                    then rawPath
-                    else rootCanon </> rawPath
-      collapsed = collapseLogicalPath candidate
-  finalPath <- canonicalizeCandidate collapsed
-  let rootWithSep = if isPathSeparator (last rootCanon) then rootCanon else rootCanon ++ [pathSeparator]
-  if finalPath == rootCanon || (rootWithSep `isPrefixOf` finalPath)
-    then pure (Right finalPath)
-    else pure (Left ("Access denied: path '" <> rawPath <> "' escapes the workspace root."))
 
 executeReadFile :: FilePath -> ReadFileArgs -> IO ToolResult
 executeReadFile root (ReadFileArgs path) = do

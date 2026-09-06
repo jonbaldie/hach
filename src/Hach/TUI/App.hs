@@ -159,6 +159,8 @@ transcriptItemsToMessages = go . collapseAdjacentAssistants . filter (not . isNo
     collapseAdjacentAssistants [] = []
     collapseAdjacentAssistants (TiAssistant a1 : TiAssistant a2 : rest) =
       collapseAdjacentAssistants (TiAssistant (a1 <> "\n\n" <> a2) : rest)
+    collapseAdjacentAssistants (TiUser u1 : TiUser u2 : rest) =
+      collapseAdjacentAssistants (TiUser (u1 <> "\n\n" <> u2) : rest)
     collapseAdjacentAssistants (x : xs) =
       x : collapseAdjacentAssistants xs
 

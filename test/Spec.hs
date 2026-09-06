@@ -12,6 +12,7 @@ import qualified Hach.TUILayoutSpec as TUILayoutSpec
 import qualified Hach.PropertySpec as PropertySpec
 import qualified Hach.GoalFuzzSpec as GoalFuzzSpec
 import qualified Hach.CampaignSpec as CampaignSpec
+import qualified Hach.Campaign2Spec as Campaign2Spec
 import qualified Hach.SkillsSpec as SkillsSpec
 import qualified Hach.PermissionsSpec as PermissionsSpec
 import qualified Hach.SettingsSpec as SettingsSpec
@@ -35,6 +36,7 @@ main = hspec $ do
   describe "Hach.Property (CGPT & Fuzzing)" PropertySpec.spec
   describe "Hach.GoalFuzz (CGPT /goal campaign)" GoalFuzzSpec.spec
   describe "Hach.Campaign (CGPT coverage-guided campaign)" CampaignSpec.spec
+  describe "Hach.Campaign2 (CGPT wave-2 containment & identity)" Campaign2Spec.spec
   describe "Hach.Skills" SkillsSpec.spec
   describe "Hach.Permissions" PermissionsSpec.spec
   describe "Hach.Settings" SettingsSpec.spec

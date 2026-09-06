@@ -22,6 +22,11 @@ spec = describe "Hach.MCP" $ do
       parseMcpToolName "read_file" `shouldBe` Nothing
       parseMcpToolName "mcp_single_underscore" `shouldBe` Nothing
 
+    it "rejects names with extra __ segments so server names cannot swallow the tool" $ do
+      parseMcpToolName "mcp__my__server__query" `shouldBe` Nothing
+      parseMcpToolName "mcp____query" `shouldBe` Nothing
+      parseMcpToolName "mcp__sqlite__" `shouldBe` Nothing
+
   describe ".mcp.json parsing" $ do
     it "parses stdio server configuration" $ do
       let raw = "{\n\

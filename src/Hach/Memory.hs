@@ -11,6 +11,7 @@ module Hach.Memory
   , loadFullMemory
   ) where
 
+import Hach.Paths (resolveWorkspacePath)
 import Hach.Permissions (matchGlob)
 import Control.Exception (SomeException, try)
 import qualified Data.ByteString as BS
@@ -19,7 +20,13 @@ import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import System.Directory (doesDirectoryExist, doesFileExist, getHomeDirectory, listDirectory)
+import System.Directory
+  ( doesDirectoryExist
+  , doesFileExist
+  , getHomeDirectory
+  , listDirectory
+  , makeAbsolute
+  )
 import System.FilePath
   ( (</>)
   , isAbsolute
@@ -73,26 +80,35 @@ ruleMatchesFiles Rule{..} fps
   | otherwise = any (\fp -> any (\pat -> matchGlob pat fp) rulePatterns) fps
 
 -- | Recursively resolve @import directives up to a maximum recursion depth (default 4).
+-- Imported paths are resolved relative to the importing file, then rejected
+-- unless they remain inside 'baseDir' (typically the workspace root).
 resolveMemoryImports :: FilePath -> Int -> FilePath -> IO Text
-resolveMemoryImports _baseDir maxDepth path = go maxDepth path
+resolveMemoryImports baseDir maxDepth path = do
+  absBase <- makeAbsolute baseDir
+  go absBase maxDepth path
   where
-    go depth fp
+    go base depth fp
       | depth <= 0 = pure ""
       | otherwise = do
-          exists <- doesFileExist fp
-          if not exists
-            then pure ""
-            else do
-              res <- try (BS.readFile fp) :: IO (Either SomeException BS.ByteString)
-              case res of
-                Left _ -> pure ""
-                Right bytes -> do
-                  let txt = TE.decodeUtf8With (\_ _ -> Just ' ') bytes
-                      ls  = T.lines txt
-                  expandedLines <- mapM (processLine (depth - 1) (takeDirectory fp)) ls
-                  pure (T.unlines (concat expandedLines))
+          absFp <- makeAbsolute fp
+          allowed <- resolveWorkspacePath base absFp
+          case allowed of
+            Left _ -> pure ""
+            Right safeFp -> do
+              exists <- doesFileExist safeFp
+              if not exists
+                then pure ""
+                else do
+                  res <- try (BS.readFile safeFp) :: IO (Either SomeException BS.ByteString)
+                  case res of
+                    Left _ -> pure ""
+                    Right bytes -> do
+                      let txt = TE.decodeUtf8With (\_ _ -> Just ' ') bytes
+                          ls  = T.lines txt
+                      expandedLines <- mapM (processLine base (depth - 1) (takeDirectory safeFp)) ls
+                      pure (T.unlines (concat expandedLines))
 
-    processLine depth dir line
+    processLine base depth dir line
       | "@import " `T.isPrefixOf` T.strip line =
           if depth <= 0
             then pure ["[Max @import depth exceeded: " <> line <> "]"]
@@ -100,8 +116,13 @@ resolveMemoryImports _baseDir maxDepth path = go maxDepth path
               let rawRel = T.strip (T.drop (T.length ("@import " :: T.Text)) (T.strip line))
                   cleanRel = T.unpack (T.dropAround (\c -> c == '"' || c == '\'' || isSpace c) rawRel)
                   targetFp = if isAbsolute cleanRel then cleanRel else dir </> cleanRel
-              content <- go depth targetFp
-              pure (T.lines content)
+              pathRes <- resolveWorkspacePath base targetFp
+              case pathRes of
+                Left _ ->
+                  pure ["[Import denied: path escapes workspace]"]
+                Right safeFp -> do
+                  content <- go base depth safeFp
+                  pure (T.lines content)
       | otherwise = pure [line]
 
 -- | Walk directories from workspace root to cwd, loading CLAUDE.md or AGENT.md.
@@ -118,11 +139,11 @@ loadHierarchicalMemory root cwd = do
           agentFp  = dir </> "AGENT.md"
       claudeExists <- doesFileExist claudeFp
       if claudeExists
-        then Just <$> resolveMemoryImports dir 4 claudeFp
+        then Just <$> resolveMemoryImports root 4 claudeFp
         else do
           agentExists <- doesFileExist agentFp
           if agentExists
-            then Just <$> resolveMemoryImports dir 4 agentFp
+            then Just <$> resolveMemoryImports root 4 agentFp
             else pure Nothing
 
 -- | Load rules matching the active files from .claude/rules/*.md and .agents/rules/*.md.
