@@ -11,7 +11,8 @@ module Agent.TUI.State
 import Agent.Skills (Skill(..), injectSkillsIntoPrompt, parseSkillInvocations)
 import Agent.TUI.Types
 import Agent.TUI.UI (formatTokens)
-import Agent.Types (AgentEvent(..), TokenUsage(..), ToolResult)
+import Agent.Types (AgentEvent(..), GoalState(..), GoalStatus(..), GoalVerdict(..), TokenUsage(..), ToolResult, initialGoalState)
+import Data.Char (isSpace)
 import qualified Data.Text as T
 
 -- | Pure state reducer for the TUI.
@@ -28,6 +29,14 @@ updateTui event state = case event of
   EvHarness agentEv ->
     (handleAgentEvent agentEv state, [])
 
+-- | Maximum length of a goal condition text.
+maxGoalConditionLength :: Int
+maxGoalConditionLength = 4000
+
+-- | Aliases for clearing the goal.
+goalClearAliases :: [T.Text]
+goalClearAliases = ["clear", "stop", "off", "reset", "none", "cancel"]
+
 -- | Handle submitting a user task prompt.
 handleSubmitPrompt :: T.Text -> TuiState -> (TuiState, [TuiAction])
 handleSubmitPrompt rawPrompt state
@@ -40,6 +49,7 @@ handleSubmitPrompt rawPrompt state
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
+                 , tsGoalState          = Nothing
                  }
          , []
          )
@@ -84,6 +94,79 @@ handleSubmitPrompt rawPrompt state
                  }
          , []
          )
+  | trimmed == "/goal" =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          (goalNotice, _) = goalStatusText (tsGoalState state)
+          newHistory = tsHistory state ++ [DiNotice goalNotice]
+      in ( state { tsHistory            = newHistory
+                 , tsInputBuffer        = ""
+                 , tsPromptHistory      = newPromptHistory
+                 , tsPromptHistoryIndex = Nothing
+                 , tsPromptDraft        = ""
+                 }
+         , []
+         )
+  | T.isPrefixOf "/goal " trimmed =
+      let newPromptHistory = tsPromptHistory state ++ [trimmed]
+          argText = T.drop (T.length ("/goal " :: T.Text)) trimmed
+          argWord = T.toLower (T.takeWhile (not . isSpace) argText)
+      in if argWord `elem` goalClearAliases && T.null (T.strip (T.dropWhile (not . isSpace) argText))
+           then
+             let (clearNotice, newGoalState) = case tsGoalState state of
+                   Just gs | gsStatus gs `notElem` [GoalCleared, GoalFailed, GoalAchieved] ->
+                     ( "Goal cleared: " <> gsCondition gs
+                     , Just gs { gsStatus = GoalCleared } )
+                   _ ->
+                     ( "No goal set", Nothing )
+                 newHistory = tsHistory state ++ [DiNotice clearNotice]
+             in ( state { tsHistory            = newHistory
+                        , tsInputBuffer        = ""
+                        , tsPromptHistory      = newPromptHistory
+                        , tsPromptHistoryIndex = Nothing
+                        , tsPromptDraft        = ""
+                        , tsGoalState          = newGoalState
+                        }
+                , [] )
+           else if T.null (T.strip argText)
+             then
+               let newHistory = tsHistory state ++
+                     [DiNotice "Usage: /goal <condition> or /goal clear"]
+               in ( state { tsHistory            = newHistory
+                          , tsInputBuffer        = ""
+                          , tsPromptHistory      = newPromptHistory
+                          , tsPromptHistoryIndex = Nothing
+                          , tsPromptDraft        = ""
+                          }
+                  , [] )
+           else if T.length argText > maxGoalConditionLength
+             then
+               let newHistory = tsHistory state ++
+                     [DiNotice ("Goal condition too long (max " <>
+                       T.pack (show maxGoalConditionLength) <> " characters).")]
+               in ( state { tsHistory            = newHistory
+                          , tsInputBuffer        = ""
+                          , tsPromptHistory      = newPromptHistory
+                          , tsPromptHistoryIndex = Nothing
+                          , tsPromptDraft        = ""
+                          }
+                  , [] )
+           else
+             let condition = T.strip argText
+                 gs = initialGoalState condition
+                 newHistory = tsHistory state ++
+                   [ DiUser trimmed
+                   , DiNotice ("Goal set: " <> condition)
+                   ]
+             in ( state { tsHistory            = newHistory
+                        , tsInputBuffer        = ""
+                        , tsStatus             = StatusThinking
+                        , tsFocus              = FocusHistory
+                        , tsPromptHistory      = newPromptHistory
+                        , tsPromptHistoryIndex = Nothing
+                        , tsPromptDraft        = ""
+                        , tsGoalState          = Just gs
+                        }
+                , [ActionRunGoal condition] )
   | otherwise =
       let (cleanedPrompt, invokedSkills) = parseSkillInvocations (tsSkills state) trimmed
           finalPrompt = injectSkillsIntoPrompt invokedSkills cleanedPrompt
@@ -351,6 +434,87 @@ handleAgentEvent event state@TuiState{..} = case event of
 
   EvTurnComplete _ ->
     state
+
+  EvGoalSet cond ->
+    state { tsGoalState = Just (initialGoalState cond) }
+
+  EvGoalEvaluated verdict reason ->
+    case tsGoalState of
+      Just gs -> state
+        { tsGoalState = Just gs
+          { gsLastVerdict = Just verdict
+          , gsLastReason  = Just reason
+          , gsTurnCount   = gsTurnCount gs + 1
+          }
+        , tsHistory = tsHistory ++ [DiNotice ("Goal evaluated: " <> verdictText verdict <> " — " <> reason)]
+        }
+      Nothing -> state
+
+  EvGoalAchieved cond ->
+    case tsGoalState of
+      Just gs -> state
+        { tsGoalState = Just gs { gsStatus = GoalAchieved }
+        , tsHistory = tsHistory ++ [DiNotice ("Goal achieved: " <> cond)]
+        , tsFocus = FocusInput
+        }
+      Nothing -> state
+
+  EvGoalFailed cond reason ->
+    case tsGoalState of
+      Just gs -> state
+        { tsGoalState = Just gs { gsStatus = GoalFailed }
+        , tsHistory = tsHistory ++ [DiNotice ("Goal failed: " <> cond <> " — " <> reason)]
+        , tsFocus = FocusInput
+        }
+      Nothing -> state
+
+  EvGoalCleared cond ->
+    state { tsGoalState = Nothing }
+
+  EvGoalBlocked cond ->
+    case tsGoalState of
+      Just gs -> state
+        { tsHistory = tsHistory ++
+          [ DiNotice ("No progress detected. Goal still active: " <> cond)
+          , DiNotice "Run /goal again to continue after your next prompt."
+          ]
+        , tsFocus = FocusInput
+        }
+      Nothing -> state
+
+-- | Render a goal verdict as display text.
+verdictText :: GoalVerdict -> T.Text
+verdictText = \case
+  GoalMet         -> "met"
+  GoalNotYetMet   -> "not yet met"
+  GoalImpossible  -> "impossible"
+
+-- | Produce a status notice and updated goal state for the `/goal` command.
+goalStatusText :: Maybe GoalState -> (T.Text, Maybe GoalState)
+goalStatusText Nothing = ("No goal set", Nothing)
+goalStatusText (Just gs) =
+  case gsStatus gs of
+    GoalActive ->
+      let reasonText = case gsLastReason gs of
+            Just r  -> "  Reason: " <> r
+            Nothing -> ""
+      in ( "Goal active: " <> gsCondition gs
+         <> "  Turns: " <> T.pack (show (gsTurnCount gs))
+         <> reasonText
+         , Just gs )
+    GoalAchieved ->
+      ( "Goal achieved: " <> gsCondition gs
+      <> "  Turns: " <> T.pack (show (gsTurnCount gs))
+      , Just gs )
+    GoalFailed ->
+      let reasonText = case gsLastReason gs of
+            Just r  -> "  Reason: " <> r
+            Nothing -> ""
+      in ( "Goal failed: " <> gsCondition gs <> reasonText
+         , Just gs )
+    GoalCleared ->
+      ( "Goal cleared: " <> gsCondition gs
+      , Just gs )
 
 -- | Attach tool execution output to the most recent unfinished tool item.
 updateLatestToolResult :: ToolResult -> [ToolItem] -> [ToolItem]

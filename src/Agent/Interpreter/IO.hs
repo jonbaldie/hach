@@ -6,6 +6,8 @@ module Agent.Interpreter.IO
   , newIOEnv
   , ioAlgebra
   , runIO
+  , evaluatorSystemPrompt
+  , parseGoalEvaluation
   ) where
 
 import Agent.Core
@@ -13,8 +15,11 @@ import Agent.OpenRouter
 import Agent.Tools
 import Agent.Types
 import Control.Monad (when)
+import qualified Data.Aeson as Aeson
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
 import Network.HTTP.Client (Manager, newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
@@ -90,6 +95,54 @@ renderEventIO verbose = \case
   EvError err -> do
     putStrLn ("\n[Agent Error]: " <> T.unpack err)
 
+  EvGoalSet cond ->
+    putStrLn ("\n[Goal] Set: " <> T.unpack cond)
+
+  EvGoalEvaluated verdict reason ->
+    putStrLn ("\n[Goal] Evaluated: " <> show verdict <> " — " <> T.unpack reason)
+
+  EvGoalAchieved cond ->
+    putStrLn ("\n[Goal] Achieved: " <> T.unpack cond)
+
+  EvGoalFailed cond reason ->
+    putStrLn ("\n[Goal] Failed: " <> T.unpack cond <> " — " <> T.unpack reason)
+
+  EvGoalCleared cond ->
+    putStrLn ("\n[Goal] Cleared: " <> T.unpack cond)
+
+  EvGoalBlocked cond ->
+    putStrLn ("\n[Goal] No progress detected. Goal still active: " <> T.unpack cond)
+
+-- | System prompt instructing the evaluator LLM to judge goal completion.
+evaluatorSystemPrompt :: Text
+evaluatorSystemPrompt =
+  "You are a goal evaluator. You must determine whether a completion condition \
+  \is met, not yet met, or impossible, based only on the conversation transcript. \
+  \You cannot run tools or read files. You see only what the agent has surfaced. \
+  \Respond with JSON only: {\"verdict\": \"met\" | \"not_yet_met\" | \"impossible\", \"reason\": \"<short reason>\"}"
+
+-- | Parse the evaluator LLM response content into a 'GoalEvaluation'.
+-- Handles raw JSON, markdown-wrapped JSON, and JSON embedded in prose.
+parseGoalEvaluation :: Text -> GoalEvaluation
+parseGoalEvaluation content =
+  case Aeson.eitherDecodeStrict (TE.encodeUtf8 content) of
+    Right ge -> ge
+    Left _   -> extractJson content
+  where
+    extractJson txt =
+      case T.breakOn "{" txt of
+        (_, rest) | not (T.null rest) ->
+          -- Extract from the first '{' to the last '}' to handle
+          -- markdown code fences and trailing text.
+          let jsonPart = fst (T.breakOnEnd "}" rest)
+          in if T.null jsonPart
+               then fallback
+               else case Aeson.eitherDecodeStrict (TE.encodeUtf8 jsonPart) of
+                      Right ge -> ge
+                      Left _   -> fallback
+        _ -> fallback
+    fallback = GoalEvaluation GoalNotYetMet "Could not parse evaluator response."
+
 -- | Concrete IO algebra interpreting agent instructions against real OpenRouter and OS.
 ioAlgebra :: IOEnv -> AgentAlgebra IO
 ioAlgebra IOEnv{..} = AgentAlgebra
@@ -112,7 +165,34 @@ ioAlgebra IOEnv{..} = AgentAlgebra
       executeCodingTool ioWorkspace call
 
   , interpLog = renderEventIO ioVerbose
+
+  , interpEvaluate = \condition transcript -> do
+      let evalMsgs = SystemMsg evaluatorSystemPrompt
+                   : UserMsg ("Condition: " <> condition <> "\n\nTranscript:\n" <> transcriptToText transcript)
+                   : []
+          req = ChatRequest
+            { reqModel      = ioModel
+            , reqMessages   = evalMsgs
+            , reqTools      = []
+            , reqToolChoice = Nothing
+            }
+      res <- sendChatCompletion ioManager ioApiKey req
+      case res of
+        Right asstResp ->
+          case respContent asstResp of
+            Just content -> pure (parseGoalEvaluation content)
+            Nothing      -> pure (GoalEvaluation GoalNotYetMet "Empty evaluator response.")
+        Left err ->
+          pure (GoalEvaluation GoalNotYetMet ("Evaluator error: " <> err))
   }
+  where
+    transcriptToText = T.unlines . map messageToText
+
+    messageToText = \case
+      SystemMsg c    -> "[System] " <> c
+      UserMsg c      -> "[User] " <> c
+      AssistantMsg mc _ -> "[Assistant] " <> fromMaybe "" mc
+      ToolMsg _ name c -> "[Tool " <> name <> "] " <> c
 
 -- | Run an 'AgentProgram' using real OpenRouter API and local filesystem.
 runIO :: IOEnv -> AgentProgram a -> IO a
