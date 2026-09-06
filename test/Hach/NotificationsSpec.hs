@@ -5,6 +5,7 @@ module Hach.NotificationsSpec (spec) where
 import Hach.Notifications
 import qualified Data.Text as T
 import System.Directory (doesFileExist, removeFile)
+import System.Info (os)
 import System.Process (CmdSpec(..), CreateProcess(..))
 import Test.Hspec
 
@@ -26,9 +27,19 @@ spec = describe "Hach.Notifications" $ do
       injected `shouldBe` False
 
     it "correctly escapes double quotes without doubling backslashes in AppleScript" $ do
+      escapeAppleScript "He said \"hello\"" `shouldBe` "He said \\\"hello\\\""
+      escapeAppleScript "C:\\path\\file" `shouldBe` "C:\\\\path\\\\file"
+      escapeAppleScript "Backslash \\ and \"quote\"" `shouldBe` "Backslash \\\\ and \\\"quote\\\""
       let procSpec = notificationCreateProcess "Hach" "He said \"hello\""
       case cmdspec procSpec of
-        RawCommand _ args -> do
-          args `shouldContain` ["display notification \"He said \\\"hello\\\"\" with title \"Hach\""]
+        RawCommand prog args ->
+          if os == "darwin"
+            then do
+              prog `shouldBe` "osascript"
+              args `shouldContain` ["display notification \"He said \\\"hello\\\"\" with title \"Hach\""]
+            else do
+              prog `shouldBe` "notify-send"
+              args `shouldBe` ["Hach", "He said \"hello\""]
         ShellCommand _ -> expectationFailure "Expected RawCommand (proc) but got ShellCommand"
+
 

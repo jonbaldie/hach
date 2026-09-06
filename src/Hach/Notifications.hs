@@ -4,6 +4,7 @@ module Hach.Notifications
   ( sendOsNotification
   , sendDesktopNotification
   , notificationCreateProcess
+  , escapeAppleScript
   ) where
 
 import Control.Exception (SomeException, try)
@@ -12,6 +13,13 @@ import qualified Data.Text as T
 import System.Exit (ExitCode(..))
 import System.Info (os)
 import System.Process (CreateProcess, proc, readCreateProcessWithExitCode)
+
+-- | In AppleScript string literals: backslash and double quotes are escaped with backslash.
+-- Backslashes must be escaped before double quotes so that the escape backslashes
+-- introduced for quotes are not doubled.
+escapeAppleScript :: Text -> Text
+escapeAppleScript t =
+  T.replace "\"" "\\\"" (T.replace "\\" "\\\\" t)
 
 -- | Construct the process specification for an OS desktop notification.
 -- Uses direct executable dispatch (proc) rather than shell execution to prevent
@@ -26,12 +34,6 @@ notificationCreateProcess title msg =
          in proc "osascript" ["-e", script]
        else
          proc "notify-send" [T.unpack (T.take 100 title), T.unpack (T.take 200 msg)]
-  where
-    -- In AppleScript string literals: backslash and double quotes are escaped with backslash.
-    -- Backslashes must be escaped before double quotes so that the escape backslashes
-    -- introduced for quotes are not doubled.
-    escapeAppleScript t =
-      T.replace "\"" "\\\"" (T.replace "\\" "\\\\" t)
 
 -- | Dispatch an OS desktop notification.
 sendOsNotification :: Text -> IO ()
