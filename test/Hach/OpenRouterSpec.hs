@@ -89,6 +89,50 @@ spec = do
         Right resp ->
           respUsage resp `shouldBe` Just (TokenUsage 200 50 250 150 (Just 0.003))
 
+    it "parses actual cost from cost_details.upstream_inference_cost when cost is absent" $ do
+      let rawJson = LBS.concat
+            [ "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"BYOK cost!\"}}],"
+            , "\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":25,\"total_tokens\":125,"
+            , "\"cost_details\":{\"upstream_inference_cost\":0.00045}}}"
+            ]
+      case parseChatResponse rawJson of
+        Left err -> expectationFailure ("Failed to parse response: " <> show err)
+        Right resp ->
+          respUsage resp `shouldBe` Just (TokenUsage 100 25 125 0 (Just 0.00045))
+
+    it "parses actual cost from prompt and completion cost_details when cost is absent" $ do
+      let rawJson = LBS.concat
+            [ "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Detailed cost!\"}}],"
+            , "\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":25,\"total_tokens\":125,"
+            , "\"cost_details\":{\"upstream_inference_prompt_cost\":0.0003,\"upstream_inference_completions_cost\":0.00015}}}"
+            ]
+      case parseChatResponse rawJson of
+        Left err -> expectationFailure ("Failed to parse response: " <> show err)
+        Right resp ->
+          respUsage resp `shouldBe` Just (TokenUsage 100 25 125 0 (Just 0.00045))
+
+    it "parses root-level cost when usage object has no cost" $ do
+      let rawJson = LBS.concat
+            [ "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Root cost!\"}}],"
+            , "\"usage\":{\"prompt_tokens\":50,\"completion_tokens\":10,\"total_tokens\":60},"
+            , "\"cost\":0.00075}"
+            ]
+      case parseChatResponse rawJson of
+        Left err -> expectationFailure ("Failed to parse response: " <> show err)
+        Right resp ->
+          respUsage resp `shouldBe` Just (TokenUsage 50 10 60 0 (Just 0.00075))
+
+    it "parses root-level total_cost when usage object has no cost" $ do
+      let rawJson = LBS.concat
+            [ "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Root total cost!\"}}],"
+            , "\"usage\":{\"prompt_tokens\":50,\"completion_tokens\":10,\"total_tokens\":60},"
+            , "\"total_cost\":0.0009}"
+            ]
+      case parseChatResponse rawJson of
+        Left err -> expectationFailure ("Failed to parse response: " <> show err)
+        Right resp ->
+          respUsage resp `shouldBe` Just (TokenUsage 50 10 60 0 (Just 0.0009))
+
     it "sets respUsage to Nothing when usage field is absent" $ do
       let rawJson = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Hello there!\"}}]}"
       case parseChatResponse rawJson of

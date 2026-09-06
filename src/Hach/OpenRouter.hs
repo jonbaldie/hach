@@ -62,10 +62,19 @@ instance FromJSON ChoiceWire where
 data OpenRouterEnvelope = OpenRouterEnvelope ![ChoiceWire] !(Maybe TokenUsage)
 
 instance FromJSON OpenRouterEnvelope where
-  parseJSON = withObject "OpenRouterEnvelope" $ \o ->
-    OpenRouterEnvelope
-      <$> o .: "choices"
-      <*> o .:? "usage"
+  parseJSON = withObject "OpenRouterEnvelope" $ \o -> do
+    choices <- o .: "choices"
+    mUsage <- o .:? "usage"
+    mCost <- o .:? "cost"
+    mTotalCost <- o .:? "total_cost"
+    let mRootCost = mCost <|> mTotalCost
+        finalUsage = case (mUsage, mRootCost) of
+          (Just u, Just rc)
+            | Nothing <- tuCost u -> Just u { tuCost = Just rc }
+          (Just u, _) -> Just u
+          (Nothing, Just rc) -> Just (TokenUsage 0 0 0 0 (Just rc))
+          (Nothing, Nothing) -> Nothing
+    pure (OpenRouterEnvelope choices finalUsage)
 
 -- | Parse the response body from OpenRouter.
 parseChatResponse :: LBS.ByteString -> Either Text AssistantResponse

@@ -205,7 +205,26 @@ instance FromJSON TokenUsage where
     mTotalCost <- o .:? "total_cost"
     costVal <- case mTotalCost of
       Just cost -> pure (Just cost)
-      Nothing   -> o .:? "cost"
+      Nothing   -> do
+        mDirectCost <- o .:? "cost"
+        case mDirectCost of
+          Just cost -> pure (Just cost)
+          Nothing   -> do
+            mDetailsObj <- o .:? "cost_details"
+            case mDetailsObj of
+              Just (Aeson.Object cd) -> do
+                mUpstream <- cd .:? "upstream_inference_cost"
+                case mUpstream of
+                  Just cost -> pure (Just cost)
+                  Nothing   -> do
+                    mPromptCost <- cd .:? "upstream_inference_prompt_cost"
+                    mCompCost   <- cd .:? "upstream_inference_completions_cost"
+                    case (mPromptCost, mCompCost) of
+                      (Just pc, Just cc) -> pure (Just (pc + cc))
+                      (Just pc, Nothing) -> pure (Just pc)
+                      (Nothing, Just cc) -> pure (Just cc)
+                      (Nothing, Nothing) -> pure Nothing
+              _ -> pure Nothing
     pure TokenUsage
       { tuPromptTokens     = p
       , tuCompletionTokens = c
