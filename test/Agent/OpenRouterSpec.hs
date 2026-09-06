@@ -61,6 +61,16 @@ spec = do
         Right resp -> do
           respUsage resp `shouldBe` Nothing
 
+    it "rejects empty JSON object as empty success" $ do
+      case parseChatResponse "{}" of
+        Left _  -> pure ()
+        Right r -> expectationFailure ("Expected Left for empty JSON, got Right " <> show r)
+
+    it "rejects arbitrary non-envelope JSON as empty success" $ do
+      case parseChatResponse "{\"foo\":\"bar\"}" of
+        Left _  -> pure ()
+        Right r -> expectationFailure ("Expected Left for non-envelope JSON, got Right " <> show r)
+
   describe "ChatRequest serialization" $ do
     it "omits tools when list is empty" $ do
       let req = ChatRequest "test-model" [UserMsg "Hello"] [] Nothing

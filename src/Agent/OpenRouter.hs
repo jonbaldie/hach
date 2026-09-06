@@ -84,9 +84,16 @@ parseChatResponse body =
         Left envelopeErr ->
           -- 3. Fallback: try parsing directly as message
           case Aeson.eitherDecode body :: Either String AssistantResponse of
-            Right directMsg -> Right directMsg
+            Right directMsg
+              | isNonEmptyResponse directMsg -> Right directMsg
+              | otherwise -> Left ("JSON parse failure: " <> T.pack envelopeErr)
             Left _ -> Left ("JSON parse failure: " <> T.pack envelopeErr)
   where
+    isNonEmptyResponse (AssistantResponse mContent calls mUsage) =
+      maybe False (not . T.null . T.strip) mContent
+        || not (null calls)
+        || maybe False (const True) mUsage
+
     parseErrorPayload o =
       case AesonTypes.parseMaybe (\obj -> obj .: "error") o of
         Just (Aeson.String msg) -> Just msg

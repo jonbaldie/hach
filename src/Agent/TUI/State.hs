@@ -51,7 +51,7 @@ handleSubmitPrompt rawPrompt state
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
                  , tsStatus             = newStatus
-                 , tsCancelRequested    = if busy then True else tsCancelRequested state
+                 , tsCancelRequested    = if busy then True else False
                  }
          , actions
          )
@@ -110,6 +110,7 @@ handleSubmitPrompt rawPrompt state
             , tsPromptHistory      = newPromptHistory
             , tsPromptHistoryIndex = Nothing
             , tsPromptDraft        = ""
+            , tsCancelRequested    = False
             }
       in (newState, [ActionRunAgent finalPrompt])
   where
@@ -310,8 +311,13 @@ toggleToolExpanded idx state@TuiState{..} =
   in state { tsTools = updatedTools }
 
 -- | Pure update of state when an 'AgentEvent' arrives from the harness.
+-- When a cancel has been requested (via /clear, Esc, or Ctrl+C while busy),
+-- stale in-flight events are dropped to prevent ghost output from the
+-- cancelled turn polluting the cleared history.
 handleAgentEvent :: AgentEvent -> TuiState -> TuiState
-handleAgentEvent event state@TuiState{..} = case event of
+handleAgentEvent event state@TuiState{..}
+  | tsCancelRequested = state
+  | otherwise = case event of
   EvTurnStart n ->
     state { tsCurrentTurn = n, tsStatus = StatusThinking }
 

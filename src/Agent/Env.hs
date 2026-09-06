@@ -15,9 +15,10 @@ module Agent.Env
   ) where
 
 import Control.Exception (try, SomeException)
+import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as BS
 import Data.Char (isSpace)
-import Data.List (stripPrefix)
+import Data.List (isPrefixOf, stripPrefix)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -65,6 +66,7 @@ parseCliArgs args = go args Nothing False []
 
     go ("--model" : val : rest) _ noTui promptWords
       | null (dropWhile isSpace val) = Left "--model requires a non-empty argument"
+      | "--" `isPrefixOf` val = Left "--model requires a non-flag argument"
       | otherwise = go rest (Just (T.strip (T.pack val))) noTui promptWords
 
     go ["--model"] _ _ _ = Left "--model requires an argument"
@@ -77,9 +79,10 @@ parseCliArgs args = go args Nothing False []
       | arg == "-m" =
           case rest of
             (val : rest')
-              | not (null (dropWhile isSpace val)) ->
+              | null (dropWhile isSpace val) -> Left "-m requires a non-empty argument"
+              | "--" `isPrefixOf` val -> Left "-m requires a non-flag argument"
+              | otherwise ->
                   go rest' (Just (T.strip (T.pack val))) noTui promptWords
-              | otherwise -> Left "-m requires a non-empty argument"
             [] -> Left "-m requires an argument"
       | Just val <- stripPrefix "-m=" arg =
           if null (dropWhile isSpace val)
@@ -110,7 +113,7 @@ parseEnvContent content =
   let ls = T.lines content
       pairs = [ (T.strip k, clean (T.drop 1 v))
               | line <- ls
-              , let trimmed = T.strip line
+              , let trimmed = stripExport (T.strip line)
               , not (T.null trimmed)
               , not (T.isPrefixOf "#" trimmed)
               , let (k, v) = T.breakOn "=" trimmed
@@ -119,6 +122,7 @@ parseEnvContent content =
   in Map.fromList pairs
   where
     clean = T.dropAround (\c -> c == '"' || c == '\'' || isSpace c)
+    stripExport s = fromMaybe s (T.stripPrefix "export " s)
 
 -- | Pure configuration resolver implementing precedence:
 -- 1. API key: OS process environment -> .env file.

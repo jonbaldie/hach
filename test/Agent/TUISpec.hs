@@ -335,6 +335,13 @@ spec = do
         formatTokens 1520 `shouldBe` "1,520"
         formatTokens 128450 `shouldBe` "128,450"
 
+      it "does not overflow on minBound (abs minBound == minBound in Int)" $ do
+        formatTokens (minBound :: Int) `shouldBe` "-9,223,372,036,854,775,808"
+
+      it "formats small negative counts" $ do
+        formatTokens (-5) `shouldBe` "-5"
+        formatTokens (-1500) `shouldBe` "-1,500"
+
     describe "Local Slash Commands and Skill Invocations" $ do
       it "handles /clear locally by emptying dialogue history without running agent" $ do
         let s0 = baseState { tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
@@ -350,6 +357,32 @@ spec = do
         tsInputBuffer s1 `shouldBe` ""
         tsStatus s1 `shouldBe` StatusIdle
         actions `shouldBe` [ActionCancelAgent]
+
+      it "drops stale EvDone after /clear while busy" $ do
+        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+            (s2, _) = updateTui (EvHarness (EvDone "stale answer")) s1
+        tsHistory s2 `shouldBe` []
+
+      it "drops stale EvToolCall after /clear while busy" $ do
+        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+            (s2, _) = updateTui (EvHarness (EvToolCall "read_file" "{}")) s1
+        tsTools s2 `shouldBe` []
+
+      it "drops stale EvError after /clear while busy" $ do
+        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+            (s2, _) = updateTui (EvHarness (EvError "stale error")) s1
+        tsHistory s2 `shouldBe` []
+
+      it "resets tsCancelRequested when user submits a new prompt" $ do
+        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+            s2 = s1 { tsInputBuffer = "new question" }
+            (s3, _) = updateTui (EvUserKey KeyEnter) s2
+        tsCancelRequested s3 `shouldBe` False
+        tsHistory s3 `shouldBe` [DiUser "new question"]
 
       it "handles /help locally by toggling help dialog without running agent" $ do
         let s0 = baseState { tsShowHelp = False, tsInputBuffer = "/help" }
