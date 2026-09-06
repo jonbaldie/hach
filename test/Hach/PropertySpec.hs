@@ -100,16 +100,18 @@ spec = do
             expectationFailure "SECURITY BUG: Write path traversal succeeded!"
 
     describe "CLI Argument Parser Invariants (QuickCheck)" $ do
-      it "never crashes on arbitrary list of arguments" $ property $ \args ->
-        case parseCliArgs args of
-          Left _  -> True
-          Right _ -> True
+      it "never crashes on arbitrary list of arguments" $
+        withNumTests 2000 $ property $ \args ->
+          case parseCliArgs args of
+            Left _  -> True
+            Right _ -> True
 
-      it "always sets optNoTui = True when --no-tui is present" $ property $ \wordsBefore wordsAfter ->
-        let args = wordsBefore ++ ["--no-tui"] ++ wordsAfter
-        in case parseCliArgs args of
-             Left _     -> True
-             Right opts -> optNoTui opts == True
+      it "always sets optNoTui = True when --no-tui is present" $
+        withNumTests 2000 $ property $ \wordsBefore wordsAfter ->
+          let args = wordsBefore ++ ["--no-tui"] ++ wordsAfter
+          in case parseCliArgs args of
+               Left _     -> True
+               Right opts -> optNoTui opts == True
 
     describe "OpenRouter Error Handling" $ do
       it "handles string error payloads without falling back to JSON parse failure" $ do

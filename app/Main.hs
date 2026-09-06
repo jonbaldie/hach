@@ -46,7 +46,7 @@ main = do
   ioEnv <- newIOEnv envApiKey envModel cwd True
 
   if not optNoTui
-    then runTui ioEnv optPrompt
+    then runTui ioEnv optPrompt optMaxTurns
     else do
       putStrLn "========================================================"
       putStrLn "  Haskell Agentic Coding Harness (hach)                 "
@@ -91,7 +91,7 @@ main = do
                 let agentConfig = AgentConfig
                       { cfgModel        = envModel
                       , cfgSystemPrompt = Just sysPrompt
-                      , cfgMaxTurns     = Nothing
+                      , cfgMaxTurns     = optMaxTurns
                       }
                     initialHistory =
                       [ SystemMsg sysPrompt
@@ -118,7 +118,7 @@ main = do
               agentConfig = AgentConfig
                 { cfgModel        = envModel
                 , cfgSystemPrompt = Just sysPrompt
-                , cfgMaxTurns     = Nothing
+                , cfgMaxTurns     = optMaxTurns
                 }
               initialHistory =
                 [ SystemMsg sysPrompt

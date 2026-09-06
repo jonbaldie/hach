@@ -23,6 +23,7 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import Test.Hspec
+import Test.Hspec.QuickCheck (modifyMaxSuccess)
 import Test.QuickCheck
 
 -- ---------------------------------------------------------------------------
@@ -196,7 +197,7 @@ eventProfile s = case runScenario s of
 -- ---------------------------------------------------------------------------
 
 spec :: Spec
-spec = do
+spec = modifyMaxSuccess (const 1000) $ do
   describe "CGPT: goalLoop invariants over random turn sequences" $ do
 
     -- Coverage signal: which event paths did random runs reach?

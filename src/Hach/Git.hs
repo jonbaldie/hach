@@ -101,15 +101,14 @@ getGitDiff root = do
 -- | Validate that a worktree name is safe (alphanumeric, no traversal, no leading dashes, no path separators).
 isValidWorktreeName :: Text -> Bool
 isValidWorktreeName name =
-  let s = T.unpack (T.strip name)
-  in not (null s)
-     && not ("-" `isPrefixOfText` name)
-     && not (".." `isSubstringOfText` name)
+  let stripped = T.strip name
+      s = T.unpack stripped
+  in name == stripped
+     && not (null s)
+     && not ("-" `T.isPrefixOf` stripped)
+     && not (".." `T.isInfixOf` stripped)
      && not (any (\c -> c == '/' || c == '\\' || c == ':') s)
      && all (\c -> isAlphaNum c || c `elem` ['-', '_', '.']) s
-  where
-    isPrefixOfText p t = p `T.isPrefixOf` t
-    isSubstringOfText sub t = sub `T.isInfixOf` t
 
 -- | Create a git worktree for a branch or feature name.
 createWorktree :: FilePath -> Text -> IO (Either Text FilePath)

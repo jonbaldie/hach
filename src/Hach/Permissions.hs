@@ -57,9 +57,9 @@ matchGlob pat fp =
   where
     matchGlobStr [] [] = True
     matchGlobStr ('*':'*':'/':rest) target =
-      matchGlobStr rest target || case target of
-        []     -> False
-        (_:ts) -> matchGlobStr ('*':'*':'/':rest) ts
+      matchGlobStr rest target || case break (== '/') target of
+        (_, '/':ts) -> matchGlobStr ('*':'*':'/':rest) ts
+        _           -> False
     matchGlobStr ['*', '*'] _ = True
     matchGlobStr ('*':'*':rest) target =
       matchGlobStr rest target || case target of
@@ -120,10 +120,15 @@ evalPermission mode rules tool args
       , "glob"
       , "grep"
       , "webfetch"
+      , "web_fetch"
       , "websearch"
+      , "web_search"
       , "listagents"
+      , "list_agents"
       , "tasklist"
+      , "task_list"
       , "taskget"
+      , "task_get"
       ]
 
     writeTools =
@@ -131,16 +136,22 @@ evalPermission mode rules tool args
       , "replace_file_content"
       , "edit"
       , "todowrite"
+      , "todo_write"
       , "taskcreate"
+      , "task_create"
       , "taskupdate"
+      , "task_update"
       ]
 
     commandTools =
       [ "run_command"
       , "bash"
       , "taskstop"
+      , "task_stop"
       , "enterworktree"
+      , "enter_worktree"
       , "exitworktree"
+      , "exit_worktree"
       ]
 
     evalModeDefault m t isWrite = case m of
