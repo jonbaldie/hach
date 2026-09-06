@@ -296,5 +296,13 @@ spec = do
       forAll (elements goalClearAliases) $ \alias ->
         goalArgIsClear (alias <> "   ")
 
+    it "an alias with leading whitespace is still a clear command" $
+      forAll (elements goalClearAliases) $ \alias ->
+        goalArgIsClear ("   " <> alias)
+
+    it "an alias with leading and trailing whitespace is still a clear command" $
+      forAll (elements goalClearAliases) $ \alias ->
+        goalArgIsClear ("   " <> alias <> "   ")
+
     it "specifically: /goal stop the server is not a clear" $
       not (goalArgIsClear "stop the server")
