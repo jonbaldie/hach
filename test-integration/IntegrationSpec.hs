@@ -43,7 +43,7 @@ main = do
   let agentConfig = AgentConfig
         { cfgModel = envModel
         , cfgSystemPrompt = Just "You are an autonomous coding assistant. Use the provided tools to complete user requests."
-        , cfgMaxTurns = 6
+        , cfgMaxTurns = Just 6
         }
       initMsgs = [UserMsg prompt]
 

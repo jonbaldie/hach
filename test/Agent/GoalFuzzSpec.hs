@@ -151,7 +151,7 @@ runScenario s =
   let cfg = AgentConfig
         { cfgModel        = "fuzz-model"
         , cfgSystemPrompt = Just "You are a fuzz target."
-        , cfgMaxTurns     = sMaxTurns s
+        , cfgMaxTurns     = Just (sMaxTurns s)
         }
       -- Infinite step/eval lists: the generated prefix followed by defaults,
       -- so the loop is well-defined no matter how many turns it takes.
@@ -270,7 +270,7 @@ spec = do
                   { mockLLMSteps        = repeat step
                   , mockGoalEvaluations = repeat eval
                   }
-            cfg = AgentConfig "m" (Just "sys") 20
+            cfg = AgentConfig "m" (Just "sys") (Just 20)
             ((_, _, gs), _) = runPure env (goalLoop cfg [] "c" cap [UserMsg "c"])
             effectiveCap = max 1 cap
         in -- The loop blocks after one no-progress turn when the cap is
