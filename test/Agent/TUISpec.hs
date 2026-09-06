@@ -105,6 +105,57 @@ spec = do
         tsStatus s1 `shouldBe` StatusError "Turn cancelled by user."
         actions `shouldBe` [ActionCancelAgent]
 
+      it "restores FocusInput and allows typing after cancelling turn with Esc" $ do
+        let s0 = baseState { tsInputBuffer = "Initial prompt" }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+        tsStatus s1 `shouldBe` StatusThinking
+        tsFocus s1 `shouldBe` FocusHistory
+        let (s2, actions) = updateTui (EvUserKey KeyEsc) s1
+        tsStatus s2 `shouldBe` StatusError "Turn cancelled by user."
+        actions `shouldBe` [ActionCancelAgent]
+        tsFocus s2 `shouldBe` FocusInput
+        let (s3, _) = updateTui (EvUserKey (KeyChar 'n')) s2
+            (s4, _) = updateTui (EvUserKey (KeyChar 'e')) s3
+            (s5, _) = updateTui (EvUserKey (KeyChar 'w')) s4
+        tsInputBuffer s5 `shouldBe` "new"
+
+      it "restores FocusInput and allows typing after cancelling turn with Ctrl+C when busy" $ do
+        let s0 = baseState { tsInputBuffer = "Initial prompt" }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+        tsStatus s1 `shouldBe` StatusThinking
+        tsFocus s1 `shouldBe` FocusHistory
+        let (s2, actions) = updateTui (EvUserKey (KeyCtrl 'c')) s1
+        tsStatus s2 `shouldBe` StatusError "Turn cancelled by user."
+        actions `shouldBe` [ActionCancelAgent]
+        tsFocus s2 `shouldBe` FocusInput
+        let (s3, _) = updateTui (EvUserKey (KeyChar 'h')) s2
+            (s4, _) = updateTui (EvUserKey (KeyChar 'i')) s3
+        tsInputBuffer s4 `shouldBe` "hi"
+
+      it "allows submitting a new prompt after cancelling turn with Esc" $ do
+        let s0 = baseState { tsInputBuffer = "First prompt" }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+            (s2, _) = updateTui (EvUserKey KeyEsc) s1
+            (s3, _) = updateTui (EvUserKey (KeyChar 'r')) s2
+            (s4, _) = updateTui (EvUserKey (KeyChar 'e')) s3
+            (s5, _) = updateTui (EvUserKey (KeyChar 't')) s4
+            (s6, _) = updateTui (EvUserKey (KeyChar 'r')) s5
+            (s7, _) = updateTui (EvUserKey (KeyChar 'y')) s6
+            (s8, actions) = updateTui (EvUserKey KeyEnter) s7
+        tsStatus s8 `shouldBe` StatusThinking
+        tsCancelRequested s8 `shouldBe` False
+        tsHistory s8 `shouldBe` [DiUser "First prompt", DiUser "retry"]
+        actions `shouldBe` [ActionRunAgent "retry"]
+
+      it "resets tsCancelRequested when /goal is submitted following a cancellation" $ do
+        let busyState = baseState { tsStatus = StatusThinking }
+            (s1, _) = updateTui (EvUserKey KeyEsc) busyState
+        tsCancelRequested s1 `shouldBe` True
+        let s2 = s1 { tsInputBuffer = "/goal check tests" }
+            (s3, actions) = updateTui (EvUserKey KeyEnter) s2
+        tsCancelRequested s3 `shouldBe` False
+        actions `shouldBe` [ActionRunGoal "check tests"]
+
     describe "Help Overlay" $ do
       it "toggles help on '?' when not typing in input" $ do
         let historyFocus = baseState { tsFocus = FocusHistory }

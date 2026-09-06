@@ -498,6 +498,7 @@ handleSubmitPrompt rawPrompt state
                         , tsPromptHistoryIndex = Nothing
                         , tsPromptDraft        = ""
                         , tsGoalState          = Just gs
+                        , tsCancelRequested    = False
                         }
                 , [ActionRunGoal condition] )
   | otherwise =
@@ -532,6 +533,7 @@ handleUserKey key state@TuiState{..} =
       | isBusy tsStatus ->
           ( state { tsCancelRequested = True
                   , tsStatus = StatusError "Turn cancelled by user."
+                  , tsFocus = FocusInput
                   }
           , [ActionCancelAgent]
           )
@@ -542,6 +544,7 @@ handleUserKey key state@TuiState{..} =
       | isBusy tsStatus ->
           ( state { tsCancelRequested = True
                   , tsStatus = StatusError "Turn cancelled by user."
+                  , tsFocus = FocusInput
                   }
           , [ActionCancelAgent]
           )
