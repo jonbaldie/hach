@@ -218,9 +218,9 @@ spec = do
             (st1, _) = updateTui (EvUserKey KeyUp) st0
             (st2, _) = updateTui (EvUserKey (KeyChar c)) st1
         in collect (length hist) $
-             tsPromptHistoryIndex st1 === Just (length hist - 1)
-             && tsPromptHistoryIndex st2 === Nothing
-             && tsInputBuffer st2 === tsInputBuffer st1 `T.snoc` c
+             tsPromptHistoryIndex st1 == Just (length hist - 1)
+             && tsPromptHistoryIndex st2 == Nothing
+             && tsInputBuffer st2 == tsInputBuffer st1 `T.snoc` c
 
     it "backspace after Up also leaves browse mode" $ vigorous $
       forAll (listOf1 genNonEmptyTxt) $ \hist ->
@@ -255,8 +255,9 @@ spec = do
     it "--exec CMD implies --no-tui and records the command" $ vigorous $
       forAll genSeg $ \cmd ->
         case parseCliArgs ["--exec", cmd] of
-          Right opts -> optNoTui opts && optExec opts === Just (T.pack cmd)
-          Left err   -> counterexample err False
+          Right opts ->
+            property (optNoTui opts && optExec opts == Just (T.pack cmd))
+          Left err -> counterexample err False
 
     it "--permission-mode accepts every documented alias" $ vigorous $
       forAll (elements
