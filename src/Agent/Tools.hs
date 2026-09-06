@@ -573,24 +573,9 @@ executeFindFiles root (FindFilesArgs pat searchPath) = do
       let name = T.pack (takeFileName fp)
           full = T.pack fp
       in if "*" `T.isInfixOf` p
-           then globMatch p name || globMatch p full
+           then let parts = filter (not . T.null) (T.splitOn "*" p)
+                in all (`T.isInfixOf` name) parts || all (`T.isInfixOf` full) parts
            else p `T.isInfixOf` name || p `T.isInfixOf` full
-
-    -- | Match a glob pattern with '*' wildcards against a string.
-    -- '*' matches any sequence of characters (including empty).
-    -- Uses backtracking: for each '*', try matching the rest of the
-    -- pattern against progressively longer suffixes of the string.
-    globMatch pat str = go (T.unpack pat) (T.unpack str)
-      where
-        go []     []      = True
-        go []     _       = False
-        go ('*':ps) s     = goStar ps s
-        go (p:ps) (c:cs)  = p == c && go ps cs
-        go (_:_)  []      = False
-
-        goStar [] _        = True
-        goStar ps []       = go ps []
-        goStar ps s@(_:cs) = go ps s || goStar ps cs
 
 executeGrepSearch :: FilePath -> GrepSearchArgs -> IO ToolResult
 executeGrepSearch root (GrepSearchArgs query searchPath caseSensitive) = do

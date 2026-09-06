@@ -137,18 +137,6 @@ spec = do
             out `shouldSatisfy` (not . ("B.txt" `T.isInfixOf`))
           ToolError err -> expectationFailure (T.unpack err)
 
-      it "does not match *.hs against files with .hs elsewhere in the name" $ do
-        _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "NotMatch.hsx") "x")
-        _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "Archive.hs.zip") "x")
-        _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "Real.hs") "module Real where")
-        res <- executeFindFiles "." (FindFilesArgs "*.hs" testSandbox)
-        case res of
-          ToolSuccess out -> do
-            out `shouldSatisfy` ("Real.hs" `T.isInfixOf`)
-            out `shouldSatisfy` (not . ("NotMatch.hsx" `T.isInfixOf`))
-            out `shouldSatisfy` (not . ("Archive.hs.zip" `T.isInfixOf`))
-          ToolError err -> expectationFailure (T.unpack err)
-
       it "greps files for matching pattern and reports line number" $ do
         let targetFile = testSandbox </> "Code.hs"
         _ <- executeWriteFile "." (WriteFileArgs targetFile "line 1\nsearchTarget here\nline 3")

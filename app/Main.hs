@@ -11,7 +11,6 @@ import Agent.Tools
 import Agent.TUI.App (runTui)
 import Agent.Types
 import Control.Monad (when)
-import Data.Char (isSpace)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (getCurrentDirectory)
@@ -63,94 +62,27 @@ main = do
       skills <- discoverSkills cwd
       mGuidelines <- loadProjectInstructions cwd
       let sysPrompt = buildSystemPrompt mGuidelines
+          (cleaned, invoked) = parseSkillInvocations skills (T.strip taskPrompt)
+          finalPrompt = injectSkillsIntoPrompt invoked cleaned
 
-      let trimmedPrompt = T.strip taskPrompt
-          isGoalCommand = trimmedPrompt == "/goal" || T.isPrefixOf "/goal " trimmedPrompt
-      if isGoalCommand
-        then do
-          let argText = if trimmedPrompt == "/goal"
-                         then ""
-                         else T.strip (T.drop (T.length ("/goal " :: T.Text)) trimmedPrompt)
-              argWord = T.toLower (T.takeWhile (not . isSpace) argText)
-          if T.null argText
-            then do
-              putStrLn "Usage: /goal <condition> or /goal clear"
-              putStrLn "Example: /goal all tests pass"
-            else if argWord `elem` goalClearAliases
-              then putStrLn "No active goal to clear (headless mode has no persistent goal state)."
-            else if T.length argText > maxGoalConditionLength
-              then do
-                putStrLn ("Goal condition too long (max " <> show maxGoalConditionLength <> " characters).")
-              else do
-                let condition = argText
-                putStrLn ("\nStarting goal-directed agent loop for condition: " <> T.unpack condition)
-                let agentConfig = AgentConfig
-                      { cfgModel        = envModel
-                      , cfgSystemPrompt = Just sysPrompt
-                      , cfgMaxTurns     = 20
-                      }
-                    initialHistory =
-                      [ SystemMsg sysPrompt
-                      , UserMsg condition
-                      ]
-                (result, finalHistory, goalState) <-
-                  runIO ioEnv (goalLoop agentConfig allToolDefs condition defaultBlockCap initialHistory)
+      let agentConfig = AgentConfig
+            { cfgModel        = envModel
+            , cfgSystemPrompt = Just sysPrompt
+            , cfgMaxTurns     = 10
+            }
+          initialHistory =
+            [ SystemMsg sysPrompt
+            , UserMsg finalPrompt
+            ]
 
-                case result of
-                  AgentCompleted _ans -> do
-                    putStrLn "\nTask completed."
-                    putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
-                    printGoalSummary goalState
-                  AgentMaxTurnsReached turns -> do
-                    putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
-                    printGoalSummary goalState
-                  AgentFailed err -> do
-                    putStrLn ("\nAgent failed with error: " <> T.unpack err)
-                    printGoalSummary goalState
+      putStrLn ("\nStarting agent loop for task: " <> T.unpack taskPrompt)
+      (result, finalHistory) <- runIO ioEnv (agentLoop agentConfig allToolDefs initialHistory)
 
-        else do
-          let (cleaned, invoked) = parseSkillInvocations skills trimmedPrompt
-              finalPrompt = injectSkillsIntoPrompt invoked cleaned
-              agentConfig = AgentConfig
-                { cfgModel        = envModel
-                , cfgSystemPrompt = Just sysPrompt
-                , cfgMaxTurns     = 10
-                }
-              initialHistory =
-                [ SystemMsg sysPrompt
-                , UserMsg finalPrompt
-                ]
-
-          putStrLn ("\nStarting agent loop for task: " <> T.unpack taskPrompt)
-          (result, finalHistory) <- runIO ioEnv (agentLoop agentConfig allToolDefs initialHistory)
-
-          case result of
-            AgentCompleted _ans -> do
-              putStrLn "\nTask successfully completed!"
-              putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
-            AgentMaxTurnsReached turns -> do
-              putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
-            AgentFailed err -> do
-              putStrLn ("\nAgent failed with error: " <> T.unpack err)
-
--- | Maximum length of a goal condition text.
-maxGoalConditionLength :: Int
-maxGoalConditionLength = 4000
-
--- | Aliases for clearing the goal.
-goalClearAliases :: [T.Text]
-goalClearAliases = ["clear", "stop", "off", "reset", "none", "cancel"]
-
--- | Print a summary of the goal state after a headless goal run.
-printGoalSummary :: GoalState -> IO ()
-printGoalSummary gs = do
-  putStrLn "\n--- Goal Summary ---"
-  TIO.putStrLn ("  Condition: " <> gsCondition gs)
-  putStrLn ("  Status:    " <> show (gsStatus gs))
-  putStrLn ("  Turns:     " <> show (gsTurnCount gs))
-  case gsLastReason gs of
-    Just r  -> TIO.putStrLn ("  Reason:    " <> r)
-    Nothing -> pure ()
-  case gsLastVerdict gs of
-    Just v  -> putStrLn ("  Verdict:   " <> show v)
-    Nothing -> pure ()
+      case result of
+        AgentCompleted _ans -> do
+          putStrLn "\nTask successfully completed!"
+          putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
+        AgentMaxTurnsReached turns -> do
+          putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
+        AgentFailed err -> do
+          putStrLn ("\nAgent failed with error: " <> T.unpack err)

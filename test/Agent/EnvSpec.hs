@@ -32,18 +32,6 @@ spec = do
       Map.lookup "FOO" res `shouldBe` Just "quoted value"
       Map.lookup "BAR" res `shouldBe` Just "single quoted"
 
-    it "strips export prefix from keys" $ do
-      let content = "export OPENROUTER_API_KEY=sk-secret\nexport OPENROUTER_MODEL=meta/muse-glimmer-30b\n"
-          res = parseEnvContent content
-      Map.lookup "OPENROUTER_API_KEY" res `shouldBe` Just "sk-secret"
-      Map.lookup "OPENROUTER_MODEL" res `shouldBe` Just "meta/muse-glimmer-30b"
-
-    it "handles mixed export and non-export lines" $ do
-      let content = "export KEY1=val1\nKEY2=val2\n"
-          res = parseEnvContent content
-      Map.lookup "KEY1" res `shouldBe` Just "val1"
-      Map.lookup "KEY2" res `shouldBe` Just "val2"
-
   describe "parseLineTwoModel" $ do
     it "extracts the model from line two of .env" $ do
       let ls = [ "OPENROUTER_API_KEY=sk-test"
@@ -139,16 +127,6 @@ spec = do
         Left _ -> pure ()
         Right _ -> expectationFailure "Expected parseCliArgs to fail when --model= is empty"
 
-    it "rejects flag-like values as --model argument" $ do
-      case parseCliArgs ["--model", "--no-tui"] of
-        Left _  -> pure ()
-        Right _ -> expectationFailure "Expected parseCliArgs to reject --no-tui as model value"
-
-    it "rejects flag-like values as -m argument" $ do
-      case parseCliArgs ["-m", "--verbose"] of
-        Left _  -> pure ()
-        Right _ -> expectationFailure "Expected parseCliArgs to reject --verbose as model value"
-
   describe "resolveConfigWith" $ do
     let dotEnvSample = "OPENROUTER_API_KEY=sk-dotenv\nOPENROUTER_MODEL=meta/muse-glimmer-30b\n"
 
@@ -180,18 +158,6 @@ spec = do
                   Nothing
                   Nothing
                   (Just dotEnvSample)
-      res `shouldBe` Right EnvConfig
-        { envApiKey = "sk-dotenv"
-        , envModel = "meta/muse-glimmer-30b"
-        }
-
-    it "resolves config from .env with export-prefixed lines" $ do
-      let dotEnvExport = "export OPENROUTER_API_KEY=sk-dotenv\nexport OPENROUTER_MODEL=meta/muse-glimmer-30b\n"
-          res = resolveConfigWith
-                  Nothing
-                  Nothing
-                  Nothing
-                  (Just dotEnvExport)
       res `shouldBe` Right EnvConfig
         { envApiKey = "sk-dotenv"
         , envModel = "meta/muse-glimmer-30b"

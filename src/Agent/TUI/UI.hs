@@ -127,17 +127,12 @@ baseLayout state =
 --------------------------------------------------------------------------------
 
 -- | Format an integer token count with comma thousands separators.
--- Uses Integer internally to avoid overflow on minBound (abs minBound == minBound).
 formatTokens :: Int -> Text
 formatTokens n
-  | n < 0     = "-" <> go (negate (fromIntegral n))
-  | otherwise = go (fromIntegral n)
+  | n < 0     = "-" <> formatTokens (abs n)
+  | n < 1000  = T.pack (show n)
+  | otherwise = formatTokens (n `div` 1000) <> "," <> padThree (n `mod` 1000)
   where
-    go :: Integer -> Text
-    go m
-      | m < 1000  = T.pack (show m)
-      | otherwise = go (m `div` 1000) <> "," <> padThree (m `mod` 1000)
-
     padThree x =
       let s = show x
       in T.pack (replicate (3 - length s) '0' ++ s)

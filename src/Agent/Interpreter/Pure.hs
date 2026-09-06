@@ -22,21 +22,19 @@ import System.FilePath (takeDirectory)
 
 -- | State environment for pure simulation and testing of the agent.
 data MockEnv = MockEnv
-  { mockLLMSteps          :: ![[Message] -> [ToolDef] -> Either Text AssistantResponse]
-  , mockFiles             :: !(Map FilePath Text)
-  , mockCommandOutputs    :: !(Map Text (Int, Text, Text)) -- ^ (exitCode, stdout, stderr)
-  , mockEvents            :: ![AgentEvent]
-  , mockGoalEvaluations   :: ![Text -> [Message] -> GoalEvaluation]
+  { mockLLMSteps       :: ![[Message] -> [ToolDef] -> Either Text AssistantResponse]
+  , mockFiles          :: !(Map FilePath Text)
+  , mockCommandOutputs :: !(Map Text (Int, Text, Text)) -- ^ (exitCode, stdout, stderr)
+  , mockEvents         :: ![AgentEvent]
   }
 
 -- | An initial empty mock environment.
 emptyMockEnv :: MockEnv
 emptyMockEnv = MockEnv
-  { mockLLMSteps        = []
-  , mockFiles           = Map.empty
-  , mockCommandOutputs  = Map.empty
-  , mockEvents          = []
-  , mockGoalEvaluations = []
+  { mockLLMSteps       = []
+  , mockFiles          = Map.empty
+  , mockCommandOutputs = Map.empty
+  , mockEvents         = []
   }
 
 -- | Helper to lift a successful pure assistant response function into 'Either Text AssistantResponse'.
@@ -164,15 +162,6 @@ pureAlgebra = AgentAlgebra
 
   , interpLog = \ev ->
       modifyEnv $ \env -> env { mockEvents = mockEvents env ++ [ev] }
-
-  , interpEvaluate = \cond msgs -> do
-      env <- getEnv
-      case mockGoalEvaluations env of
-        (evalFn : rest) -> do
-          putEnv env { mockGoalEvaluations = rest }
-          pure (evalFn cond msgs)
-        [] ->
-          pure $ GoalEvaluation GoalNotYetMet "No evaluator steps left; defaulting to not yet met."
   }
 
 searchInFile :: Text -> Bool -> (FilePath, Text) -> [Text]

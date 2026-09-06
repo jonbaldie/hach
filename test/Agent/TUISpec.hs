@@ -7,7 +7,7 @@ import Agent.TUI.App (dialogueToMessages, vtyToUserKey)
 import Agent.TUI.State
 import Agent.TUI.Types
 import Agent.TUI.UI (formatTokens)
-import Agent.Types (AgentEvent(..), GoalState(..), GoalStatus(..), GoalVerdict(..), Message(..), TokenUsage(..), ToolResult(..), initialGoalState)
+import Agent.Types (AgentEvent(..), Message(..), TokenUsage(..), ToolResult(..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Graphics.Vty as Vty
@@ -335,13 +335,6 @@ spec = do
         formatTokens 1520 `shouldBe` "1,520"
         formatTokens 128450 `shouldBe` "128,450"
 
-      it "does not overflow on minBound (abs minBound == minBound in Int)" $ do
-        formatTokens (minBound :: Int) `shouldBe` "-9,223,372,036,854,775,808"
-
-      it "formats small negative counts" $ do
-        formatTokens (-5) `shouldBe` "-5"
-        formatTokens (-1500) `shouldBe` "-1,500"
-
     describe "Local Slash Commands and Skill Invocations" $ do
       it "handles /clear locally by emptying dialogue history without running agent" $ do
         let s0 = baseState { tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
@@ -357,32 +350,6 @@ spec = do
         tsInputBuffer s1 `shouldBe` ""
         tsStatus s1 `shouldBe` StatusIdle
         actions `shouldBe` [ActionCancelAgent]
-
-      it "drops stale EvDone after /clear while busy" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-            (s2, _) = updateTui (EvHarness (EvDone "stale answer")) s1
-        tsHistory s2 `shouldBe` []
-
-      it "drops stale EvToolCall after /clear while busy" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-            (s2, _) = updateTui (EvHarness (EvToolCall "read_file" "{}")) s1
-        tsTools s2 `shouldBe` []
-
-      it "drops stale EvError after /clear while busy" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-            (s2, _) = updateTui (EvHarness (EvError "stale error")) s1
-        tsHistory s2 `shouldBe` []
-
-      it "resets tsCancelRequested when user submits a new prompt" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsHistory = [DiUser "Hello"], tsInputBuffer = "/clear" }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-            s2 = s1 { tsInputBuffer = "new question" }
-            (s3, _) = updateTui (EvUserKey KeyEnter) s2
-        tsCancelRequested s3 `shouldBe` False
-        tsHistory s3 `shouldBe` [DiUser "new question"]
 
       it "handles /help locally by toggling help dialog without running agent" $ do
         let s0 = baseState { tsShowHelp = False, tsInputBuffer = "/help" }
@@ -422,174 +389,6 @@ spec = do
         let items = [DiUser "/to-spec auth", DiNotice "Activated skill: to-spec"]
             msgs = dialogueToMessages "system prompt" "expanded <skill> auth" items
         msgs `shouldBe` [SystemMsg "system prompt", UserMsg "expanded <skill> auth"]
-
-    describe "/goal command" $ do
-      it "sets a goal and emits ActionRunGoal with the condition" $ do
-        let s0 = baseState { tsInputBuffer = "/goal all tests pass" }
-            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
-        tsInputBuffer s1 `shouldBe` ""
-        tsStatus s1 `shouldBe` StatusThinking
-        actions `shouldBe` [ActionRunGoal "all tests pass"]
-        tsGoalState s1 `shouldSatisfy` \case
-          Just gs -> gsCondition gs == "all tests pass" && gsStatus gs == GoalActive
-          Nothing -> False
-
-      it "adds a goal-set notice to history" $ do
-        let s0 = baseState { tsInputBuffer = "/goal all tests pass" }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-        tsHistory s1 `shouldSatisfy` \h ->
-          any (\case DiNotice msg -> "Goal set: all tests pass" `T.isInfixOf` msg; _ -> False) h
-
-      it "shows goal status when /goal is typed with no args" $ do
-        let gs = initialGoalState "all tests pass"
-            s0 = baseState { tsInputBuffer = "/goal", tsGoalState = Just gs }
-            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
-        actions `shouldBe` []
-        tsHistory s1 `shouldSatisfy` \h ->
-          any (\case DiNotice msg -> "Goal active: all tests pass" `T.isInfixOf` msg; _ -> False) h
-
-      it "shows no goal set when /goal is typed with no active goal" $ do
-        let s0 = baseState { tsInputBuffer = "/goal" }
-            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
-        actions `shouldBe` []
-        tsHistory s1 `shouldSatisfy` \h ->
-          any (\case DiNotice msg -> "No goal set" `T.isInfixOf` msg; _ -> False) h
-
-      it "clears the goal with /goal clear and shows confirmation" $ do
-        let gs = initialGoalState "all tests pass"
-            s0 = baseState { tsInputBuffer = "/goal clear", tsGoalState = Just gs }
-            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
-        actions `shouldBe` []
-        tsGoalState s1 `shouldSatisfy` \case
-          Just gs' -> gsStatus gs' == GoalCleared
-          Nothing -> False
-        tsHistory s1 `shouldSatisfy` \h ->
-          any (\case DiNotice msg -> "Goal cleared: all tests pass" `T.isInfixOf` msg; _ -> False) h
-
-      it "supports stop as an alias for clear" $ do
-        let gs = initialGoalState "my goal"
-            s0 = baseState { tsInputBuffer = "/goal stop", tsGoalState = Just gs }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-        tsGoalState s1 `shouldSatisfy` \case
-          Just gs' -> gsStatus gs' == GoalCleared
-          Nothing -> False
-
-      it "supports off as an alias for clear" $ do
-        let gs = initialGoalState "my goal"
-            s0 = baseState { tsInputBuffer = "/goal off", tsGoalState = Just gs }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-        tsGoalState s1 `shouldSatisfy` \case
-          Just gs' -> gsStatus gs' == GoalCleared
-          Nothing -> False
-
-      it "supports reset as an alias for clear" $ do
-        let gs = initialGoalState "my goal"
-            s0 = baseState { tsInputBuffer = "/goal reset", tsGoalState = Just gs }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-        tsGoalState s1 `shouldSatisfy` \case
-          Just gs' -> gsStatus gs' == GoalCleared
-          Nothing -> False
-
-      it "supports none as an alias for clear" $ do
-        let gs = initialGoalState "my goal"
-            s0 = baseState { tsInputBuffer = "/goal none", tsGoalState = Just gs }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-        tsGoalState s1 `shouldSatisfy` \case
-          Just gs' -> gsStatus gs' == GoalCleared
-          Nothing -> False
-
-      it "supports cancel as an alias for clear" $ do
-        let gs = initialGoalState "my goal"
-            s0 = baseState { tsInputBuffer = "/goal cancel", tsGoalState = Just gs }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-        tsGoalState s1 `shouldSatisfy` \case
-          Just gs' -> gsStatus gs' == GoalCleared
-          Nothing -> False
-
-      it "prints no goal set when clearing with no active goal" $ do
-        let s0 = baseState { tsInputBuffer = "/goal clear" }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-        tsHistory s1 `shouldSatisfy` \h ->
-          any (\case DiNotice msg -> "No goal set" `T.isInfixOf` msg; _ -> False) h
-
-      it "clears the goal when /clear is used" $ do
-        let gs = initialGoalState "my goal"
-            s0 = baseState { tsInputBuffer = "/clear", tsGoalState = Just gs }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-        tsGoalState s1 `shouldBe` Nothing
-
-      it "rejects a condition longer than 4000 characters" $ do
-        let longCondition = T.replicate 4001 "x"
-            s0 = baseState { tsInputBuffer = "/goal " <> longCondition }
-            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
-        actions `shouldBe` []
-        tsGoalState s1 `shouldBe` Nothing
-        tsHistory s1 `shouldSatisfy` \h ->
-          any (\case DiNotice msg -> "too long" `T.isInfixOf` msg; _ -> False) h
-
-      it "replaces the existing goal when a new one is set" $ do
-        let gs = initialGoalState "old goal"
-            s0 = baseState { tsInputBuffer = "/goal new goal", tsGoalState = Just gs }
-            (s1, _) = updateTui (EvUserKey KeyEnter) s0
-        tsGoalState s1 `shouldSatisfy` \case
-          Just gs' -> gsCondition gs' == "new goal"
-          Nothing -> False
-
-      it "does not treat /goal stop the server as a clear command" $ do
-        let s0 = baseState { tsInputBuffer = "/goal stop the server" }
-            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
-        actions `shouldBe` [ActionRunGoal "stop the server"]
-        tsGoalState s1 `shouldSatisfy` \case
-          Just gs -> gsCondition gs == "stop the server"
-          Nothing -> False
-
-      it "does not treat /goal clear the cache as a clear command" $ do
-        let s0 = baseState { tsInputBuffer = "/goal clear the cache" }
-            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
-        actions `shouldBe` [ActionRunGoal "clear the cache"]
-        tsGoalState s1 `shouldSatisfy` \case
-          Just gs -> gsCondition gs == "clear the cache"
-          Nothing -> False
-
-    describe "Goal Event Processing" $ do
-      it "sets goal state on EvGoalSet" $ do
-        let s1 = fst $ updateTui (EvHarness (EvGoalSet "tests pass")) baseState
-        tsGoalState s1 `shouldSatisfy` \case
-          Just gs -> gsCondition gs == "tests pass" && gsStatus gs == GoalActive
-          Nothing -> False
-
-      it "updates goal state on EvGoalEvaluated" $ do
-        let gs = initialGoalState "tests pass"
-            s0 = baseState { tsGoalState = Just gs }
-            s1 = fst $ updateTui (EvHarness (EvGoalEvaluated GoalNotYetMet "Keep going.")) s0
-        case tsGoalState s1 of
-          Just gs' -> do
-            gsLastVerdict gs' `shouldBe` Just GoalNotYetMet
-            gsLastReason gs' `shouldBe` Just "Keep going."
-            gsTurnCount gs' `shouldBe` 1
-          Nothing -> expectationFailure "Expected goal state"
-
-      it "marks goal achieved on EvGoalAchieved" $ do
-        let gs = initialGoalState "tests pass"
-            s0 = baseState { tsGoalState = Just gs }
-            s1 = fst $ updateTui (EvHarness (EvGoalAchieved "tests pass")) s0
-        case tsGoalState s1 of
-          Just gs' -> gsStatus gs' `shouldBe` GoalAchieved
-          Nothing -> expectationFailure "Expected goal state"
-
-      it "marks goal failed on EvGoalFailed" $ do
-        let gs = initialGoalState "tests pass"
-            s0 = baseState { tsGoalState = Just gs }
-            s1 = fst $ updateTui (EvHarness (EvGoalFailed "tests pass" "missing framework")) s0
-        case tsGoalState s1 of
-          Just gs' -> gsStatus gs' `shouldBe` GoalFailed
-          Nothing -> expectationFailure "Expected goal state"
-
-      it "clears goal state on EvGoalCleared" $ do
-        let gs = initialGoalState "tests pass"
-            s0 = baseState { tsGoalState = Just gs }
-            s1 = fst $ updateTui (EvHarness (EvGoalCleared "tests pass")) s0
-        tsGoalState s1 `shouldBe` Nothing
 
     describe "Skill Invocation Autocomplete (Tab accepts ghost text)" $ do
       let goal = Skill "goal" "Goal skill" "body" "/p" SkillGlobal

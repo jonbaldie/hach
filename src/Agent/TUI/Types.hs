@@ -22,7 +22,7 @@ module Agent.TUI.Types
   ) where
 
 import Agent.Skills (SkillCatalog)
-import Agent.Types (AgentEvent, GoalState, TokenUsage, ToolResult)
+import Agent.Types (AgentEvent, TokenUsage, ToolResult)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 
@@ -91,7 +91,6 @@ data TuiState = TuiState
   , tsContextTokens      :: !Int
   , tsTokenUsage         :: !(Maybe TokenUsage)
   , tsSkills             :: !SkillCatalog
-  , tsGoalState          :: !(Maybe GoalState)
   } deriving (Show, Eq)
 
 -- | Initialize a clean TUI state.
@@ -116,7 +115,6 @@ initialTuiState model maxTurns = TuiState
   , tsContextTokens      = 0
   , tsTokenUsage         = Nothing
   , tsSkills             = Map.empty
-  , tsGoalState          = Nothing
   }
 
 -- | Simplified user keystroke events abstracted from Vty.
@@ -148,7 +146,6 @@ data TuiEvent
 -- | Actions requested by the reducer for the external environment to perform.
 data TuiAction
   = ActionRunAgent !Text
-  | ActionRunGoal !Text
   | ActionCancelAgent
   | ActionQuit
   | ActionScrollHistory !Int
