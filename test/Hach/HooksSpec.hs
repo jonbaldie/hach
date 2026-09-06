@@ -4,8 +4,8 @@ module Hach.HooksSpec (spec) where
 
 import Hach.Hooks
 import Hach.Types
-import Data.Aeson (Value(..), object, (.=))
-import qualified Data.Map.Strict as Map
+import Data.Aeson (object, (.=))
+import qualified Data.Text as T
 import Test.Hspec
 
 spec :: Spec
@@ -46,3 +46,11 @@ spec = describe "Hach.Hooks" $ do
       let res = parseHookOutput 1 "Command crashed"
       hrError res `shouldBe` Just "Command crashed"
       hrDecision res `shouldBe` Nothing
+
+    it "captures stdout in hrError when command exits non-zero and stderr is empty" $ do
+      let handler = HookHandler (HookCommand "echo 'policy violation'; exit 1") Nothing False
+      res <- runHookHandler "." (object []) handler
+      case hrError res of
+        Just err -> ("policy violation" `T.isInfixOf` err) `shouldBe` True
+        Nothing  -> expectationFailure "Expected hrError to be Just with error message"
+

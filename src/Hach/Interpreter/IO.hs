@@ -217,11 +217,15 @@ ioAlgebraWithLog logger IOEnv{..} = AgentAlgebra
   , interpCheckPermission = \_tool _args -> pure True
   , interpRunHook = \_ev _payload -> pure defaultHookResult
   , interpSaveSession = \sinfo -> do
-      Sessions.saveSession (ioWorkspace </> ".agent" </> "sessions") sinfo []
+      Sessions.saveSession (ioWorkspace </> ".agents" </> "sessions") sinfo []
       pure (siId sinfo)
   , interpLoadSession = \sid -> do
-      mRes <- Sessions.loadSession (ioWorkspace </> ".agent" </> "sessions") sid
-      pure (fmap fst mRes)
+      mRes <- Sessions.loadSession (ioWorkspace </> ".agents" </> "sessions") sid
+      case mRes of
+        Just _  -> pure (fmap fst mRes)
+        Nothing -> do
+          mResLegacy <- Sessions.loadSession (ioWorkspace </> ".agent" </> "sessions") sid
+          pure (fmap fst mResLegacy)
   , interpSpawnAgent = \role _desc -> pure (AgentId ("agent_" <> role))
   , interpSendMessage = \aid msg -> pure ("Sent to " <> unAgentId aid <> ": " <> msg)
   , interpListAgents = pure

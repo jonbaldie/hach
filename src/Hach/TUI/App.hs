@@ -7,12 +7,13 @@ module Hach.TUI.App
   , dialogueToMessages
   , runGoalWorker
   , goalAgentConfig
+  , initialTuiLaunch
   ) where
 
 import Hach.Core
 import Hach.Env (buildSystemPrompt, loadProjectInstructions)
 import Hach.Interpreter.IO
-import Hach.Skills (discoverSkills, injectSkillsIntoPrompt, parseSkillInvocations)
+import Hach.Skills (discoverSkills)
 import Hach.Tools
 import Hach.TUI.State
 import Hach.TUI.Types
@@ -58,6 +59,12 @@ vtyToUserKey = \case
 tuiAlgebra :: BChan AgentEvent -> IOEnv -> AgentAlgebra IO
 tuiAlgebra chan env = ioAlgebraWithLog (writeBChan chan) env
 
+-- | Compute starting state and initial actions from an optional CLI prompt.
+initialTuiLaunch :: Maybe Text -> TuiState -> (TuiState, [TuiAction])
+initialTuiLaunch Nothing st = (st, [])
+initialTuiLaunch (Just p) st
+  | T.null (T.strip p) = (st, [])
+  | otherwise          = updateTui (EvSubmit p) st
 
 -- | Run the full modern TUI application.
 runTui :: IOEnv -> Maybe Text -> IO ()
@@ -70,9 +77,7 @@ runTui ioEnv initialPrompt = do
   let sysPrompt = buildSystemPrompt mGuidelines
 
   let baseState = (initialTuiState (ioModel ioEnv) Nothing) { tsSkills = skills }
-      startingState = case initialPrompt of
-        Just p  -> fst $ updateTui (EvSubmit p) baseState
-        Nothing -> baseState
+      (startingState, initialActions) = initialTuiLaunch initialPrompt baseState
 
   let app :: App TuiState AgentEvent Name
       app = App
@@ -80,14 +85,23 @@ runTui ioEnv initialPrompt = do
         , appChooseCursor = showFirstCursor
         , appHandleEvent  = handleBrickEvent eventChan workerVar ioEnv sysPrompt
         , appStartEvent   = do
-            -- If an initial prompt was provided on CLI, trigger its execution
-            case initialPrompt of
-              Just p | not (T.null (T.strip p)) -> do
-                currentState <- get
-                let (cleaned, invoked) = parseSkillInvocations (tsSkills currentState) (T.strip p)
-                    finalP = injectSkillsIntoPrompt invoked (if T.null cleaned then p else cleaned)
-                triggerAgentRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns currentState) finalP [DiUser p]
-              _ -> pure ()
+            -- Dispatch actions produced by any initial prompt provided on CLI
+            currentState <- get
+            forM_ initialActions $ \case
+              ActionQuit -> halt
+              ActionCancelAgent -> pure ()
+              ActionRunAgent prompt -> do
+                triggerAgentRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns currentState) prompt (tsHistory currentState)
+                vScrollToEnd (viewportScroll VpHistory)
+              ActionRunGoal condition -> do
+                triggerGoalRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns currentState) condition (tsHistory currentState)
+                vScrollToEnd (viewportScroll VpHistory)
+              ActionScrollHistory delta ->
+                vScrollBy (viewportScroll VpHistory) delta
+              ActionScrollHistoryToBottom ->
+                vScrollToEnd (viewportScroll VpHistory)
+              ActionScrollTools delta ->
+                vScrollBy (viewportScroll VpTools) (delta * 2)
         , appAttrMap      = const tuiAttrMap
         }
 

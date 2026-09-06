@@ -289,7 +289,7 @@ modelContextLimit m
 contextSaturationPercent :: Int -> Text -> Int
 contextSaturationPercent tokens model =
   let limit = modelContextLimit model
-  in if limit <= 0 then 0 else (tokens * 100) `div` limit
+  in if limit <= 0 then 0 else max 0 (min 100 ((tokens * 100) `div` limit))
 
 -- | The model's response for a turn.
 data AssistantResponse = AssistantResponse

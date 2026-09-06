@@ -60,3 +60,10 @@ spec = describe "Hach.Git" $ do
       injected <- doesFileExist marker
       if injected then removeFile marker else pure ()
       injected `shouldBe` False
+
+    it "rejects path traversal and flag injection in worktree names" $ do
+      createWorktree "." "../../src" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes."
+      createWorktree "." "--orphan" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes."
+      removeWorktree "." "../escape" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes."
+      removeWorktree "." "-f" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes."
+

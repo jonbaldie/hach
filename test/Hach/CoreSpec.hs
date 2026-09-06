@@ -537,3 +537,52 @@ spec = do
       result `shouldBe` AgentCompleted "done"
       Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Nothing
       mockEvents endEnv `shouldContain` [EvPermissionDenied "write_file" "Permission denied by policy"]
+
+    it "executes exposed tool aliases (Bash, Edit, Glob, Grep, ListDir) in pureAlgebra" $ do
+      let prog = do
+            rBash <- executeTool (ToolCall "c1" "Bash" "{\"command\":\"ls\"}")
+            rEdit <- executeTool (ToolCall "c2" "Edit" "{\"path\":\"a.txt\",\"old_content\":\"old\",\"new_content\":\"new\"}")
+            rGlob <- executeTool (ToolCall "c3" "Glob" "{\"pattern\":\"*.txt\"}")
+            rGrep <- executeTool (ToolCall "c4" "Grep" "{\"query\":\"needle\"}")
+            rList <- executeTool (ToolCall "c5" "ListDir" "{\"path\":\".\"}")
+            pure (rBash, rEdit, rGlob, rGrep, rList)
+          initialEnv = emptyMockEnv
+            { mockCommandOutputs = Map.fromList [("ls", (0, "file1", ""))]
+            , mockFiles = Map.fromList [("a.txt", "old content"), ("b.txt", "needle here")]
+            }
+          ((rBash, rEdit, rGlob, rGrep, rList), finalEnv) = runPure initialEnv prog
+      case rBash of
+        ToolSuccess _ -> pure ()
+        other -> expectationFailure ("Expected ToolSuccess for Bash, got " <> show other)
+      case rEdit of
+        ToolSuccess _ -> pure ()
+        other -> expectationFailure ("Expected ToolSuccess for Edit, got " <> show other)
+      Map.lookup "a.txt" (mockFiles finalEnv) `shouldBe` Just "new content"
+      case rGlob of
+        ToolSuccess _ -> pure ()
+        other -> expectationFailure ("Expected ToolSuccess for Glob, got " <> show other)
+      case rGrep of
+        ToolSuccess out -> ("needle here" `T.isInfixOf` out) `shouldBe` True
+        other -> expectationFailure ("Expected ToolSuccess for Grep, got " <> show other)
+      case rList of
+        ToolSuccess _ -> pure ()
+        other -> expectationFailure ("Expected ToolSuccess for ListDir, got " <> show other)
+
+    it "applies PreToolUse hrModifiedInput when executing tool in agentStep" $ do
+      let toolCall1 = ToolCall "c1" "write_file" "{\"path\":\"foo.txt\",\"content\":\"dangerous\"}"
+          step1 _ _ = Right $ AssistantResponse Nothing [toolCall1] Nothing
+          step2 _ _ = Right $ AssistantResponse (Just "done") [] Nothing
+          modifyHook _ _ = defaultHookResult
+            { hrModifiedInput = Just (Aeson.object ["path" Aeson..= ("sanitized.txt" :: Text), "content" Aeson..= ("safe" :: Text)])
+            }
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockHooks = modifyHook
+            }
+          initHist = [UserMsg "Run write"]
+          ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
+      result `shouldBe` AgentCompleted "done"
+      Map.lookup "sanitized.txt" (mockFiles endEnv) `shouldBe` Just "safe"
+      Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Nothing
+
+

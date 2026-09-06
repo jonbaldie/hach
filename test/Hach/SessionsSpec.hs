@@ -2,18 +2,46 @@
 
 module Hach.SessionsSpec (spec) where
 
+import Hach.Core (AgentAlgebra(..))
+import Hach.Interpreter.IO (ioAlgebra, newIOEnv)
+import Hach.Permissions (isProtectedPath)
 import Hach.Sessions
 import Hach.Types
-import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, removeDirectoryRecursive)
+import System.FilePath ((</>))
 import Test.Hspec
+
+import Control.Monad (when)
 
 spec :: Spec
 spec = describe "Hach.Sessions" $ do
   let testDir = "dist-newstyle/test-sessions"
   around_ (\action -> do
+    exists <- doesDirectoryExist testDir
+    when exists (removeDirectoryRecursive testDir)
     createDirectoryIfMissing True testDir
     action
-    removeDirectoryRecursive testDir) $ do
+    existsAfter <- doesDirectoryExist testDir
+    when existsAfter (removeDirectoryRecursive testDir)) $ do
+
+    it "uses protected .agents directory instead of .agent for session persistence in ioAlgebra" $ do
+      env <- newIOEnv "dummy-key" "test-model" testDir False
+      let alg = ioAlgebra env
+          sInfo = SessionInfo "session-prot-1" "2026-09-06T12:00:00Z" "model-a" 1 0.01
+      _ <- interpSaveSession alg sInfo
+      let agentsDir = testDir </> ".agents" </> "sessions"
+          agentDir  = testDir </> ".agent" </> "sessions"
+      agentsSaved <- doesFileExist (agentsDir </> "session-prot-1.meta.json")
+      agentSaved  <- doesDirectoryExist agentDir
+      agentsSaved `shouldBe` True
+      agentSaved `shouldBe` False
+      isProtectedPath (agentsDir </> "session-prot-1.meta.json") `shouldBe` True
+      -- Also verify loading via algebra
+      mLoaded <- interpLoadSession alg "session-prot-1"
+      case mLoaded of
+        Just loadedInfo -> siId loadedInfo `shouldBe` "session-prot-1"
+        Nothing -> expectationFailure "Expected session to load from .agents"
+
 
     it "saves and reloads a session transcript faithfully" $ do
       let sInfo = SessionInfo

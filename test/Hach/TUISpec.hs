@@ -5,7 +5,7 @@ module Hach.TUISpec (spec) where
 import Hach.Core (AgentAlgebra(..))
 import Hach.Interpreter.IO (ioAlgebra, newIOEnv)
 import Hach.Skills (SkillSource(..), mkSkill)
-import Hach.TUI.App (dialogueToMessages, goalAgentConfig, runGoalWorker, vtyToUserKey)
+import Hach.TUI.App (dialogueToMessages, goalAgentConfig, initialTuiLaunch, runGoalWorker, vtyToUserKey)
 import Hach.TUI.State
 import Hach.TUI.Types
 import Hach.TUI.UI (formatCompactLimit, formatTokens, renderMaxTurns)
@@ -480,6 +480,11 @@ spec = do
         contextSaturationPercent 160000 "anthropic/claude-3.7-sonnet" `shouldBe` 80
         contextSaturationPercent 115200 "openai/gpt-4o" `shouldBe` 90
 
+      it "clamps context saturation percentage strictly between 0 and 100" $ do
+        contextSaturationPercent 300000 "anthropic/claude-3.7-sonnet" `shouldBe` 100
+        contextSaturationPercent (-50) "openai/gpt-4o" `shouldBe` 0
+
+
     describe "formatTokens" $ do
       it "formats small counts without commas" $ do
         formatTokens 0 `shouldBe` "0"
@@ -916,3 +921,31 @@ spec = do
 
         let (sPlug, _) = updateTui (EvSubmit "/plugin") baseState
         tsHistory sPlug `shouldContain` [DiNotice "Plugins: 0 loaded"]
+
+    describe "CLI Initial Prompt Launch (initialTuiLaunch)" $ do
+      it "dispatches ActionRunGoal when CLI initial prompt is /goal" $ do
+        let (s, actions) = initialTuiLaunch (Just "/goal all tests green") baseState
+        actions `shouldBe` [ActionRunGoal "all tests green"]
+        case tsGoalState s of
+          Just gs -> gsCondition gs `shouldBe` "all tests green"
+          Nothing -> expectationFailure "Expected tsGoalState to be initialized"
+
+      it "dispatches no actions and updates UI when CLI initial prompt is /help" $ do
+        let (s, actions) = initialTuiLaunch (Just "/help") baseState
+        actions `shouldBe` []
+        tsShowHelp s `shouldBe` True
+
+      it "dispatches ActionQuit when CLI initial prompt is /quit" $ do
+        let (_, actions) = initialTuiLaunch (Just "/quit") baseState
+        actions `shouldBe` [ActionQuit]
+
+      it "dispatches ActionRunAgent when CLI initial prompt is standard text" $ do
+        let (_, actions) = initialTuiLaunch (Just "investigate memory usage") baseState
+        actions `shouldBe` [ActionRunAgent "investigate memory usage"]
+
+      it "returns empty actions for Nothing or whitespace prompt" $ do
+        let (_, a1) = initialTuiLaunch Nothing baseState
+        a1 `shouldBe` []
+        let (_, a2) = initialTuiLaunch (Just "   ") baseState
+        a2 `shouldBe` []
+

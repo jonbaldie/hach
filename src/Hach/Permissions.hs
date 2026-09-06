@@ -16,7 +16,7 @@ import qualified Data.Aeson.KeyMap as KM
 import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
-import System.FilePath (normalise, splitDirectories, (</>))
+import System.FilePath (normalise, splitDirectories)
 
 -- | Cycle through the available permission modes.
 cyclePermissionMode :: PermissionMode -> PermissionMode
@@ -35,7 +35,7 @@ isProtectedPath :: FilePath -> Bool
 isProtectedPath fp =
   let dirs = splitDirectories (normalise fp)
       cleanDirs = [ d | d <- dirs, d /= "." && d /= "./" ]
-      protected = [".git", ".claude", ".agents"]
+      protected = [".git", ".claude", ".agents", ".agent"]
   in any (`elem` protected) cleanDirs
 
 -- | Extract a target path argument from a JSON tool call argument object.
@@ -103,42 +103,44 @@ evalPermission mode rules tool args
   | mode == ModeBypassPermissions = PermAllow
   | otherwise =
       let mPath = extractPathArg args
-          isWriteTool = tool `elem` writeTools
+          normTool = T.toLower tool
+          isWriteTool = normTool `elem` writeTools
       in if isWriteTool && maybe False isProtectedPath mPath
            then PermDeny ("Protected path: access denied to " <> maybe "" T.pack mPath)
            else case listToMaybe (concatMap (\r -> maybe [] pure (matchRule r tool mPath)) rules) of
              Just decision -> decision
-             Nothing       -> evalModeDefault mode tool isWriteTool
+             Nothing       -> evalModeDefault mode normTool isWriteTool
   where
     readOnlyTools =
       [ "read_file"
       , "list_dir"
+      , "listdir"
       , "find_files"
       , "grep_search"
-      , "Glob"
-      , "Grep"
-      , "WebFetch"
-      , "WebSearch"
-      , "ListAgents"
-      , "TaskList"
-      , "TaskGet"
+      , "glob"
+      , "grep"
+      , "webfetch"
+      , "websearch"
+      , "listagents"
+      , "tasklist"
+      , "taskget"
       ]
 
     writeTools =
       [ "write_file"
       , "replace_file_content"
-      , "Edit"
-      , "TodoWrite"
-      , "TaskCreate"
-      , "TaskUpdate"
+      , "edit"
+      , "todowrite"
+      , "taskcreate"
+      , "taskupdate"
       ]
 
     commandTools =
       [ "run_command"
-      , "Bash"
-      , "TaskStop"
-      , "EnterWorktree"
-      , "ExitWorktree"
+      , "bash"
+      , "taskstop"
+      , "enterworktree"
+      , "exitworktree"
       ]
 
     evalModeDefault m t isWrite = case m of
@@ -152,13 +154,13 @@ evalPermission mode rules tool args
         if t `elem` readOnlyTools || isWrite
           then PermAllow
           else if t `elem` commandTools
-            then PermAsk ("Command execution requires approval: " <> t)
-            else PermAllow
+            then PermAsk ("Command execution requires approval: " <> tool)
+            else PermAsk ("Tool execution requires approval: " <> tool)
       ModeAuto ->
         if t `elem` readOnlyTools || isWrite
           then PermAllow
-          else PermAsk ("Auto mode requires approval for: " <> t)
+          else PermAsk ("Auto mode requires approval for: " <> tool)
       ModeDefault ->
         if t `elem` readOnlyTools
           then PermAllow
-          else PermAsk ("Tool execution requires approval: " <> t)
+          else PermAsk ("Tool execution requires approval: " <> tool)
