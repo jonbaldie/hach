@@ -139,42 +139,46 @@ jobs:
           amd64_sha=$(awk -v f="$amd64_archive" '$2 == f {print $1}' dist/checksums.txt)
           linux_sha=$(awk -v f="$linux_archive" '$2 == f {print $1}' dist/checksums.txt || true)
 
-          cat << EOF > Formula_hach.rb
-class Hach < Formula
-  desc "Minimalist, principled agentic coding harness in Haskell (Functional Pearl)"
-  homepage "https://github.com/jonbaldie/hach"
-  license "MIT"
-  version_scheme 1
+          ruby -e '
+            version, arm64_archive, arm64_sha, amd64_archive, amd64_sha, linux_archive, linux_sha = ARGV
+            formula = <<~RUBY
+              class Hach < Formula
+                desc "Minimalist, principled agentic coding harness in Haskell (Functional Pearl)"
+                homepage "https://github.com/jonbaldie/hach"
+                license "MIT"
+                version_scheme 1
 
-  on_macos do
-    on_arm do
-      url "https://github.com/jonbaldie/hach/releases/download/v\${version}/\${arm64_archive}"
-      sha256 "\${arm64_sha}"
-    end
+                on_macos do
+                  on_arm do
+                    url "https://github.com/jonbaldie/hach/releases/download/v#{version}/#{arm64_archive}"
+                    sha256 "#{arm64_sha}"
+                  end
 
-    on_intel do
-      url "https://github.com/jonbaldie/hach/releases/download/v\${version}/\${amd64_archive}"
-      sha256 "\${amd64_sha}"
-    end
-  end
+                  on_intel do
+                    url "https://github.com/jonbaldie/hach/releases/download/v#{version}/#{amd64_archive}"
+                    sha256 "#{amd64_sha}"
+                  end
+                end
 
-  on_linux do
-    on_intel do
-      url "https://github.com/jonbaldie/hach/releases/download/v\${version}/\${linux_archive}"
-      sha256 "\${linux_sha}"
-    end
-  end
+                on_linux do
+                  on_intel do
+                    url "https://github.com/jonbaldie/hach/releases/download/v#{version}/#{linux_archive}"
+                    sha256 "#{linux_sha}"
+                  end
+                end
 
-  def install
-    bin.install "hach"
-    prefix.install "LICENSE"
-  end
+                def install
+                  bin.install "hach"
+                  prefix.install "LICENSE"
+                end
 
-  test do
-    assert_match "\${version}", shell_output("\#{bin}/hach --version")
-  end
-end
-EOF
+                test do
+                  assert_match "\#{version}", shell_output("\#{bin}/hach --version")
+                end
+              end
+            RUBY
+            File.write("Formula_hach.rb", formula)
+          ' "$version" "$arm64_archive" "$arm64_sha" "$amd64_archive" "$amd64_sha" "$linux_archive" "$linux_sha"
 
           echo "Generated Homebrew Formula:"
           cat Formula_hach.rb
