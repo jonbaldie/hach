@@ -24,6 +24,13 @@ module Agent.Types
   , initialGoalState
   , GoalErrorKind(..)
   , classifyCompletion
+  , classifyError
+  , unrecoverableKeywords
+
+    -- * /goal Command Argument Parsing
+  , goalClearAliases
+  , maxGoalConditionLength
+  , goalArgIsClear
 
     -- * Agent Configuration & Results
   , AgentConfig(..)
@@ -35,6 +42,7 @@ import Data.Aeson
   ( FromJSON(..), ToJSON(..), Value, object, withObject, (.:), (.:?), (.!=), (.=)
   )
 import qualified Data.Aeson as Aeson
+import Data.Char (isSpace)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -285,23 +293,60 @@ data GoalErrorKind = GoalErrUnrecoverable | GoalErrTransient | GoalNoError
 -- Returns 'GoalErrUnrecoverable' for auth, credit, context-overflow,
 -- and model-unavailable errors; 'GoalErrTransient' for other errors;
 -- 'GoalNoError' for normal completions.
+--
+-- Only text carrying the explicit @"[API Error]: "@ prefix is treated as an
+-- error, so normal model output that happens to mention words like "model"
+-- or "credit" is left as 'GoalNoError'.
 classifyCompletion :: Text -> GoalErrorKind
 classifyCompletion content
   | not (errPrefix `T.isPrefixOf` content) = GoalNoError
-  | otherwise =
-      let lower = T.toLower (T.drop (T.length errPrefix) content)
-          hasAny = any (`T.isInfixOf` lower)
-      in if hasAny ["401", "unauthorized", "authentication", "api key"]
-           then GoalErrUnrecoverable
-         else if hasAny ["402", "payment", "credit", "balance", "quota", "billing"]
-           then GoalErrUnrecoverable
-         else if hasAny ["context", "overflow", "too long", "maximum context", "token limit"]
-           then GoalErrUnrecoverable
-         else if hasAny ["404", "model", "not found", "unavailable", "does not exist"]
-           then GoalErrUnrecoverable
-         else GoalErrTransient
+  | otherwise = classifyError (T.drop (T.length errPrefix) content)
   where
     errPrefix = "[API Error]: "
+
+-- | Classify an error message that arrived via 'AgentFailed' (i.e. from the
+-- IO interpreter).  Unlike 'classifyCompletion', the text is always an error,
+-- so we search the whole (lowercased) message for unrecoverable keywords
+-- without requiring any prefix — the real interpreter emits errors such as
+-- @"OpenRouter API error: 401 Unauthorized"@ which carry no @"[API Error]: "@
+-- prefix.  Returns 'GoalErrUnrecoverable' for auth, credit, context-overflow,
+-- and model-unavailable errors; 'GoalErrTransient' otherwise.
+classifyError :: Text -> GoalErrorKind
+classifyError err =
+  let lower = T.toLower err
+      hasAny = any (`T.isInfixOf` lower)
+  in if hasAny unrecoverableKeywords
+       then GoalErrUnrecoverable
+       else GoalErrTransient
+
+-- | Keywords that mark an API error as unrecoverable (the goal should be
+-- failed rather than left active for retry).
+unrecoverableKeywords :: [Text]
+unrecoverableKeywords = concat
+  [ ["401", "unauthorized", "authentication", "api key"]
+  , ["402", "payment", "credit", "balance", "quota", "billing"]
+  , ["context", "overflow", "too long", "maximum context", "token limit"]
+  , ["404", "model", "not found", "unavailable", "does not exist"]
+  ]
+
+-- | Maximum length of a goal condition text.
+maxGoalConditionLength :: Int
+maxGoalConditionLength = 4000
+
+-- | Aliases for clearing the goal via @/goal <alias>@.
+goalClearAliases :: [Text]
+goalClearAliases = ["clear", "stop", "off", "reset", "none", "cancel"]
+
+-- | True when the @/goal@ argument is a bare clear-alias with no trailing
+-- text, e.g. @/goal clear@ or @/goal stop@.  A condition whose first word
+-- happens to be a clear alias — @/goal stop the server@ — is NOT a clear
+-- command, because text follows the alias word.  The argument is the text
+-- after the @\"/goal \"@ prefix (optionally with leading\/trailing spaces).
+goalArgIsClear :: Text -> Bool
+goalArgIsClear argText =
+  let argWord = T.toLower (T.takeWhile (not . isSpace) argText)
+      rest    = T.strip (T.dropWhile (not . isSpace) argText)
+  in argWord `elem` goalClearAliases && T.null rest
 
 -- | Configuration parameters for the agent.
 data AgentConfig = AgentConfig

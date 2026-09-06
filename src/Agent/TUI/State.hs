@@ -11,8 +11,7 @@ module Agent.TUI.State
 import Agent.Skills (Skill(..), injectSkillsIntoPrompt, parseSkillInvocations, skillInvocationCompletion)
 import Agent.TUI.Types
 import Agent.TUI.UI (formatTokens)
-import Agent.Types (AgentEvent(..), GoalState(..), GoalStatus(..), GoalVerdict(..), TokenUsage(..), ToolResult, initialGoalState)
-import Data.Char (isSpace)
+import Agent.Types (AgentEvent(..), GoalState(..), GoalStatus(..), GoalVerdict(..), TokenUsage(..), ToolResult, initialGoalState, goalArgIsClear, maxGoalConditionLength)
 import qualified Data.Text as T
 
 -- | Pure state reducer for the TUI.
@@ -28,14 +27,6 @@ updateTui event state = case event of
 
   EvHarness agentEv ->
     (handleAgentEvent agentEv state, [])
-
--- | Maximum length of a goal condition text.
-maxGoalConditionLength :: Int
-maxGoalConditionLength = 4000
-
--- | Aliases for clearing the goal.
-goalClearAliases :: [T.Text]
-goalClearAliases = ["clear", "stop", "off", "reset", "none", "cancel"]
 
 -- | Whether the agent harness is currently busy running an inference turn or tool.
 isBusy :: TuiStatus -> Bool
@@ -121,8 +112,7 @@ handleSubmitPrompt rawPrompt state
   | T.isPrefixOf "/goal " trimmed =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
           argText = T.drop (T.length ("/goal " :: T.Text)) trimmed
-          argWord = T.toLower (T.takeWhile (not . isSpace) argText)
-      in if argWord `elem` goalClearAliases && T.null (T.strip (T.dropWhile (not . isSpace) argText))
+      in if goalArgIsClear argText
            then
              let (clearNotice, newGoalState) = case tsGoalState state of
                    Just gs | gsStatus gs `notElem` [GoalCleared, GoalFailed, GoalAchieved] ->

@@ -191,6 +191,11 @@ goalLoop cfg tools condition blockCap initialHistory = do
   logEvent (EvGoalSet condition)
   loop 1 (initialGoalState condition) initialHistory
   where
+    -- Clamp to a minimum of 1: a block cap of 0 or less is degenerate because
+    -- the block decision is only reached *after* a no-progress turn runs, so
+    -- the counter would otherwise exceed the cap.  1 is the smallest value
+    -- that lets the invariant 'gsNoProgressCount <= blockCap' hold.
+    effectiveCap = max 1 blockCap
     loop turn gs hist = do
       agentStep cfg tools turn hist >>= \case
         Right nextHist ->
@@ -232,7 +237,7 @@ goalLoop cfg tools condition blockCap initialHistory = do
                     pure (result, finalHist, g2)
 
                   GoalNotYetMet ->
-                    if gsNoProgressCount g1 >= blockCap
+                    if gsNoProgressCount g1 >= effectiveCap
                       then do
                         logEvent (EvGoalBlocked condition)
                         pure (result, finalHist, g1)
@@ -247,7 +252,7 @@ goalLoop cfg tools condition blockCap initialHistory = do
             pure (result, finalHist, gs)
 
           AgentFailed err ->
-            case classifyCompletion err of
+            case classifyError err of
               GoalErrUnrecoverable -> do
                 let g' = gs { gsStatus = GoalFailed }
                 logEvent (EvGoalFailed condition err)
