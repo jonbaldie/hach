@@ -134,16 +134,15 @@ collapseAdjacent view wrap = go
     go [] = []
     go (x : xs) = case view x of
       Just t ->
-        let (more, rest) = spanView xs
+        let (more, rest) = spanView [] xs
         in wrap (T.intercalate "\n\n" (t : more)) : go rest
       Nothing ->
         x : go xs
 
-    spanView (y : ys)
-      | Just t <- view y =
-          let (ts, rest) = spanView ys
-          in (t : ts, rest)
-    spanView ys = ([], ys)
+    spanView acc [] = (reverse acc, [])
+    spanView acc (y : ys) = case view y of
+      Just t  -> spanView (t : acc) ys
+      Nothing -> (reverse acc, y : ys)
 
 -- | Convert dialogue history into LLM messages for multi-turn context.
 -- Uses the expanded prompt for the latest turn so that skill instructions

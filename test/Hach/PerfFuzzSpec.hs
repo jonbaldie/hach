@@ -19,9 +19,10 @@ module Hach.PerfFuzzSpec (spec) where
 
 import Hach.Permissions
 import Hach.Settings
-import Hach.TUI.App (transcriptItemsToMessages)
+import Hach.TUI.App (transcriptItemsToMessages, dialogueToMessages)
 import Hach.TUI.Types
 import Hach.Types
+
 
 import Data.List (nub)
 import Data.Text (Text)
@@ -299,6 +300,57 @@ spec = do
           joined = T.intercalate "\n\n" (replicate n t)
       transcriptItemsToMessages items `shouldBe` [AssistantMsg (Just joined) []]
       naiveCollapseCost (replicate n t) `shouldSatisfy` (> 2 * T.length joined)
+
+    it "headline: 10000 adjacent assistant items collapse correctly in linear time" $ do
+      let n = 10000
+          t = "x" :: Text
+          items = replicate n (TiAssistant t)
+          joined = T.intercalate "\n\n" (replicate n t)
+      transcriptItemsToMessages items `shouldBe` [AssistantMsg (Just joined) []]
+      naiveCollapseCost (replicate n t) `shouldSatisfy` (> 10000000)
+
+    it "headline: 10000 adjacent user items collapse correctly in linear time" $ do
+      let n = 10000
+          t = "u" :: Text
+          items = replicate n (TiUser t)
+          joined = T.intercalate "\n\n" (replicate n t)
+      transcriptItemsToMessages items `shouldBe` [UserMsg joined]
+
+    it "mixed transcript items collapse adjacent same-role items across notices" $ do
+      let c1 = ToolCard "call_1" "read_file" "{\"path\":\"foo.hs\"}" (Finished (ToolSuccess "file content")) False
+          items =
+            [ TiNotice "Session started"
+            , TiUser "first prompt"
+            , TiNotice "Switching mode"
+            , TiUser "second prompt"
+            , TiAssistant "thought 1"
+            , TiNotice "background job"
+            , TiAssistant "thought 2"
+            , TiToolCard c1
+            , TiAssistant "final response"
+            ]
+          msgs = transcriptItemsToMessages items
+      msgs `shouldBe`
+        [ UserMsg "first prompt\n\nsecond prompt"
+        , AssistantMsg (Just "thought 1\n\nthought 2") [ToolCall "call_1" "read_file" "{\"path\":\"foo.hs\"}"]
+        , ToolMsg "call_1" "read_file" "file content"
+        , AssistantMsg (Just "final response") []
+        ]
+
+    it "dialogueToMessages strictly maintains role alternation on long mixed transcripts" $ do
+      let n = 1000
+          assts = replicate n (TiAssistant "step")
+          items = TiUser "init" : assts
+          msgs = dialogueToMessages "sys" "done" items
+          isAsst AssistantMsg{} = True
+          isAsst _              = False
+          isUser UserMsg{}      = True
+          isUser _              = False
+          pairs = zip msgs (drop 1 msgs)
+          hasConsecutiveAsst = any (\(a, b) -> isAsst a && isAsst b) pairs
+          hasConsecutiveUser = any (\(a, b) -> isUser a && isUser b) pairs
+      hasConsecutiveAsst `shouldBe` False
+      hasConsecutiveUser `shouldBe` False
 
   describe "PerfFuzz: settings allowlist unique is order-preserving" $ do
     it "later layer wins; first occurrence of each name is kept" $ vigorous $
