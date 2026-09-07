@@ -7,6 +7,7 @@ import Hach.Types
 import qualified Data.Text as T
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 import System.FilePath ((</>))
+import System.Timeout (timeout)
 import Test.Hspec
 
 spec :: Spec
@@ -141,6 +142,24 @@ spec = do
       res `shouldSatisfy` \t -> "[Output truncated" `T.isInfixOf` t
       length (T.lines res) `shouldSatisfy` (<= 1005)
 
+  describe "matchPattern (find_files)" $ do
+    it "evaluates pathological wildcard pattern in linear time without backtracking" $ do
+      let pat = "*a*a*a*a*a*a*a*a*a*a*b"
+          target = replicate 30 'a'
+      matchPattern pat target `shouldBe` False
+
+    it "preserves wildcard semantics matching across directory separators" $ do
+      matchPattern "*foo*" "src/foo.hs" `shouldBe` True
+      matchPattern "*.hs" "src/foo.hs" `shouldBe` True
+      matchPattern "*test*" "test/Hach/ToolsSpec.hs" `shouldBe` True
+      matchPattern "*a*b*" "dir/a/sub/b/file.txt" `shouldBe` True
+      matchPattern "*.hs" "src/foo.hsx" `shouldBe` False
+
+    it "performs non-wildcard substring searches against name and full path" $ do
+      matchPattern "foo" "src/foo.hs" `shouldBe` True
+      matchPattern "src" "src/foo.hs" `shouldBe` True
+      matchPattern "missing" "src/foo.hs" `shouldBe` False
+
   describe "Tool Execution" $ do
     let testSandbox = "dist-newstyle/test-sandbox-tools"
 
@@ -204,6 +223,50 @@ spec = do
             out `shouldSatisfy` (not . ("NotMatch.hsx" `T.isInfixOf`))
             out `shouldSatisfy` (not . ("Archive.hs.zip" `T.isInfixOf`))
           ToolError err -> expectationFailure (T.unpack err)
+
+      it "evaluates pathological wildcard patterns without exponential backtracking in executeFindFiles" $ do
+        let pathologicalFile = testSandbox </> (replicate 30 'a' ++ ".txt")
+        _ <- executeWriteFile "." (WriteFileArgs pathologicalFile "target")
+        let pat = "*a*a*a*a*a*a*a*a*a*a*b"
+        mRes <- timeout 2000000 (executeFindFiles "." (FindFilesArgs pat testSandbox))
+        case mRes of
+          Nothing -> expectationFailure "executeFindFiles timed out on pathological pattern (exponential backtracking)"
+          Just (ToolSuccess out) -> out `shouldBe` "No matching files found."
+          Just (ToolError err)   -> expectationFailure ("Unexpected error: " ++ T.unpack err)
+
+      it "preserves find_files wildcard semantics across path separators in executeFindFiles" $ do
+        let nestedFile = testSandbox </> "sub" </> "foo.txt"
+        _ <- executeWriteFile "." (WriteFileArgs nestedFile "content")
+        r1 <- executeFindFiles "." (FindFilesArgs "*sub*foo*" testSandbox)
+        case r1 of
+          ToolSuccess out -> out `shouldSatisfy` ("foo.txt" `T.isInfixOf`)
+          ToolError err   -> expectationFailure (T.unpack err)
+        r2 <- executeFindFiles "." (FindFilesArgs "*.txt" testSandbox)
+        case r2 of
+          ToolSuccess out -> out `shouldSatisfy` ("foo.txt" `T.isInfixOf`)
+          ToolError err   -> expectationFailure (T.unpack err)
+
+      it "performs non-wildcard substring searches in executeFindFiles" $ do
+        let nestedFile = testSandbox </> "sub" </> "searchme.txt"
+        _ <- executeWriteFile "." (WriteFileArgs nestedFile "content")
+        r1 <- executeFindFiles "." (FindFilesArgs "searchme" testSandbox)
+        case r1 of
+          ToolSuccess out -> out `shouldSatisfy` ("searchme.txt" `T.isInfixOf`)
+          ToolError err   -> expectationFailure (T.unpack err)
+
+      it "executes find_files via executeCodingTool and reports accurate error on parse failure" $ do
+        let nestedFile = testSandbox </> "sub" </> "alpha.txt"
+        _ <- executeWriteFile "." (WriteFileArgs nestedFile "alpha")
+        let call = ToolCall "c_ff" "find_files" ("{\"pattern\":\"*.txt\",\"path\":\"" <> T.pack testSandbox <> "\"}")
+        rSuccess <- executeCodingTool "." call
+        case rSuccess of
+          ToolSuccess out -> out `shouldSatisfy` ("alpha.txt" `T.isInfixOf`)
+          ToolError err   -> expectationFailure ("find_files failed: " ++ T.unpack err)
+        let badCall = ToolCall "c_bad" "find_files" "{}"
+        rBad <- executeCodingTool "." badCall
+        case rBad of
+          ToolError err   -> err `shouldSatisfy` ("Failed to parse find_files args" `T.isInfixOf`)
+          ToolSuccess out -> expectationFailure ("Expected parse error, got: " ++ T.unpack out)
 
       it "greps files for matching pattern and reports line number" $ do
         let targetFile = testSandbox </> "Code.hs"
