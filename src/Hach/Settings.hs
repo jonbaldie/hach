@@ -18,9 +18,9 @@ import Data.Aeson
   )
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
-import Data.List (nub)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import System.Directory (doesFileExist, getHomeDirectory)
@@ -113,11 +113,20 @@ mergeSettings earlier later = Settings
   , setTheme            = setTheme later <|> setTheme earlier
   , setKeybindings      = Map.union (setKeybindings later) (setKeybindings earlier)
   , setStatusLine       = setStatusLine later <|> setStatusLine earlier
-  , setEnvAllowlist     = nub (setEnvAllowlist later ++ setEnvAllowlist earlier)
-  , setWorkingDirs      = nub (setWorkingDirs later ++ setWorkingDirs earlier)
+  , setEnvAllowlist     = ordNub (setEnvAllowlist later ++ setEnvAllowlist earlier)
+  , setWorkingDirs      = ordNub (setWorkingDirs later ++ setWorkingDirs earlier)
   , setOutputStyle      = setOutputStyle later <|> setOutputStyle earlier
   , setAutoCompactLimit = setAutoCompactLimit later <|> setAutoCompactLimit earlier
   }
+
+-- | Order-preserving unique: first occurrence wins, O(n log n).
+ordNub :: Ord a => [a] -> [a]
+ordNub = go Set.empty
+  where
+    go _ [] = []
+    go seen (x:xs)
+      | x `Set.member` seen = go seen xs
+      | otherwise           = x : go (Set.insert x seen) xs
 
 -- | Load settings from a specific JSON file.
 loadSettingsFromFile :: FilePath -> IO (Maybe Settings)

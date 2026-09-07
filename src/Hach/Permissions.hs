@@ -6,6 +6,7 @@ module Hach.Permissions
   , isProtectedPath
   , extractPathArg
   , matchGlob
+  , matchStarGlob
   , matchRule
   , cyclePermissionMode
   ) where
@@ -13,6 +14,8 @@ module Hach.Permissions
 import Hach.Types
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KM
+import Data.List (tails)
+import qualified Data.Map.Lazy as Map
 import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -46,34 +49,100 @@ extractPathArg (Aeson.Object km) =
   in findVal
 extractPathArg _ = Nothing
 
--- | Simple glob matcher supporting '*' wildcard and '**' recursive wildcards.
--- '**/ matches zero or more directories.
--- '*' matches any characters within a directory segment (does not cross '/').
+-- | Glob tokens. Lexing order matches the original backtracking matcher:
+-- @**/@ first, then @**@, then @*@, then a literal character.
+data GlobTok
+  = Lit Char
+  | Star        -- ^ '*'  : any run of non-'/' characters (including empty)
+  | DStar       -- ^ '**' : any run of characters, including '/'
+  | DStarSlash  -- ^ '**/': zero or more complete directory segments
+  deriving (Eq, Show)
+
+tokenizeGlob :: String -> [GlobTok]
+tokenizeGlob []               = []
+tokenizeGlob ('*':'*':'/':xs) = DStarSlash : tokenizeGlob xs
+tokenizeGlob ('*':'*':xs)     = DStar : tokenizeGlob xs
+tokenizeGlob ('*':xs)         = Star : tokenizeGlob xs
+tokenizeGlob (c:xs)           = Lit c : tokenizeGlob xs
+
+-- | Glob matcher supporting '*' and '**'.
+--
+-- @**/@ matches zero or more complete directory segments.
+-- @**@ matches any characters, including @'/'@.
+-- @*@ matches any characters within a directory segment (does not cross @'/'@).
+--
+-- Implemented as a lazy DP over 'tails' of the token and path lists so
+-- the work is O(|pattern| · |path|) instead of exponential backtracking.
 matchGlob :: Text -> FilePath -> Bool
-matchGlob pat fp =
-  let patStr = T.unpack pat
-      fpStr  = fp
-  in matchGlobStr patStr fpStr
+matchGlob pat fp = matchToks (tokenizeGlob (T.unpack pat)) fp
+
+-- | Lazy DP over remaining-token / remaining-path suffixes.
+-- Cells are addressed by the 'tails' offset, never by partial '!!'.
+matchToks :: [GlobTok] -> String -> Bool
+matchToks toks target = cell 0 0
   where
-    matchGlobStr [] [] = True
-    matchGlobStr ('*':'*':'/':rest) target =
-      matchGlobStr rest target || case break (== '/') target of
-        (_, '/':ts) -> matchGlobStr ('*':'*':'/':rest) ts
-        _           -> False
-    matchGlobStr ['*', '*'] _ = True
-    matchGlobStr ('*':'*':rest) target =
-      matchGlobStr rest target || case target of
-        []     -> False
-        (_:ts) -> matchGlobStr ('*':'*':rest) ts
-    matchGlobStr ('*':rest) target =
-      matchGlobStr rest target || case target of
-        (c:ts) | c /= '/' -> matchGlobStr ('*':rest) ts
-        _                 -> False
-    matchGlobStr (p:ps) (t:ts)
-      | p == t    = matchGlobStr ps ts
-      | otherwise = False
-    matchGlobStr [] (_:_) = False
-    matchGlobStr (_:_) [] = False
+    tokSufs = tails toks
+    tgtSufs = tails target
+
+    table :: Map.Map (Int, Int) Bool
+    table = Map.fromList
+      [ ((i, j), eval i j ts tgt)
+      | (i, ts)  <- zip [0..] tokSufs
+      , (j, tgt) <- zip [0..] tgtSufs
+      ]
+
+    cell i j = Map.findWithDefault False (i, j) table
+
+    eval i j ts tgt = case ts of
+      [] ->
+        null tgt
+      Lit c : _ ->
+        case tgt of
+          t : _ | t == c -> cell (i + 1) (j + 1)
+          _              -> False
+      Star : _ ->
+        cell (i + 1) j
+          || case tgt of
+               (c : _) | c /= '/' -> cell i (j + 1)
+               _                  -> False
+      DStar : _ ->
+        cell (i + 1) j
+          || case tgt of
+               (_ : _) -> cell i (j + 1)
+               []      -> False
+      DStarSlash : _ ->
+        cell (i + 1) j
+          || case break (== '/') tgt of
+               (pre, '/' : _) -> cell i (j + length pre + 1)
+               _              -> False
+
+-- | '*' matches any sequence of characters (including '/').
+--
+-- Linear in the combined length of pattern and string: only the most
+-- recent '*' is remembered, which is sufficient when a star may consume
+-- any character.  The resume point is a 'Maybe' of remaining texts,
+-- not a sentinel index.
+matchStarGlob :: Text -> Text -> Bool
+matchStarGlob pat str = go pat str Nothing
+  where
+    go p s star
+      | Just p' <- T.stripPrefix "*" p =
+          go p' s (Just (p', s))
+      | Just (pc, p') <- T.uncons p
+      , Just (sc, s') <- T.uncons s
+      , pc == sc =
+          go p' s' star
+      -- Resume only while the current string still has characters, matching
+      -- the original "j < slen && star >= 0" guard.  An exhausted string
+      -- falls through to the leftover-stars check instead of replaying s0.
+      | Just (p', s0) <- star
+      , not (T.null s)
+      , Just (_, s') <- T.uncons s0 =
+          go p' s' (Just (p', s'))
+      | T.null s =
+          T.all (== '*') p
+      | otherwise =
+          False
 
 -- | Check if a single rule matches the given tool and path.
 matchRule :: PermissionRule -> Text -> Maybe FilePath -> Maybe PermissionDecision
