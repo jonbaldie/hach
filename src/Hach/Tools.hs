@@ -100,6 +100,7 @@ module Hach.Tools
   , executeRunCommand
   , executeListDir
   , executeFindFiles
+  , matchPattern
   , executeGrepSearch
   , executeWebFetch
   , executeWebSearch
@@ -1011,12 +1012,12 @@ executeCodingTool root call = do
 
     name | name `elem` ["find_files", "Glob", "glob"] ->
       case parseGlobArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse Glob args: " <> T.pack err)
+        Left err   -> pure $ ToolError ("Failed to parse " <> name <> " args: " <> T.pack err)
         Right args -> executeFindFiles root (FindFilesArgs (globPattern args) (globPath args))
 
     name | name `elem` ["grep_search", "Grep", "grep"] ->
       case parseGrepArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse Grep args: " <> T.pack err)
+        Left err   -> pure $ ToolError ("Failed to parse " <> name <> " args: " <> T.pack err)
         Right args -> executeGrepSearch root (GrepSearchArgs (grepQueryText args) (grepPathText args) (grepArgCaseSensitive args))
 
     name | name `elem` ["WebFetch", "web_fetch"] ->
@@ -1249,12 +1250,16 @@ executeFindFiles root (FindFilesArgs pat searchPath) = do
                 pure [rel]
           pure (concat subResults)
 
-    matchPattern p fp =
-      let name = T.pack (takeFileName fp)
-          full = T.pack fp
-      in if "*" `T.isInfixOf` p
-           then matchStarGlob p name || matchStarGlob p full
-           else p `T.isInfixOf` name || p `T.isInfixOf` full
+-- | Pattern matcher for find_files: '*' wildcards match across path separators
+-- in linear time via 'matchStarGlob', while non-wildcard patterns match as
+-- substrings of either the filename or the full relative path.
+matchPattern :: Text -> FilePath -> Bool
+matchPattern p fp =
+  let name = T.pack (takeFileName fp)
+      full = T.pack fp
+  in if "*" `T.isInfixOf` p
+       then matchStarGlob p name || matchStarGlob p full
+       else p `T.isInfixOf` name || p `T.isInfixOf` full
 
 executeGrepSearch :: FilePath -> GrepSearchArgs -> IO ToolResult
 executeGrepSearch root (GrepSearchArgs query searchPath caseSensitive) = do
