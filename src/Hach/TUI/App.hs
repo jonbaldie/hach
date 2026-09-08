@@ -3,6 +3,7 @@
 
 module Hach.TUI.App
   ( runTui
+  , buildTuiSystemPrompt
   , vtyToUserKey
   , dialogueToMessages
   , transcriptToMessages
@@ -16,7 +17,7 @@ module Hach.TUI.App
   ) where
 
 import Hach.Core
-import Hach.Env (buildSystemPrompt, loadProjectInstructions)
+import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions)
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills)
 import Hach.Tools
@@ -71,15 +72,20 @@ initialTuiLaunch (Just p) st
   | T.null (T.strip p) = (st, [])
   | otherwise          = updateTui (EvSubmit p) st
 
+-- | Build the active system prompt for the TUI given workspace and optional custom appended prompt.
+buildTuiSystemPrompt :: FilePath -> Maybe Text -> IO Text
+buildTuiSystemPrompt workspace mAppendPrompt = do
+  mGuidelines <- loadProjectInstructions workspace
+  pure (buildSystemPromptWithAppend mGuidelines mAppendPrompt)
+
 -- | Run the full modern TUI application.
-runTui :: IOEnv -> Maybe Text -> Maybe Int -> IO ()
-runTui ioEnv initialPrompt mMaxTurns = do
+runTui :: IOEnv -> Maybe Text -> Maybe Int -> Maybe Text -> IO ()
+runTui ioEnv initialPrompt mMaxTurns mAppendPrompt = do
   eventChan <- newBChan 100
   workerVar <- newTVarIO (Nothing :: Maybe (Async ()))
 
   skills <- discoverSkills (ioWorkspace ioEnv)
-  mGuidelines <- loadProjectInstructions (ioWorkspace ioEnv)
-  let sysPrompt = buildSystemPrompt mGuidelines
+  sysPrompt <- buildTuiSystemPrompt (ioWorkspace ioEnv) mAppendPrompt
 
   let baseState = (initialTuiState (ioModel ioEnv) mMaxTurns) { tsSkills = skills }
       (startingState, initialActions) = initialTuiLaunch initialPrompt baseState

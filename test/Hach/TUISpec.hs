@@ -7,7 +7,8 @@ import Hach.Core (AgentAlgebra(..))
 import Hach.Interpreter.IO (ioAlgebra, newIOEnv)
 import Hach.Skills (SkillSource(..), mkSkill)
 import Hach.TUI.App
-  ( cancelledToolCallPlaceholder
+  ( buildTuiSystemPrompt
+  , cancelledToolCallPlaceholder
   , dialogueToMessages
   , goalAgentConfig
   , initialTuiLaunch
@@ -48,6 +49,9 @@ import qualified Data.Vector as V
 import qualified Graphics.Vty as Vty
 import qualified Graphics.Vty.PictureToSpans as PTS
 import qualified Graphics.Vty.Span as Span
+import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
+import System.FilePath ((</>))
+import qualified Data.Text.IO as TIO
 import Test.Hspec
 
 renderTestRows :: TuiState -> (Int, Int) -> [T.Text]
@@ -1463,4 +1467,25 @@ spec = do
         a1 `shouldBe` []
         let (_, a2) = initialTuiLaunch (Just "   ") baseState
         a2 `shouldBe` []
+
+    describe "buildTuiSystemPrompt" $ do
+      let tuiSandbox = "dist-newstyle/test-sandbox-tui-prompt"
+      around_ (\action -> do
+        createDirectoryIfMissing True tuiSandbox
+        action
+        removeDirectoryRecursive tuiSandbox) $ do
+        it "builds base prompt when no guidelines or extra prompt" $ do
+          prompt <- buildTuiSystemPrompt tuiSandbox Nothing
+          prompt `shouldSatisfy` ("expert autonomous coding assistant" `T.isInfixOf`)
+
+        it "appends custom instructions when optAppendSystemPrompt is passed" $ do
+          prompt <- buildTuiSystemPrompt tuiSandbox (Just "Always reply in uppercase")
+          prompt `shouldSatisfy` ("expert autonomous coding assistant" `T.isInfixOf`)
+          prompt `shouldSatisfy` ("Always reply in uppercase" `T.isInfixOf`)
+
+        it "combines AGENT.md guidelines and optAppendSystemPrompt" $ do
+          TIO.writeFile (tuiSandbox </> "AGENT.md") "Follow strict types."
+          prompt <- buildTuiSystemPrompt tuiSandbox (Just "Reply in JSON only")
+          prompt `shouldSatisfy` ("Follow strict types." `T.isInfixOf`)
+          prompt `shouldSatisfy` ("Reply in JSON only" `T.isInfixOf`)
 

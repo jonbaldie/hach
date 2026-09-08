@@ -201,6 +201,27 @@ spec = do
       parseCliArgs ["--dangerously-skip-permissions"] `shouldBe` Right defaultCliOptions
         { optDangerouslySkipPerms = True }
 
+    it "parses --append-system-prompt flag with separate argument" $ do
+      let args = ["--append-system-prompt", "Always reply in uppercase", "hello"]
+      parseCliArgs args `shouldBe` Right defaultCliOptions
+        { optAppendSystemPrompt = Just "Always reply in uppercase"
+        , optPrompt = Just "hello"
+        , optNoTui = False
+        }
+
+    it "parses --append-system-prompt= syntax" $ do
+      let args = ["--append-system-prompt=Always reply in uppercase", "hello"]
+      parseCliArgs args `shouldBe` Right defaultCliOptions
+        { optAppendSystemPrompt = Just "Always reply in uppercase"
+        , optPrompt = Just "hello"
+        , optNoTui = False
+        }
+
+    it "fails when --append-system-prompt has no argument" $ do
+      case parseCliArgs ["--append-system-prompt"] of
+        Left err -> err `shouldContain` "requires an argument"
+        Right _  -> expectationFailure "Expected failure when --append-system-prompt has no argument"
+
     it "fails on unknown flag" $ do
       case parseCliArgs ["--some-bogus-flag"] of
         Left err -> err `shouldContain` "Unknown flag"
@@ -290,6 +311,29 @@ spec = do
           prompt = buildSystemPrompt (Just guidelines)
       prompt `shouldSatisfy` ("# Project Guidelines:" `T.isInfixOf`)
       prompt `shouldSatisfy` ("Follow functional pearl style." `T.isInfixOf`)
+
+  describe "buildSystemPromptWithAppend" $ do
+    it "returns base prompt when guidelines and append are Nothing" $ do
+      let prompt = buildSystemPromptWithAppend Nothing Nothing
+      prompt `shouldBe` buildSystemPrompt Nothing
+
+    it "appends custom instructions when provided without project guidelines" $ do
+      let prompt = buildSystemPromptWithAppend Nothing (Just "Always reply in uppercase")
+      prompt `shouldSatisfy` ("expert autonomous coding assistant" `T.isInfixOf`)
+      prompt `shouldSatisfy` ("Always reply in uppercase" `T.isInfixOf`)
+
+    it "combines project guidelines and custom appended instructions" $ do
+      let guidelines = "Follow functional pearl style."
+          prompt = buildSystemPromptWithAppend (Just guidelines) (Just "Always reply in uppercase")
+      prompt `shouldSatisfy` ("# Project Guidelines:" `T.isInfixOf`)
+      prompt `shouldSatisfy` ("Follow functional pearl style." `T.isInfixOf`)
+      prompt `shouldSatisfy` ("Always reply in uppercase" `T.isInfixOf`)
+
+    it "ignores Nothing or whitespace-only appended instructions" $ do
+      let promptEmpty = buildSystemPromptWithAppend Nothing (Just "   ")
+          promptNothing = buildSystemPromptWithAppend Nothing Nothing
+      promptEmpty `shouldBe` buildSystemPrompt Nothing
+      promptNothing `shouldBe` buildSystemPrompt Nothing
 
   describe "loadProjectInstructions" $ do
     let testSandbox = "dist-newstyle/test-sandbox-env"

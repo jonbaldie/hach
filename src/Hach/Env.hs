@@ -15,6 +15,7 @@ module Hach.Env
   , loadEnvConfig
   , loadProjectInstructions
   , buildSystemPrompt
+  , buildSystemPromptWithAppend
   ) where
 
 import Hach.Settings (Settings(..), defaultSettings, loadLayeredSettings)
@@ -423,4 +424,13 @@ buildSystemPrompt mProjectGuidelines =
   in case mProjectGuidelines of
     Just guidelines | not (T.null (T.strip guidelines)) ->
       basePrompt <> "\n\n# Project Guidelines:\n" <> guidelines
+    _ -> basePrompt
+
+-- | Build the combined system prompt, appending project guidelines and optional custom instructions.
+buildSystemPromptWithAppend :: Maybe Text -> Maybe Text -> Text
+buildSystemPromptWithAppend mProjectGuidelines mAppend =
+  let basePrompt = buildSystemPrompt mProjectGuidelines
+  in case mAppend of
+    Just extra | not (T.null (T.strip extra)) ->
+      basePrompt <> "\n\n" <> extra
     _ -> basePrompt
