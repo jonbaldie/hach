@@ -10,14 +10,17 @@ module Hach.Git
   , createWorktree
   , removeWorktree
   , isValidWorktreeName
+  , isWorktreeDirectory
   , createPullRequest
   ) where
 
 import Hach.Types
 import Control.Exception (SomeException, try)
 import Data.Char (isAlphaNum, isSpace)
+import Data.List (isInfixOf)
 import Data.Text (Text)
 import qualified Data.Text as T
+import System.Directory (doesFileExist)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.Process (CreateProcess(cwd), proc, readCreateProcessWithExitCode)
@@ -117,11 +120,23 @@ createWorktree root name
       pure (Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes.")
   | otherwise = do
       let targetPath = worktreePath root name
-          args = ["worktree", "add", "-B", T.unpack name, targetPath]
+          args = ["worktree", "add", "-b", T.unpack name, targetPath]
       (code, out, err) <- runGit root args
       if code == ExitSuccess
         then pure (Right targetPath)
         else pure (Left ("Failed to create worktree: " <> T.pack (if null err then out else err)))
+
+-- | Check if a directory is an active git worktree (has a .git file pointing to worktrees).
+isWorktreeDirectory :: FilePath -> IO Bool
+isWorktreeDirectory dir = do
+  isFile <- doesFileExist (dir </> ".git")
+  if not isFile
+    then pure False
+    else do
+      res <- try (readFile (dir </> ".git")) :: IO (Either SomeException String)
+      case res of
+        Left _ -> pure False
+        Right content -> pure ("gitdir:" `isInfixOf` content && "worktrees" `isInfixOf` content)
 
 -- | Remove an active git worktree.
 removeWorktree :: FilePath -> Text -> IO (Either Text ())

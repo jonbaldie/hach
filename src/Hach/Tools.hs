@@ -107,6 +107,7 @@ module Hach.Tools
   , executeTodoWrite
   , executePushNotification
   , executeEnterWorktree
+  , executeExitWorktree
   , executeSkill
   , executeTaskCreate
   , executeTaskGet
@@ -117,7 +118,7 @@ module Hach.Tools
   , executeAskUserQuestion
   ) where
 
-import Hach.Git (createWorktree)
+import Hach.Git (createWorktree, isWorktreeDirectory)
 import Hach.Notifications (sendDesktopNotification)
 import Hach.Paths (resolveWorkspacePath)
 import Hach.Skills (discoverSkills, injectDynamicContext, skillContent, substituteArguments)
@@ -1063,7 +1064,7 @@ executeCodingTool root call = do
         Right args -> executeEnterWorktree root args
 
     name | name `elem` ["ExitWorktree", "exit_worktree"] ->
-      pure $ ToolSuccess "Exited worktree and restored workspace root."
+      executeExitWorktree root
 
     name | name `elem` ["ListAgents", "list_agents"] ->
       pure $ ToolSuccess "Available subagents: explore, plan."
@@ -1374,6 +1375,13 @@ executeEnterWorktree root (EnterWorktreeArgs name) = do
   case res of
     Left err -> pure $ ToolError err
     Right wtPath -> pure $ ToolSuccess ("Created and entered worktree: " <> T.pack wtPath)
+
+executeExitWorktree :: FilePath -> IO ToolResult
+executeExitWorktree root = do
+  isWt <- isWorktreeDirectory root
+  if isWt
+    then pure $ ToolSuccess "Exited worktree and restored workspace root."
+    else pure $ ToolError "Not currently inside a worktree."
 
 executeSkill :: FilePath -> SkillToolArgs -> IO ToolResult
 executeSkill root (SkillToolArgs name mArgs) = do
