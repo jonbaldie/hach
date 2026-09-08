@@ -9,6 +9,8 @@ module Hach.Interpreter.IO
   , newIOEnvWithPermissions
   , setIOPermissionMode
   , currentIOPermissionMode
+  , currentIOWorkspace
+  , currentIOWorktree
   , ioAlgebra
   , ioAlgebraWithLog
   , runIO
@@ -62,12 +64,14 @@ data PermissionRuntime = PermissionRuntime
 
 -- | Runtime environment for executing an agent harness in real IO.
 data IOEnv = IOEnv
-  { ioManager   :: !Manager
-  , ioApiKey    :: !Text
-  , ioModel     :: !Text
-  , ioWorkspace :: !FilePath
-  , ioVerbose   :: !Bool
-  , ioPerms     :: !PermissionRuntime
+  { ioManager          :: !Manager
+  , ioApiKey           :: !Text
+  , ioModel            :: !Text
+  , ioWorkspace        :: !FilePath
+  , ioCurrentWorkspace :: !(IORef FilePath)
+  , ioCurrentWorktree  :: !(IORef (Maybe FilePath))
+  , ioVerbose          :: !Bool
+  , ioPerms            :: !PermissionRuntime
   }
 
 -- | Initialize a new 'IOEnv' with a TLS manager and open permission defaults.
@@ -80,13 +84,17 @@ newIOEnvWithPermissions
 newIOEnvWithPermissions perms apiKey model workspace verbose = do
   mgr <- newManager tlsManagerSettings
   modeRef <- newIORef (iopInitialMode perms)
+  wsRef <- newIORef workspace
+  wtRef <- newIORef Nothing
   pure IOEnv
-    { ioManager   = mgr
-    , ioApiKey    = apiKey
-    , ioModel     = model
-    , ioWorkspace = workspace
-    , ioVerbose   = verbose
-    , ioPerms     = PermissionRuntime modeRef (iopRules perms) (iopHooks perms)
+    { ioManager          = mgr
+    , ioApiKey           = apiKey
+    , ioModel            = model
+    , ioWorkspace        = workspace
+    , ioCurrentWorkspace = wsRef
+    , ioCurrentWorktree  = wtRef
+    , ioVerbose          = verbose
+    , ioPerms            = PermissionRuntime modeRef (iopRules perms) (iopHooks perms)
     }
 
 -- | Switch the live permission mode; subsequent tool calls are checked
@@ -97,6 +105,14 @@ setIOPermissionMode env mode = writeIORef (prtMode (ioPerms env)) mode
 -- | Read the currently active permission mode.
 currentIOPermissionMode :: IOEnv -> IO PermissionMode
 currentIOPermissionMode = readIORef . prtMode . ioPerms
+
+-- | Read the currently active workspace directory.
+currentIOWorkspace :: IOEnv -> IO FilePath
+currentIOWorkspace = readIORef . ioCurrentWorkspace
+
+-- | Read the currently active worktree directory, if inside one.
+currentIOWorktree :: IOEnv -> IO (Maybe FilePath)
+currentIOWorktree = readIORef . ioCurrentWorktree
 
 -- | Format and print events to the console for CLI observability.
 renderEventIO :: Bool -> AgentEvent -> IO ()
@@ -236,8 +252,30 @@ ioAlgebraWithLog logger IOEnv{..} = AgentAlgebra
             }
       sendChatCompletion ioManager ioApiKey req
 
-  , interpTool = \call ->
-      executeCodingTool ioWorkspace call
+  , interpTool = \call -> do
+      case functionName call of
+        name | name `elem` ["EnterWorktree", "enter_worktree"] ->
+          case parseEnterWorktreeArgs call of
+            Left err   -> pure $ ToolError ("Failed to parse EnterWorktree args: " <> T.pack err)
+            Right (EnterWorktreeArgs wtName) -> do
+              res <- Git.createWorktree ioWorkspace wtName
+              case res of
+                Left err -> pure $ ToolError err
+                Right wtPath -> do
+                  writeIORef ioCurrentWorkspace wtPath
+                  writeIORef ioCurrentWorktree (Just wtPath)
+                  pure $ ToolSuccess ("Created and entered worktree: " <> T.pack wtPath)
+        name | name `elem` ["ExitWorktree", "exit_worktree"] -> do
+          mWt <- readIORef ioCurrentWorktree
+          case mWt of
+            Nothing -> pure $ ToolError "Not currently inside a worktree."
+            Just _  -> do
+              writeIORef ioCurrentWorkspace ioWorkspace
+              writeIORef ioCurrentWorktree Nothing
+              pure $ ToolSuccess "Exited worktree and restored workspace root."
+        _ -> do
+          currentWs <- readIORef ioCurrentWorkspace
+          executeCodingTool currentWs call
 
   , interpLog = logger
 
@@ -271,18 +309,21 @@ ioAlgebraWithLog logger IOEnv{..} = AgentAlgebra
         PermDeny _ -> False
         PermAllow  -> True
 
-  , interpRunHook = \ev payload ->
+  , interpRunHook = \ev payload -> do
+      currentWs <- readIORef ioCurrentWorkspace
       let (mTool, payloadVal) = splitHookPayload payload
-      in executeHooks ioWorkspace prtHooks ev mTool payloadVal
+      executeHooks currentWs prtHooks ev mTool payloadVal
   , interpSaveSession = \sinfo -> do
-      Sessions.saveSession (ioWorkspace </> ".agents" </> "sessions") sinfo []
+      currentWs <- readIORef ioCurrentWorkspace
+      Sessions.saveSession (currentWs </> ".agents" </> "sessions") sinfo []
       pure (siId sinfo)
   , interpLoadSession = \sid -> do
-      mRes <- Sessions.loadSession (ioWorkspace </> ".agents" </> "sessions") sid
+      currentWs <- readIORef ioCurrentWorkspace
+      mRes <- Sessions.loadSession (currentWs </> ".agents" </> "sessions") sid
       case mRes of
         Just _  -> pure (fmap fst mRes)
         Nothing -> do
-          mResLegacy <- Sessions.loadSession (ioWorkspace </> ".agent" </> "sessions") sid
+          mResLegacy <- Sessions.loadSession (currentWs </> ".agent" </> "sessions") sid
           pure (fmap fst mResLegacy)
   , interpSpawnAgent = \role _desc -> pure (AgentId ("agent_" <> role))
   , interpSendMessage = \aid msg -> pure ("Sent to " <> unAgentId aid <> ": " <> msg)
@@ -299,16 +340,26 @@ ioAlgebraWithLog logger IOEnv{..} = AgentAlgebra
   , interpSendNotification = \title body -> do
       _ <- sendDesktopNotification title body
       pure ()
-  , interpGitStatus = Git.getGitStatus ioWorkspace
+  , interpGitStatus = do
+      currentWs <- readIORef ioCurrentWorkspace
+      Git.getGitStatus currentWs
   , interpCreateWorktree = \name -> do
       res <- Git.createWorktree ioWorkspace name
       case res of
         Right p -> pure p
         Left err -> pure (T.unpack err)
-  , interpEnterWorktree = \_path -> pure ()
-  , interpExitWorktree = pure ()
-  , interpLoadMemory = \path -> T.unlines <$> loadHierarchicalMemory ioWorkspace path
-  , interpResolveImport = \path -> resolveMemoryImports ioWorkspace 4 path
+  , interpEnterWorktree = \path -> do
+      writeIORef ioCurrentWorkspace path
+      writeIORef ioCurrentWorktree (Just path)
+  , interpExitWorktree = do
+      writeIORef ioCurrentWorkspace ioWorkspace
+      writeIORef ioCurrentWorktree Nothing
+  , interpLoadMemory = \path -> do
+      currentWs <- readIORef ioCurrentWorkspace
+      T.unlines <$> loadHierarchicalMemory currentWs path
+  , interpResolveImport = \path -> do
+      currentWs <- readIORef ioCurrentWorkspace
+      resolveMemoryImports currentWs 4 path
   }
   where
     PermissionRuntime{..} = ioPerms

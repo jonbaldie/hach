@@ -4,8 +4,16 @@ module Hach.GitSpec (spec) where
 
 import Hach.Git
 import Hach.Types
+import Control.Monad (when)
 import qualified Data.Text as T
-import System.Directory (doesFileExist, removeFile)
+import System.Directory
+  ( createDirectoryIfMissing
+  , doesDirectoryExist
+  , doesFileExist
+  , removeDirectoryRecursive
+  , removeFile
+  )
+import System.Process (callProcess)
 import Test.Hspec
 
 spec :: Spec
@@ -66,4 +74,24 @@ spec = describe "Hach.Git" $ do
       createWorktree "." "--orphan" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes."
       removeWorktree "." "../escape" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes."
       removeWorktree "." "-f" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes."
+
+  describe "isWorktreeDirectory" $ do
+    it "returns False for non-worktree directory" $ do
+      isWorktreeDirectory "." `shouldReturn` False
+
+  describe "createWorktree branch creation (-b)" $ do
+    it "fails to create worktree when branch already exists instead of force-resetting" $ do
+      let tempDir = "dist-newstyle/test-git-branch-exists"
+      exists <- doesDirectoryExist tempDir
+      when exists (removeDirectoryRecursive tempDir)
+      createDirectoryIfMissing True tempDir
+      callProcess "git" ["-C", tempDir, "init"]
+      callProcess "git" ["-C", tempDir, "config", "user.name", "Test"]
+      callProcess "git" ["-C", tempDir, "config", "user.email", "test@test.com"]
+      callProcess "git" ["-C", tempDir, "commit", "--allow-empty", "-m", "init"]
+      r1 <- createWorktree tempDir "feature-dup"
+      r1 `shouldSatisfy` \case Right _ -> True; Left _ -> False
+      r2 <- createWorktree tempDir "feature-dup"
+      r2 `shouldSatisfy` \case Left _ -> True; Right _ -> False
+      removeDirectoryRecursive tempDir
 

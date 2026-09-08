@@ -3,7 +3,6 @@
 module Hach.InterpreterIOSpec (spec) where
 
 import Hach.Core (AgentAlgebra (..), agentLoop, foldAgentProgram)
-import Hach.Types (AgentConfig (..))
 import Hach.Env (resolvePermissionMode)
 import Hach.Interpreter.IO
 import Hach.Permissions (isProtectedPath)
@@ -13,7 +12,6 @@ import Hach.Types
 import Hach.TUI.State (updateTui)
 import Hach.TUI.Types
 import Control.Monad (when)
-import Data.Aeson ((.=), object)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -25,6 +23,7 @@ import System.Directory
   , removeDirectoryRecursive
   )
 import System.FilePath ((</>))
+import System.Process (callProcess)
 import Test.Hspec
 
 spec :: Spec
@@ -189,3 +188,53 @@ spec = describe "Hach.Interpreter.IO (permission + hook enforcement)" $ do
         let (s, actions) = updateTui (EvSubmit "/fewer-permission-prompts") (initialTuiState "test-model" Nothing)
         tsPermissionMode s `shouldBe` ModeAcceptEdits
         actions `shouldContain` [ActionSetPermissionMode ModeAcceptEdits]
+
+    describe "worktree switching in IO interpreter" $ do
+      it "fails ExitWorktree when not inside a worktree" $ do
+        env <- newIOEnv "k" "test-model" testDir False
+        let alg = ioAlgebra env
+        res <- interpTool alg (ToolCall "w1" "ExitWorktree" "{}")
+        res `shouldSatisfy` \case
+          ToolError _ -> True
+          ToolSuccess _ -> False
+
+      it "switches the workspace used by subsequent tools on EnterWorktree and restores on ExitWorktree" $ do
+        callProcess "git" ["-C", testDir, "init"]
+        callProcess "git" ["-C", testDir, "config", "user.name", "Test"]
+        callProcess "git" ["-C", testDir, "config", "user.email", "test@test.com"]
+        callProcess "git" ["-C", testDir, "commit", "--allow-empty", "-m", "init"]
+        env <- newIOEnv "k" "test-model" testDir False
+        let alg = ioAlgebra env
+        enterRes <- interpTool alg (ToolCall "w1" "EnterWorktree" "{\"name\":\"feat-isolation\"}")
+        enterRes `shouldSatisfy` \case
+          ToolSuccess msg -> "feat-isolation" `T.isInfixOf` msg
+          ToolError _ -> False
+        let wtPath = testDir </> ".agents" </> "worktrees" </> "feat-isolation"
+        writeRes <- interpTool alg (ToolCall "c1" "write_file" "{\"path\":\"worktree-only.txt\",\"content\":\"isolated\"}")
+        writeRes `shouldSatisfy` \case
+          ToolSuccess _ -> True
+          ToolError _ -> False
+        doesFileExist (wtPath </> "worktree-only.txt") `shouldReturn` True
+        doesFileExist (testDir </> "worktree-only.txt") `shouldReturn` False
+        exitRes <- interpTool alg (ToolCall "w2" "ExitWorktree" "{}")
+        exitRes `shouldSatisfy` \case
+          ToolSuccess _ -> True
+          ToolError _ -> False
+        writeRootRes <- interpTool alg (ToolCall "c2" "write_file" "{\"path\":\"root-only.txt\",\"content\":\"root\"}")
+        writeRootRes `shouldSatisfy` \case
+          ToolSuccess _ -> True
+          ToolError _ -> False
+        doesFileExist (testDir </> "root-only.txt") `shouldReturn` True
+
+      it "switches workspace via interpEnterWorktree and restores via interpExitWorktree" $ do
+        let wtDir = testDir </> "custom-wt"
+        createDirectoryIfMissing True wtDir
+        env <- newIOEnv "k" "test-model" testDir False
+        let alg = ioAlgebra env
+        interpEnterWorktree alg wtDir
+        _ <- interpTool alg (ToolCall "c1" "write_file" "{\"path\":\"wt.txt\",\"content\":\"hi\"}")
+        doesFileExist (wtDir </> "wt.txt") `shouldReturn` True
+        doesFileExist (testDir </> "wt.txt") `shouldReturn` False
+        interpExitWorktree alg
+        _ <- interpTool alg (ToolCall "c2" "write_file" "{\"path\":\"root.txt\",\"content\":\"hi\"}")
+        doesFileExist (testDir </> "root.txt") `shouldReturn` True
