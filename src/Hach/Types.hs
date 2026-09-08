@@ -81,7 +81,11 @@ import Data.Aeson
   ( FromJSON(..), ToJSON(..), FromJSONKey(..), ToJSONKey(..), Value, object, withObject, (.:), (.:?), (.!=), (.=)
   )
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (Parser, parseMaybe)
+import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isSpace)
+import Data.Foldable (toList)
+import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -113,12 +117,21 @@ instance FromJSON ToolCall where
     cid <- o .: "id"
     fObj <- o .: "function"
     fname <- fObj .: "name"
-    rawArgs <- fObj .: "arguments"
+    rawArgs <- fObj .: "arguments" >>= parseToolArguments
     pure ToolCall
       { callId = cid
       , functionName = fname
       , callArgsRaw = rawArgs
       }
+
+parseToolArguments :: Value -> Parser Text
+parseToolArguments (Aeson.String t) = pure t
+parseToolArguments v@(Aeson.Object _) = pure (encodeJsonText v)
+parseToolArguments v@(Aeson.Array _) = pure (encodeJsonText v)
+parseToolArguments _ = fail "expected arguments String, Object, or Array"
+
+encodeJsonText :: Value -> Text
+encodeJsonText = TE.decodeUtf8 . LBS.toStrict . Aeson.encode
 
 -- | Safely parse raw JSON string arguments into an Aeson 'Value'.
 parseCallArgs :: ToolCall -> Either String Value
@@ -164,11 +177,28 @@ instance FromJSON Message where
   parseJSON = withObject "Message" $ \o -> do
     role <- o .: "role"
     case (role :: Text) of
-      "system" -> SystemMsg <$> o .: "content"
-      "user" -> UserMsg <$> o .: "content"
-      "assistant" -> AssistantMsg <$> o .:? "content" <*> (o .:? "tool_calls" .!= [])
-      "tool" -> ToolMsg <$> o .: "tool_call_id" <*> (o .:? "name" .!= "") <*> o .: "content"
+      "system" -> SystemMsg <$> (o .: "content" >>= parseRequiredContent)
+      "user" -> UserMsg <$> (o .: "content" >>= parseRequiredContent)
+      "assistant" -> AssistantMsg <$> (o .:? "content" >>= parseOptionalContent) <*> (o .:? "tool_calls" .!= [])
+      "tool" -> ToolMsg <$> o .: "tool_call_id" <*> (o .:? "name" .!= "") <*> (o .: "content" >>= parseRequiredContent)
       other -> fail ("Unknown message role: " <> show other)
+
+parseOptionalContent :: Maybe Value -> Parser (Maybe Text)
+parseOptionalContent Nothing = pure Nothing
+parseOptionalContent (Just v) = Just <$> parseRequiredContent v
+
+parseRequiredContent :: Value -> Parser Text
+parseRequiredContent (Aeson.String t) = pure t
+parseRequiredContent (Aeson.Array parts) = pure (flattenContentParts parts)
+parseRequiredContent _ = fail "expected content String or Array of parts"
+
+flattenContentParts :: Aeson.Array -> Text
+flattenContentParts = T.concat . mapMaybe contentPartText . toList
+
+contentPartText :: Value -> Maybe Text
+contentPartText (Aeson.String t) = Just t
+contentPartText (Aeson.Object o) = parseMaybe (.: "text") o
+contentPartText _ = Nothing
 
 -- | Token usage metadata for an inference turn.
 data TokenUsage = TokenUsage
@@ -329,7 +359,7 @@ instance ToJSON AssistantResponse where
 instance FromJSON AssistantResponse where
   parseJSON = withObject "AssistantResponse" $ \o ->
     AssistantResponse
-      <$> o .:? "content"
+      <$> (o .:? "content" >>= parseOptionalContent)
       <*> (o .:? "tool_calls" .!= [])
       <*> o .:? "usage"
 
