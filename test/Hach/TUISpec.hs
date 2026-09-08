@@ -1315,6 +1315,42 @@ spec = do
         events `shouldNotContain` [EvError "Maximum turns reached (20)"]
         events `shouldContain` [EvDone "All tests pass."]
 
+    describe "runGoalWorker terminal event handling (Issue #49)" $ do
+      it "emits EvDone instead of EvError when goal is blocked (GoalActive)" $ do
+        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+        eventsRef <- newIORef []
+        let promptAction _ _ = pure $ Right (AssistantResponse (Just "Completed progress.") [] Nothing)
+            evalAction _ _ = pure (GoalEvaluation GoalNotYetMet "Need more work")
+            mockAlgebra = (ioAlgebra mockIOEnv)
+              { interpPrompt   = promptAction
+              , interpTool     = \_ -> pure (ToolSuccess "ok")
+              , interpLog      = \ev -> modifyIORef' eventsRef (ev :)
+              , interpEvaluate = evalAction
+              }
+            config = goalAgentConfig mockIOEnv "sys" (Just 5)
+        runGoalWorker mockAlgebra config "reach condition" [] (\ev -> modifyIORef' eventsRef (ev :))
+        events <- readIORef eventsRef
+        events `shouldNotContain` [EvError "Completed progress."]
+        events `shouldContain` [EvDone "Completed progress."]
+
+      it "emits EvDone instead of EvError when goal is impossible (GoalFailed)" $ do
+        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+        eventsRef <- newIORef []
+        let promptAction _ _ = pure $ Right (AssistantResponse (Just "Goal cannot be met.") [] Nothing)
+            evalAction _ _ = pure (GoalEvaluation GoalImpossible "Reason impossible")
+            mockAlgebra = (ioAlgebra mockIOEnv)
+              { interpPrompt   = promptAction
+              , interpTool     = \_ -> pure (ToolSuccess "ok")
+              , interpLog      = \ev -> modifyIORef' eventsRef (ev :)
+              , interpEvaluate = evalAction
+              }
+            config = goalAgentConfig mockIOEnv "sys" (Just 5)
+        runGoalWorker mockAlgebra config "impossible condition" [] (\ev -> modifyIORef' eventsRef (ev :))
+        events <- readIORef eventsRef
+        events `shouldNotContain` [EvError "Goal cannot be met."]
+        events `shouldContain` [EvDone "Goal cannot be met."]
+
+
     describe "Built-in Slash Commands" $ do
       it "registers all standard built-in slash commands" $ do
         let expected =
