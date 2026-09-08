@@ -7,6 +7,7 @@ import Hach.Core
 import Hach.Env
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills, injectSkillsIntoPrompt, parseSkillInvocations)
+import Hach.Settings (Settings (..))
 import Hach.Tools
 import Hach.TUI.App (runTui)
 import Hach.Types
@@ -43,7 +44,12 @@ main = do
       exitFailure
     Right cfg -> pure cfg
 
-  ioEnv <- newIOEnv envApiKey envModel cwd True
+  let perms = defaultIOEnvPermissions
+        { iopInitialMode = resolvePermissionMode optPermissionMode optDangerouslySkipPerms envSettings
+        , iopRules       = setPermissionRules envSettings
+        , iopHooks       = setHooks envSettings
+        }
+  ioEnv <- newIOEnvWithPermissions perms envApiKey envModel cwd True
 
   if not optNoTui
     then runTui ioEnv optPrompt optMaxTurns optAppendSystemPrompt
@@ -53,6 +59,7 @@ main = do
       putStrLn "========================================================"
       putStrLn ("Workspace: " <> cwd)
       putStrLn ("Model:     " <> T.unpack envModel)
+      putStrLn ("Permissions: " <> T.unpack (permissionModeName (iopInitialMode perms)))
       putStrLn "========================================================"
 
       taskPrompt <- case optPrompt of

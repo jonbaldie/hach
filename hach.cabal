@@ -138,6 +138,7 @@ test-suite hach-test
         Hach.GitSpec
         Hach.TasksSpec
         Hach.NotificationsSpec
+        Hach.InterpreterIOSpec
     build-depends:
         base >= 4.18 && < 5,
         hach,

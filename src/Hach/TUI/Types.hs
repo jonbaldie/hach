@@ -40,7 +40,7 @@ module Hach.TUI.Types
   ) where
 
 import Hach.Skills (SkillCatalog)
-import Hach.Types (AgentEvent, GoalState, SessionTokenUsage, TokenUsage, ToolResult, initialSessionTokenUsage)
+import Hach.Types (AgentEvent, GoalState, PermissionMode (..), SessionTokenUsage, TokenUsage, ToolResult, initialSessionTokenUsage)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 
@@ -151,6 +151,7 @@ data TuiState = TuiState
   , tsUsageStatus        :: !UsageStatus
   , tsSkills             :: !SkillCatalog
   , tsGoalState          :: !(Maybe GoalState)
+  , tsPermissionMode     :: !PermissionMode
   } deriving (Show, Eq)
 
 -- | Project tool cards from the transcript for the Tool Activity pane.
@@ -189,6 +190,7 @@ initialTuiState model maxTurns = TuiState
   , tsUsageStatus        = UsageVerified
   , tsSkills             = Map.empty
   , tsGoalState          = Nothing
+  , tsPermissionMode     = ModeDefault
   }
 
 -- | Simplified user keystroke events abstracted from Vty.
@@ -224,6 +226,7 @@ data TuiAction
   | ActionCancelAgent
   | ActionQuit
   | ActionScrollTranscript !Int
+  | ActionSetPermissionMode !PermissionMode
   deriving (Show, Eq)
 
 -- | Canonical list of built-in slash commands recognised by the TUI.
@@ -259,5 +262,5 @@ builtinCommands =
 pattern ActionScrollHistory :: Int -> TuiAction
 pattern ActionScrollHistory delta = ActionScrollTranscript delta
 
-{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript #-}
-{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory #-}
+{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionSetPermissionMode #-}
+{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionSetPermissionMode #-}

@@ -26,6 +26,7 @@ import qualified Hach.MemorySpec as MemorySpec
 import qualified Hach.GitSpec as GitSpec
 import qualified Hach.TasksSpec as TasksSpec
 import qualified Hach.NotificationsSpec as NotificationsSpec
+import qualified Hach.InterpreterIOSpec as InterpreterIOSpec
 
 main :: IO ()
 main = hspec $ do
@@ -52,3 +53,4 @@ main = hspec $ do
   describe "Hach.Git" GitSpec.spec
   describe "Hach.Tasks" TasksSpec.spec
   describe "Hach.Notifications" NotificationsSpec.spec
+  describe "Hach.Interpreter.IO" InterpreterIOSpec.spec

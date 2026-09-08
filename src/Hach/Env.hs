@@ -9,6 +9,7 @@ module Hach.Env
   , parseEnvContent
   , parseLineTwoModel
   , parseCliArgs
+  , resolvePermissionMode
   , resolveConfigWith
   , resolveConfigWithSettings
   , resolveEnvConfig
@@ -20,6 +21,7 @@ module Hach.Env
 
 import Hach.Settings (Settings(..), defaultSettings, loadLayeredSettings)
 import Hach.Types (PermissionMode(..))
+import Control.Applicative ((<|>))
 import Control.Exception (try, SomeException)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as BS
@@ -115,6 +117,18 @@ parsePermMode s = case map toLower s of
   "bypass_permissions" -> Just ModeBypassPermissions
   "bypass-permissions" -> Just ModeBypassPermissions
   _                    -> Nothing
+
+-- | Effective permission mode for a run. Precedence:
+-- @--dangerously-skip-permissions@ > @--permission-mode@ flag > layered
+-- settings > 'ModeDefault'.
+resolvePermissionMode
+  :: Maybe PermissionMode   -- ^ @--permission-mode@ flag
+  -> Bool                   -- ^ @--dangerously-skip-permissions@
+  -> Settings               -- ^ Layered settings
+  -> PermissionMode
+resolvePermissionMode mFlag skipPerms settings
+  | skipPerms = ModeBypassPermissions
+  | otherwise = fromMaybe ModeDefault (mFlag <|> setPermissionMode settings)
 
 -- | Parse command line arguments into 'CliOptions'.
 parseCliArgs :: [String] -> Either String CliOptions

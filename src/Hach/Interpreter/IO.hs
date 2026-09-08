@@ -3,7 +3,12 @@
 
 module Hach.Interpreter.IO
   ( IOEnv(..)
+  , IOEnvPermissions(..)
+  , defaultIOEnvPermissions
   , newIOEnv
+  , newIOEnvWithPermissions
+  , setIOPermissionMode
+  , currentIOPermissionMode
   , ioAlgebra
   , ioAlgebraWithLog
   , runIO
@@ -13,14 +18,19 @@ module Hach.Interpreter.IO
 
 import Hach.Core
 import qualified Hach.Git as Git
+import Hach.Hooks (executeHooks)
 import Hach.Memory (loadHierarchicalMemory, resolveMemoryImports)
 import Hach.Notifications (sendDesktopNotification)
 import Hach.OpenRouter
+import Hach.Permissions (evalPermission)
 import qualified Hach.Sessions as Sessions
 import Hach.Tools
 import Hach.Types
 import Control.Monad (when)
 import qualified Data.Aeson as Aeson
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -30,6 +40,26 @@ import Network.HTTP.Client (Manager, newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import System.FilePath ((</>))
 
+-- | Static permission and hook configuration threaded from CLI flags and
+-- layered settings into the IO interpreter.
+data IOEnvPermissions = IOEnvPermissions
+  { iopInitialMode :: !PermissionMode
+  , iopRules       :: ![PermissionRule]
+  , iopHooks       :: !(Map HookEvent [HookHandler])
+  }
+
+-- | Open defaults: ask-by-default policy with no rules or hooks configured.
+defaultIOEnvPermissions :: IOEnvPermissions
+defaultIOEnvPermissions = IOEnvPermissions ModeDefault [] Map.empty
+
+-- | Live permission runtime. Rules and hooks are fixed for the session; the
+-- mode is mutable so slash commands can switch enforcement mid-session.
+data PermissionRuntime = PermissionRuntime
+  { prtMode  :: !(IORef PermissionMode)
+  , prtRules :: ![PermissionRule]
+  , prtHooks :: !(Map HookEvent [HookHandler])
+  }
+
 -- | Runtime environment for executing an agent harness in real IO.
 data IOEnv = IOEnv
   { ioManager   :: !Manager
@@ -37,19 +67,36 @@ data IOEnv = IOEnv
   , ioModel     :: !Text
   , ioWorkspace :: !FilePath
   , ioVerbose   :: !Bool
+  , ioPerms     :: !PermissionRuntime
   }
 
--- | Initialize a new 'IOEnv' with a TLS manager.
+-- | Initialize a new 'IOEnv' with a TLS manager and open permission defaults.
 newIOEnv :: Text -> Text -> FilePath -> Bool -> IO IOEnv
-newIOEnv apiKey model workspace verbose = do
+newIOEnv = newIOEnvWithPermissions defaultIOEnvPermissions
+
+-- | Initialize a new 'IOEnv' with explicit permission mode, rules, and hooks.
+newIOEnvWithPermissions
+  :: IOEnvPermissions -> Text -> Text -> FilePath -> Bool -> IO IOEnv
+newIOEnvWithPermissions perms apiKey model workspace verbose = do
   mgr <- newManager tlsManagerSettings
+  modeRef <- newIORef (iopInitialMode perms)
   pure IOEnv
     { ioManager   = mgr
     , ioApiKey    = apiKey
     , ioModel     = model
     , ioWorkspace = workspace
     , ioVerbose   = verbose
+    , ioPerms     = PermissionRuntime modeRef (iopRules perms) (iopHooks perms)
     }
+
+-- | Switch the live permission mode; subsequent tool calls are checked
+-- against the new mode.
+setIOPermissionMode :: IOEnv -> PermissionMode -> IO ()
+setIOPermissionMode env mode = writeIORef (prtMode (ioPerms env)) mode
+
+-- | Read the currently active permission mode.
+currentIOPermissionMode :: IOEnv -> IO PermissionMode
+currentIOPermissionMode = readIORef . prtMode . ioPerms
 
 -- | Format and print events to the console for CLI observability.
 renderEventIO :: Bool -> AgentEvent -> IO ()
@@ -214,8 +261,19 @@ ioAlgebraWithLog logger IOEnv{..} = AgentAlgebra
         Left err ->
           pure (GoalEvaluation GoalNotYetMet ("Evaluator error: " <> err))
 
-  , interpCheckPermission = \_tool _args -> pure True
-  , interpRunHook = \_ev _payload -> pure defaultHookResult
+  , interpCheckPermission = \tool args -> do
+      mode <- readIORef prtMode
+      let argsVal = fromMaybe Aeson.Null (Aeson.decodeStrict (TE.encodeUtf8 args))
+      pure $ case evalPermission mode prtRules tool argsVal of
+        -- A headless harness has no channel to resolve an approval prompt,
+        -- so an unresolved ask denies execution.
+        PermAsk _  -> False
+        PermDeny _ -> False
+        PermAllow  -> True
+
+  , interpRunHook = \ev payload ->
+      let (mTool, payloadVal) = splitHookPayload payload
+      in executeHooks ioWorkspace prtHooks ev mTool payloadVal
   , interpSaveSession = \sinfo -> do
       Sessions.saveSession (ioWorkspace </> ".agents" </> "sessions") sinfo []
       pure (siId sinfo)
@@ -253,7 +311,22 @@ ioAlgebraWithLog logger IOEnv{..} = AgentAlgebra
   , interpResolveImport = \path -> resolveMemoryImports ioWorkspace 4 path
   }
   where
+    PermissionRuntime{..} = ioPerms
+
     transcriptToText = T.unlines . map messageToText
+
+    -- Core delivers hook payloads as "<tool> <json-or-text>"; split the tool
+    -- name off and pass the remainder as JSON when it parses as such.
+    splitHookPayload :: Text -> (Maybe Text, Aeson.Value)
+    splitHookPayload payload =
+      case T.breakOn " " payload of
+        (tool, rest) | not (T.null tool), not (T.null rest) ->
+          let restTxt = T.strip rest
+          in ( Just tool
+             , fromMaybe (Aeson.String restTxt)
+                 (Aeson.decodeStrict (TE.encodeUtf8 restTxt))
+             )
+        _ -> (Nothing, Aeson.String payload)
 
     messageToText = \case
       SystemMsg c    -> "[System] " <> c

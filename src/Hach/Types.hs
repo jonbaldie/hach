@@ -45,6 +45,7 @@ module Hach.Types
 
     -- * Permissions
   , PermissionMode(..)
+  , permissionModeName
   , PermissionDecision(..)
   , RuleAction(..)
   , PermissionRule(..)
@@ -561,14 +562,19 @@ data PermissionMode
   | ModeBypassPermissions -- ^ Skip all permission checks
   deriving (Show, Eq, Enum, Bounded, Generic)
 
+-- | Canonical lowercase name of a permission mode, matching the spelling
+-- used in settings JSON and on the command line.
+permissionModeName :: PermissionMode -> Text
+permissionModeName = \case
+  ModeDefault           -> "default"
+  ModeAcceptEdits       -> "acceptEdits"
+  ModePlan              -> "plan"
+  ModeAuto              -> "auto"
+  ModeDontAsk           -> "dontAsk"
+  ModeBypassPermissions -> "bypassPermissions"
+
 instance ToJSON PermissionMode where
-  toJSON = \case
-    ModeDefault           -> "default"
-    ModeAcceptEdits       -> "acceptEdits"
-    ModePlan              -> "plan"
-    ModeAuto              -> "auto"
-    ModeDontAsk           -> "dontAsk"
-    ModeBypassPermissions -> "bypassPermissions"
+  toJSON = Aeson.String . permissionModeName
 
 instance FromJSON PermissionMode where
   parseJSON = Aeson.withText "PermissionMode" $ \case
