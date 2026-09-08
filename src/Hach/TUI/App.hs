@@ -20,7 +20,7 @@ module Hach.TUI.App
 import Hach.Core
 import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions)
 import Hach.Interpreter.IO
-import Hach.Skills (discoverSkills)
+import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
 import Hach.Tools
 import Hach.TUI.State
 import Hach.TUI.Types
@@ -270,31 +270,33 @@ triggerAgentRun
   -> Text
   -> [DialogueItem]
   -> EventM Name TuiState ()
-triggerAgentRun eventChan workerVar ioEnv selectedModel sysPrompt mMaxTurns currentPrompt historyItems = liftIO $ do
-  -- Cancel existing worker if any
-  mOldWorker <- atomically $ do
-    w <- readTVar workerVar
-    writeTVar workerVar Nothing
-    pure w
-  mapM_ cancel mOldWorker
+triggerAgentRun eventChan workerVar ioEnv selectedModel sysPrompt mMaxTurns currentPrompt historyItems = do
+  st <- get
+  liftIO $ do
+    mOldWorker <- atomically $ do
+      w <- readTVar workerVar
+      writeTVar workerVar Nothing
+      pure w
+    mapM_ cancel mOldWorker
 
-  newWorker <- async $ do
-    let runEnv = runEnvForModel selectedModel ioEnv
-        agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns
-        initHistory = dialogueToMessages sysPrompt currentPrompt historyItems
+    finalPrompt <- expandSlashInvokedPrompt (ioWorkspace ioEnv) (tsSkills st) currentPrompt
 
-    res <- try (foldAgentProgram (tuiAlgebra eventChan runEnv) (agentLoop agentConfig allToolDefs initHistory))
-    case res of
-      Left (ex :: SomeException) ->
-        writeBChan eventChan (EvError (T.pack (show ex)))
-      Right (AgentCompleted ans, _) ->
-        writeBChan eventChan (EvDone ans)
-      Right (AgentMaxTurnsReached n, _) ->
-        writeBChan eventChan (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
-      Right (AgentFailed err, _) ->
-        writeBChan eventChan (EvError err)
+    newWorker <- async $ do
+      let runEnv = runEnvForModel selectedModel ioEnv
+          agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns
+          initHistory = dialogueToMessages sysPrompt finalPrompt historyItems
+      res <- try (foldAgentProgram (tuiAlgebra eventChan runEnv) (agentLoop agentConfig allToolDefs initHistory))
+      case res of
+        Left (ex :: SomeException) ->
+          writeBChan eventChan (EvError (T.pack (show ex)))
+        Right (AgentCompleted ans, _) ->
+          writeBChan eventChan (EvDone ans)
+        Right (AgentMaxTurnsReached n, _) ->
+          writeBChan eventChan (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
+        Right (AgentFailed err, _) ->
+          writeBChan eventChan (EvError err)
 
-  atomically $ writeTVar workerVar (Just newWorker)
+    atomically $ writeTVar workerVar (Just newWorker)
 
 -- | Construct the 'AgentConfig' for a goal-directed run in the TUI. The model
 -- comes from the run environment, so callers route it through 'runEnvForModel'

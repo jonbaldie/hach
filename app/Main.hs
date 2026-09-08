@@ -6,7 +6,7 @@ module Main (main) where
 import Hach.Core
 import Hach.Env
 import Hach.Interpreter.IO
-import Hach.Skills (discoverSkills, injectSkillsIntoPrompt, parseSkillInvocations)
+import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
 import Hach.Settings (Settings (..))
 import Hach.Tools
 import Hach.TUI.App (runTui)
@@ -120,9 +120,8 @@ main = do
                     printGoalSummary goalState
 
         else do
-          let (cleaned, invoked) = parseSkillInvocations skills trimmedPrompt
-              finalPrompt = injectSkillsIntoPrompt invoked cleaned
-              agentConfig = AgentConfig
+          finalPrompt <- expandSlashInvokedPrompt cwd skills trimmedPrompt
+          let agentConfig = AgentConfig
                 { cfgModel        = envModel
                 , cfgSystemPrompt = Just sysPrompt
                 , cfgMaxTurns     = optMaxTurns

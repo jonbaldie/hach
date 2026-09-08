@@ -171,6 +171,36 @@ spec = do
             res = injectSkillsIntoPrompt [skillA] "Build auth"
         res `shouldBe` "<skill name=\"to-spec\">\nFollow steps 1-3\n</skill>\n\nBuild auth"
 
+    describe "slash invocation expansion (issue #63)" $ do
+      let sandbox = "dist-newstyle/test-sandbox-slash-expand"
+      around_ (\action -> do
+        createDirectoryIfMissing True sandbox
+        action
+        removeDirectoryRecursive sandbox) $ do
+        it "substitutes leftover prompt text for $ARGUMENTS" $ do
+          let sk = mkSkill "foo" "d" "Target: $ARGUMENTS" "/p" SkillGlobal
+              cat = Map.singleton "foo" sk
+          injected <- expandSlashInvokedPrompt sandbox cat "/foo src/Main.hs"
+          injected `shouldBe` "<skill name=\"foo\">\nTarget: src/Main.hs\n</skill>\n\nsrc/Main.hs"
+
+        it "expands {{file:path}} in slash-invoked skill content" $ do
+          TIO.writeFile (sandbox </> "sample.txt") "sample content 123"
+          let sk = mkSkill "foo" "d" "Intro: {{file:sample.txt}} - $ARGUMENTS" "/p" SkillGlobal
+              cat = Map.singleton "foo" sk
+          injected <- expandSlashInvokedPrompt sandbox cat "/foo done"
+          injected `shouldBe` "<skill name=\"foo\">\nIntro: sample content 123 - done\n</skill>\n\ndone"
+
+        it "executes !command lines in slash-invoked skill content" $ do
+          let sk = mkSkill "foo" "d" "Out:\n!echo hello from shell\nEnd $ARGUMENTS." "/p" SkillGlobal
+              cat = Map.singleton "foo" sk
+          injected <- expandSlashInvokedPrompt sandbox cat "/foo here"
+          injected `shouldBe` "<skill name=\"foo\">\nOut:\nhello from shell\nEnd here.\n</skill>\n\nhere"
+
+        it "leaves prompts without slash skills unchanged" $ do
+          let cat = Map.singleton "foo" (mkSkill "foo" "d" "body" "/p" SkillGlobal)
+          injected <- expandSlashInvokedPrompt sandbox cat "plain prompt"
+          injected `shouldBe` "plain prompt"
+
     describe "skillInvocationCompletion" $ do
       let goal  = mkSkill "goal"  "Goal skill"  "body" "/p" SkillGlobal
           goals = mkSkill "goals" "Goals skill" "body" "/p" SkillGlobal

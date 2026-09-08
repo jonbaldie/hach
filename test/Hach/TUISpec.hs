@@ -785,11 +785,10 @@ spec = do
               , tsInputBuffer = "/to-spec create auth"
               }
             (s1, actions) = updateTui (EvUserKey KeyEnter) s0
-        actions `shouldSatisfy` \case
-          [ActionRunAgent prompt] ->
-            "<skill name=\"to-spec\">" `T.isInfixOf` prompt && "create auth" `T.isInfixOf` prompt
-          _ -> False
-        tsHistory s1 `shouldSatisfy` \h -> any (\case DiUser u -> "/to-spec create auth" `T.isInfixOf` u; _ -> False) h
+        actions `shouldBe` [ActionRunAgent "/to-spec create auth"]
+        tsHistory s1 `shouldSatisfy` \h ->
+          any (\case DiUser u -> "/to-spec create auth" `T.isInfixOf` u; _ -> False) h
+          && any (\case DiNotice n -> "Activated skill: to-spec" `T.isInfixOf` n; _ -> False) h
 
       it "does not duplicate user message in dialogueToMessages when skills or notices are in history" $ do
         let items = [DiUser "/to-spec auth", DiNotice "Activated skill: to-spec"]
