@@ -484,7 +484,7 @@ unrecoverableKeywords = concat
   [ ["401", "unauthorized", "authentication", "api key"]
   , ["402", "payment", "credit", "balance", "quota", "billing"]
   , ["context", "overflow", "too long", "maximum context", "token limit"]
-  , ["404", "model", "not found", "unavailable", "does not exist"]
+  , ["404", "model not found", "model unavailable", "model does not exist", "unknown model"]
   ]
 
 -- | Maximum length of a goal condition text.
