@@ -35,6 +35,24 @@ spec = describe "Hach.Memory" $ do
       -- Should terminate without crashing or hanging
       resolved `shouldSatisfy` (not . T.null)
 
+  describe "Hierarchical memory" $ do
+    around_ (\action -> do
+      createDirectoryIfMissing True testDir
+      action
+      removeDirectoryRecursive testDir) $ do
+
+      it "loads AGENTS.md when it is the only memory file" $ do
+        TIO.writeFile (testDir </> "AGENTS.md") "Agents memory"
+        mem <- loadHierarchicalMemory testDir testDir
+        mem `shouldBe` ["Agents memory\n"]
+
+      it "prefers AGENTS.md over AGENT.md and CLAUDE.md when all exist" $ do
+        TIO.writeFile (testDir </> "AGENTS.md") "Agents memory"
+        TIO.writeFile (testDir </> "AGENT.md") "Agent memory"
+        TIO.writeFile (testDir </> "CLAUDE.md") "Claude memory"
+        mem <- loadHierarchicalMemory testDir testDir
+        mem `shouldBe` ["Agents memory\n"]
+
   describe "Rule matching" $ do
     it "matches rules by glob against active file paths" $ do
       let ruleContent = "---\npaths: src/**/*.hs, test/**/*.hs\n---\nUse GHC 2021\n"
