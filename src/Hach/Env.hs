@@ -9,6 +9,8 @@ module Hach.Env
   , parseEnvContent
   , parseLineTwoModel
   , parseCliArgs
+  , StartupIntent(..)
+  , startupIntent
   , resolvePermissionMode
   , resolveConfigWith
   , resolveConfigWithSettings
@@ -129,6 +131,24 @@ resolvePermissionMode
 resolvePermissionMode mFlag skipPerms settings
   | skipPerms = ModeBypassPermissions
   | otherwise = fromMaybe ModeDefault (mFlag <|> setPermissionMode settings)
+
+-- | What the CLI should do after parsing. '--exec' is a real command to run,
+-- not a prompt for the headless agent; '--version' outranks it.
+data StartupIntent
+  = IntentVersion
+  | IntentExec !Text
+  | IntentTui
+  | IntentHeadless
+  deriving (Show, Eq)
+
+-- | Map parsed options onto a startup intent. '--exec' must not fall through
+-- to the headless agent loop just because it also sets 'optNoTui'.
+startupIntent :: CliOptions -> StartupIntent
+startupIntent CliOptions{..}
+  | optVersion = IntentVersion
+  | Just cmd <- optExec = IntentExec cmd
+  | optNoTui = IntentHeadless
+  | otherwise = IntentTui
 
 -- | Parse command line arguments into 'CliOptions'.
 parseCliArgs :: [String] -> Either String CliOptions
