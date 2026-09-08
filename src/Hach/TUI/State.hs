@@ -11,7 +11,7 @@ module Hach.TUI.State
   ) where
 
 import Hach.Sessions (estimateCostUsd)
-import Hach.Skills (injectSkillsIntoPrompt, inputSlashCompletion, parseSkillInvocations, skillName)
+import Hach.Skills (inputSlashCompletion, parseSkillInvocations, skillName)
 import Hach.TUI.Types
 import Hach.TUI.UI (formatTokens)
 import Hach.Types
@@ -470,8 +470,7 @@ handleSubmitPrompt rawPrompt state
                         }
                 , [ActionRunGoal condition] )
   | otherwise =
-      let (cleanedPrompt, invokedSkills) = parseSkillInvocations (tsSkills state) trimmed
-          finalPrompt = injectSkillsIntoPrompt invokedSkills cleanedPrompt
+      let (_, invokedSkills) = parseSkillInvocations (tsSkills state) trimmed
           skillNotices = [ DiNotice ("Activated skill: " <> skillName s) | s <- invokedSkills ]
           newTranscript = tsTranscript state ++ [DiUser trimmed] ++ skillNotices
           newPromptHistory = tsPromptHistory state ++ [trimmed]
@@ -485,7 +484,7 @@ handleSubmitPrompt rawPrompt state
             , tsPromptDraft        = ""
             , tsCancelRequested    = False
             }
-      in (newState, [ActionRunAgent finalPrompt])
+      in (newState, [ActionRunAgent trimmed])
   where
     trimmed = T.strip rawPrompt
 

@@ -12,6 +12,7 @@ module Hach.Skills
   , discoverSkills
   , parseSkillInvocations
   , injectSkillsIntoPrompt
+  , expandSlashInvokedPrompt
   , skillInvocationCompletion
   , inputSlashCompletion
   , substituteArguments
@@ -270,6 +271,19 @@ injectSkillsIntoPrompt skills prompt =
   in if T.null (T.strip prompt)
        then T.strip formattedSkills
        else T.strip formattedSkills <> "\n\n" <> prompt
+
+-- | Slash-invocation counterpart to 'executeSkill': bind leftover prompt text
+-- to $ARGUMENTS and expand !command / {{file:}} before splicing skills in.
+expandSlashInvokedPrompt :: FilePath -> SkillCatalog -> Text -> IO Text
+expandSlashInvokedPrompt root catalog rawInput = do
+  let (cleaned, invoked) = parseSkillInvocations catalog rawInput
+  expandedSkills <- mapM (expandOne cleaned) invoked
+  pure (injectSkillsIntoPrompt expandedSkills cleaned)
+  where
+    expandOne args sk = do
+      let substituted = substituteArguments args (skillContent sk)
+      expanded <- injectDynamicContext root substituted
+      pure sk { skillContent = T.stripEnd expanded }
 
 -- | Compute the inline completion suffix for the slash-command currently being typed.
 -- Only user-invocable skills participate.
