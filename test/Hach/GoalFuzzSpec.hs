@@ -19,6 +19,7 @@ import Hach.Interpreter.Pure
 import Hach.Tools
 import Hach.Types
 
+import Control.Monad (forM_)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -251,9 +252,42 @@ spec = modifyMaxSuccess (const 1000) $ do
               [ "401", "unauthorized", "authentication", "api key"
               , "402", "payment", "credit", "balance", "quota", "billing"
               , "context", "overflow", "too long", "maximum context", "token limit"
-              , "404", "model", "not found", "unavailable", "does not exist"
+              , "404", "model not found", "model unavailable", "model does not exist", "unknown model"
               ]
         in intendedUnrec ==> classifyError err == GoalErrUnrecoverable
+
+    it "classifyError classifies transient errors mentioning model as GoalErrTransient" $ do
+      let transientErrors =
+            [ "OpenRouter API error: 429 Rate limit exceeded for model anthropic/claude-3-5-sonnet"
+            , "OpenRouter API error: 503 Service Unavailable for model gpt-4o"
+            , "Connection timeout while reaching model endpoint"
+            , "Temporary 500 Internal Server Error from model provider"
+            , "model"
+            ]
+      forM_ transientErrors $ \err ->
+        classifyError err `shouldBe` GoalErrTransient
+
+    it "classifyError classifies model unavailability errors as GoalErrUnrecoverable" $ do
+      let unrecErrors =
+            [ "OpenRouter API error: 404 model not found"
+            , "The requested model unavailable at this time"
+            , "model does not exist: anthropic/claude-unknown"
+            , "unknown model: custom-gpt"
+            ]
+      forM_ unrecErrors $ \err ->
+        classifyError err `shouldBe` GoalErrUnrecoverable
+
+    it "goalLoop keeps goal active on transient error mentioning model" $ do
+      let err = "OpenRouter API error: 429 Rate limit exceeded for model anthropic/claude-3-5-sonnet"
+          s = Scenario
+            { sTurns     = [TError err]
+            , sEvals     = []
+            , sBlockCap  = 3
+            , sMaxTurns  = 20
+            , sCondition = "all tests pass"
+            }
+          (_, _, gs, _) = runScenario s
+      gsStatus gs `shouldBe` GoalActive
 
     it "goalLoop fails the goal on a realistic unrecoverable API error" $
       forAll genUnrecoverableErrorScenario $ \s ->
