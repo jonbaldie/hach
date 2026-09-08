@@ -303,11 +303,8 @@ runGoalWorker algebra agentConfig condition historyItems emitEvent = do
   case res of
     Left (ex :: SomeException) ->
       emitEvent (EvError (T.pack (show ex)))
-    Right (AgentCompleted ans, _, gs) ->
-      case gsStatus gs of
-        GoalFailed -> emitEvent (EvError ans)
-        GoalActive -> emitEvent (EvError ans)
-        _          -> emitEvent (EvDone ans)
+    Right (AgentCompleted ans, _, _) ->
+      emitEvent (EvDone ans)
     Right (AgentMaxTurnsReached n, _, _) ->
       emitEvent (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
     Right (AgentFailed err, _, _) ->
