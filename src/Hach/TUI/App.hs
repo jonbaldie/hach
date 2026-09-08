@@ -13,6 +13,7 @@ module Hach.TUI.App
   , isTranscriptAppendingEvent
   , runGoalWorker
   , goalAgentConfig
+  , runEnvForModel
   , initialTuiLaunch
   ) where
 
@@ -107,10 +108,10 @@ runTui ioEnv initialPrompt mMaxTurns mAppendPrompt = do
               ActionCancelAgent -> pure ()
               ActionSetPermissionMode mode -> liftIO (setIOPermissionMode ioEnv mode)
               ActionRunAgent prompt -> do
-                triggerAgentRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns currentState) prompt (tsHistory currentState)
+                triggerAgentRun eventChan workerVar ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) prompt (tsHistory currentState)
                 vScrollToEnd (viewportScroll VpTranscript)
               ActionRunGoal condition -> do
-                triggerGoalRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns currentState) condition (tsHistory currentState)
+                triggerGoalRun eventChan workerVar ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) condition (tsHistory currentState)
                 vScrollToEnd (viewportScroll VpTranscript)
               ActionScrollTranscript delta ->
                 vScrollBy (viewportScroll VpTranscript) delta
@@ -251,17 +252,25 @@ toolCardContent = \case
   Running       -> cancelledToolCallPlaceholder
   Cancelled     -> cancelledToolCallPlaceholder
 
+-- | Per-run interpreter environment: the TUI's live model selection (changed
+-- via @/model@) overrides the model captured in the startup environment. The
+-- update is a snapshot, so a run already in flight keeps the model it started
+-- with and the next run picks up the selection.
+runEnvForModel :: Text -> IOEnv -> IOEnv
+runEnvForModel model ioEnv = ioEnv { ioModel = model }
+
 -- | Trigger background agent task execution.
 triggerAgentRun
   :: BChan AgentEvent
   -> TVar (Maybe (Async ()))
   -> IOEnv
+  -> Text         -- ^ model currently selected in the TUI
   -> Text
   -> Maybe Int
   -> Text
   -> [DialogueItem]
   -> EventM Name TuiState ()
-triggerAgentRun eventChan workerVar ioEnv sysPrompt mMaxTurns currentPrompt historyItems = liftIO $ do
+triggerAgentRun eventChan workerVar ioEnv selectedModel sysPrompt mMaxTurns currentPrompt historyItems = liftIO $ do
   -- Cancel existing worker if any
   mOldWorker <- atomically $ do
     w <- readTVar workerVar
@@ -270,14 +279,11 @@ triggerAgentRun eventChan workerVar ioEnv sysPrompt mMaxTurns currentPrompt hist
   mapM_ cancel mOldWorker
 
   newWorker <- async $ do
-    let agentConfig = AgentConfig
-          { cfgModel        = ioModel ioEnv
-          , cfgSystemPrompt = Just sysPrompt
-          , cfgMaxTurns     = mMaxTurns
-          }
+    let runEnv = runEnvForModel selectedModel ioEnv
+        agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns
         initHistory = dialogueToMessages sysPrompt currentPrompt historyItems
 
-    res <- try (foldAgentProgram (tuiAlgebra eventChan ioEnv) (agentLoop agentConfig allToolDefs initHistory))
+    res <- try (foldAgentProgram (tuiAlgebra eventChan runEnv) (agentLoop agentConfig allToolDefs initHistory))
     case res of
       Left (ex :: SomeException) ->
         writeBChan eventChan (EvError (T.pack (show ex)))
@@ -290,7 +296,9 @@ triggerAgentRun eventChan workerVar ioEnv sysPrompt mMaxTurns currentPrompt hist
 
   atomically $ writeTVar workerVar (Just newWorker)
 
--- | Construct the 'AgentConfig' for a goal-directed run in the TUI.
+-- | Construct the 'AgentConfig' for a goal-directed run in the TUI. The model
+-- comes from the run environment, so callers route it through 'runEnvForModel'
+-- to honour the TUI's live @/model@ selection.
 goalAgentConfig :: IOEnv -> Text -> Maybe Int -> AgentConfig
 goalAgentConfig ioEnv sysPrompt mMaxTurns = AgentConfig
   { cfgModel        = ioModel ioEnv
@@ -326,12 +334,13 @@ triggerGoalRun
   :: BChan AgentEvent
   -> TVar (Maybe (Async ()))
   -> IOEnv
+  -> Text         -- ^ model currently selected in the TUI
   -> Text
   -> Maybe Int
   -> Text          -- ^ goal condition (also used as the first-turn directive)
   -> [DialogueItem]
   -> EventM Name TuiState ()
-triggerGoalRun eventChan workerVar ioEnv sysPrompt mMaxTurns condition historyItems = liftIO $ do
+triggerGoalRun eventChan workerVar ioEnv selectedModel sysPrompt mMaxTurns condition historyItems = liftIO $ do
   mOldWorker <- atomically $ do
     w <- readTVar workerVar
     writeTVar workerVar Nothing
@@ -339,8 +348,9 @@ triggerGoalRun eventChan workerVar ioEnv sysPrompt mMaxTurns condition historyIt
   mapM_ cancel mOldWorker
 
   newWorker <- async $ do
-    let agentConfig = goalAgentConfig ioEnv sysPrompt mMaxTurns
-    runGoalWorker (tuiAlgebra eventChan ioEnv) agentConfig condition historyItems (writeBChan eventChan)
+    let runEnv = runEnvForModel selectedModel ioEnv
+        agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns
+    runGoalWorker (tuiAlgebra eventChan runEnv) agentConfig condition historyItems (writeBChan eventChan)
 
   atomically $ writeTVar workerVar (Just newWorker)
 
@@ -377,10 +387,10 @@ handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
               pure w
             mapM_ cancel mWorker
           ActionRunAgent prompt -> do
-            triggerAgentRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns nextState) prompt (tsHistory nextState)
+            triggerAgentRun eventChan workerVar ioEnv (tsModelName nextState) sysPrompt (tsMaxTurns nextState) prompt (tsHistory nextState)
             vScrollToEnd (viewportScroll VpTranscript)
           ActionRunGoal condition -> do
-            triggerGoalRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns nextState) condition (tsHistory nextState)
+            triggerGoalRun eventChan workerVar ioEnv (tsModelName nextState) sysPrompt (tsMaxTurns nextState) condition (tsHistory nextState)
             vScrollToEnd (viewportScroll VpTranscript)
           ActionScrollTranscript delta ->
             vScrollBy (viewportScroll VpTranscript) delta
