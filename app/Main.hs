@@ -46,7 +46,7 @@ main = do
   ioEnv <- newIOEnv envApiKey envModel cwd True
 
   if not optNoTui
-    then runTui ioEnv optPrompt optMaxTurns
+    then runTui ioEnv optPrompt optMaxTurns optAppendSystemPrompt
     else do
       putStrLn "========================================================"
       putStrLn "  Haskell Agentic Coding Harness (hach)                 "
@@ -67,7 +67,7 @@ main = do
 
       skills <- discoverSkills cwd
       mGuidelines <- loadProjectInstructions cwd
-      let sysPrompt = buildSystemPrompt mGuidelines
+      let sysPrompt = buildSystemPromptWithAppend mGuidelines optAppendSystemPrompt
 
       let trimmedPrompt = T.strip taskPrompt
           isGoalCommand = trimmedPrompt == "/goal" || T.isPrefixOf "/goal " trimmedPrompt
