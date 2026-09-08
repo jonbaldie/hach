@@ -120,6 +120,30 @@ spec = do
         skills `shouldBe` [skillA]
         cleaned `shouldBe` "Line 1\nLine 2\nLine 3"
 
+      it "preserves leading indentation and whitespace when extracting skill invocation (minimised)" $ do
+        let input = "/to-spec foo:\n  bar"
+            (cleaned, skills) = parseSkillInvocations catalog input
+        skills `shouldBe` [skillA]
+        cleaned `shouldBe` "foo:\n  bar"
+
+      it "preserves leading indentation and whitespace in code blocks (issue #48)" $ do
+        let input = "/to-spec please fix this code:\n    def foo():\n        x = 1\n        return x"
+            (cleaned, skills) = parseSkillInvocations catalog input
+        skills `shouldBe` [skillA]
+        cleaned `shouldBe` "please fix this code:\n    def foo():\n        x = 1\n        return x"
+
+      it "preserves indentation when skill invocation is on its own line before indented code" $ do
+        let input = "/to-spec\n    def foo():\n        x = 1\n        return x"
+            (cleaned, skills) = parseSkillInvocations catalog input
+        skills `shouldBe` [skillA]
+        cleaned `shouldBe` "    def foo():\n        x = 1\n        return x"
+
+      it "preserves interior formatting and tables on lines without skill invocations" $ do
+        let input = "/to-spec\n| col1    | col2    |\n| 1       | 2       |"
+            (cleaned, skills) = parseSkillInvocations catalog input
+        skills `shouldBe` [skillA]
+        cleaned `shouldBe` "| col1    | col2    |\n| 1       | 2       |"
+
       it "extracts skill invocation located anywhere in prompt" $ do
         let input = "Please use /to-spec to build this feature"
             (cleaned, skills) = parseSkillInvocations catalog input

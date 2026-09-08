@@ -24,7 +24,7 @@ import Control.Exception (try, SomeException)
 import Control.Monad (guard)
 import qualified Data.ByteString as BS
 import Data.Char (isSpace, toLower)
-import Data.List (nubBy, sort)
+import Data.List (dropWhileEnd, nubBy, sort)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
@@ -244,10 +244,19 @@ parseSkillInvocations catalog rawInput =
              invokedToks  = map fst cmds
              -- Filter exact whitespace-delimited tokens per line so a skill
              -- token that is only a prefix of another word (e.g. /foo vs
-             -- /foo-bar) is left intact, and so newlines survive.
-             cleanLine line =
-               T.unwords (filter (`notElem` invokedToks) (T.words line))
-             cleaned = T.strip (T.intercalate "\n" (map cleanLine (T.splitOn "\n" rawInput)))
+             -- /foo-bar) is left intact, and newlines / indentation survive.
+             cleanLine line
+               | not (any (`elem` invokedToks) (T.words line)) = line
+               | otherwise =
+                   let (leadingWs, rest) = T.span (\c -> c == ' ' || c == '\t') line
+                       toks = T.words rest
+                       filtered = filter (`notElem` invokedToks) toks
+                   in if null filtered
+                        then ""
+                        else leadingWs <> T.unwords filtered
+             rawLines = map cleanLine (T.splitOn "\n" rawInput)
+             trimmedLines = dropWhileEnd (T.all isSpace) (dropWhile (T.all isSpace) rawLines)
+             cleaned = T.intercalate "\n" trimmedLines
          in (cleaned, uniqueSkills)
 
 -- | Inject skill instructions into the user prompt.
