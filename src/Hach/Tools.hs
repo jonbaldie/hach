@@ -250,6 +250,10 @@ runCommandToolDef = ToolDef
               [ "type" .= ("string" :: Text)
               , "description" .= ("The shell command to execute" :: Text)
               ]
+          , "timeout" .= object
+              [ "type" .= ("integer" :: Text)
+              , "description" .= ("Optional timeout in seconds" :: Text)
+              ]
           ]
       , "required" .= (["command"] :: [Text])
       ]
@@ -669,12 +673,14 @@ instance FromJSON ReplaceFileContentArgs where
   parseJSON = Aeson.withObject "ReplaceFileContentArgs" $ \o ->
     ReplaceFileContentArgs <$> o .: "path" <*> o .: "old_content" <*> o .: "new_content"
 
-newtype RunCommandArgs = RunCommandArgs { runCommandCmd :: Text }
-  deriving (Show, Eq)
+data RunCommandArgs = RunCommandArgs
+  { runCommandCmd     :: !Text
+  , runCommandTimeout :: !(Maybe Int)
+  } deriving (Show, Eq)
 
 instance FromJSON RunCommandArgs where
   parseJSON = Aeson.withObject "RunCommandArgs" $ \o ->
-    RunCommandArgs <$> o .: "command"
+    RunCommandArgs <$> o .: "command" <*> o .:? "timeout"
 
 newtype ListDirArgs = ListDirArgs { listDirPath :: FilePath }
   deriving (Show, Eq)
@@ -1003,7 +1009,7 @@ executeCodingTool root call = do
     name | name `elem` ["run_command", "Bash", "bash"] ->
       case parseBashArgs call of
         Left err   -> pure $ ToolError ("Failed to parse Bash args: " <> T.pack err)
-        Right args -> executeRunCommand root (RunCommandArgs (bashCommand args))
+        Right args -> executeRunCommand root (RunCommandArgs (bashCommand args) (bashTimeout args))
 
     name | name `elem` ["list_dir", "ListDir"] ->
       case parseListDirArgs call of
@@ -1176,14 +1182,15 @@ executeReplaceFileContent root (ReplaceFileContentArgs path oldContent newConten
                           Right () -> pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
 
 executeRunCommand :: FilePath -> RunCommandArgs -> IO ToolResult
-executeRunCommand root (RunCommandArgs cmd) = do
-  let sh = (shell (T.unpack cmd)) { cwd = Just root }
-  -- 60 second timeout to prevent runaway or interactive processes from hanging the harness
-  res <- try (timeout (60 * 1000000) (readCreateProcessWithExitCode sh "")) :: IO (Either SomeException (Maybe (ExitCode, String, String)))
+executeRunCommand root (RunCommandArgs cmd mTimeout) = do
+  let secs = maybe 60 (max 1) mTimeout
+      sh = (shell (T.unpack cmd)) { cwd = Just root }
+  -- Timeout to prevent runaway or interactive processes from hanging the harness
+  res <- try (timeout (secs * 1000000) (readCreateProcessWithExitCode sh "")) :: IO (Either SomeException (Maybe (ExitCode, String, String)))
   case res of
     Left ex -> pure $ ToolError ("Process execution failed: " <> T.pack (show ex))
     Right Nothing ->
-      pure $ ToolError ("Command timed out after 60 seconds: " <> cmd)
+      pure $ ToolError ("Command timed out after " <> T.pack (show secs) <> " seconds: " <> cmd)
     Right (Just (exitCode, stdoutStr, stderrStr)) ->
       let codeInt = case exitCode of
             ExitSuccess   -> 0

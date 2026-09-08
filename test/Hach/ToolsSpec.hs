@@ -51,7 +51,9 @@ spec = do
 
     it "parses valid run_command arguments" $ do
       let call = ToolCall "c3" "run_command" "{\"command\":\"echo 42\"}"
-      parseRunCommandArgs call `shouldBe` Right (RunCommandArgs "echo 42")
+      parseRunCommandArgs call `shouldBe` Right (RunCommandArgs "echo 42" Nothing)
+      let callWithTimeout = ToolCall "c3_to" "run_command" "{\"command\":\"echo 42\",\"timeout\":10}"
+      parseRunCommandArgs callWithTimeout `shouldBe` Right (RunCommandArgs "echo 42" (Just 10))
 
     it "parses list_dir with explicit path" $ do
       let call = ToolCall "c4" "list_dir" "{\"path\":\"src\"}"
@@ -294,6 +296,20 @@ spec = do
         case res of
           ToolSuccess out -> out `shouldSatisfy` ("hello-bash" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("Bash failed: " ++ T.unpack err)
+
+      it "respects timeout in Bash tool calls via executeCodingTool" $ do
+        let call = ToolCall "c_b_to" "Bash" "{\"command\":\"sleep 2\",\"timeout\":1}"
+        res <- executeCodingTool "." call
+        case res of
+          ToolError err   -> err `shouldSatisfy` ("Command timed out after 1 seconds" `T.isInfixOf`)
+          ToolSuccess out -> expectationFailure ("Expected timeout error, but succeeded: " ++ T.unpack out)
+
+      it "respects timeout in run_command tool calls via executeCodingTool" $ do
+        let call = ToolCall "c_rc_to" "run_command" "{\"command\":\"sleep 2\",\"timeout\":1}"
+        res <- executeCodingTool "." call
+        case res of
+          ToolError err   -> err `shouldSatisfy` ("Command timed out after 1 seconds" `T.isInfixOf`)
+          ToolSuccess out -> expectationFailure ("Expected timeout error, but succeeded: " ++ T.unpack out)
 
       it "executes Glob tool via executeCodingTool" $ do
         _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "sub" </> "foo.txt") "content")
