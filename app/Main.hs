@@ -18,23 +18,32 @@ import System.Directory (getCurrentDirectory)
 import System.Environment (getArgs)
 import Data.Version (showVersion)
 import qualified Paths_hach as Paths
-import System.Exit (exitFailure, exitSuccess)
+import System.Exit (exitFailure, exitSuccess, exitWith)
+import System.IO (stderr)
 
 main :: IO ()
 main = do
   rawArgs <- getArgs
   cwd     <- getCurrentDirectory
 
-  CliOptions{..} <- case parseCliArgs rawArgs of
+  opts@CliOptions{..} <- case parseCliArgs rawArgs of
     Left err -> do
       putStrLn ("Argument error: " <> err)
-      putStrLn "Usage: hach [--model <model_name>] [--no-tui] [task prompt...]"
+      putStrLn "Usage: hach [--model <model_name>] [--no-tui] [--exec <cmd>] [task prompt...]"
       exitFailure
-    Right opts -> pure opts
+    Right parsed -> pure parsed
 
-  when optVersion $ do
-    putStrLn ("hach " <> showVersion Paths.version)
-    exitSuccess
+  case startupIntent opts of
+    IntentVersion -> do
+      putStrLn ("hach " <> showVersion Paths.version)
+      exitSuccess
+    IntentExec cmd -> do
+      (code, out, err) <- runExecCommand cwd cmd
+      TIO.putStr out
+      TIO.hPutStr stderr err
+      exitWith code
+    IntentTui -> pure ()
+    IntentHeadless -> pure ()
 
   envRes <- resolveEnvConfig optModel (Just ".env")
   EnvConfig{..} <- case envRes of
@@ -51,9 +60,9 @@ main = do
         }
   ioEnv <- newIOEnvWithPermissions perms envApiKey envModel cwd True
 
-  if not optNoTui
-    then runTui ioEnv optPrompt optMaxTurns optAppendSystemPrompt
-    else do
+  case startupIntent opts of
+    IntentTui -> runTui ioEnv optPrompt optMaxTurns optAppendSystemPrompt
+    _ -> do
       putStrLn "========================================================"
       putStrLn "  Haskell Agentic Coding Harness (hach)                 "
       putStrLn "========================================================"

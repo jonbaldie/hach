@@ -98,6 +98,7 @@ module Hach.Tools
   , executeWriteFile
   , executeReplaceFileContent
   , executeRunCommand
+  , runExecCommand
   , executeListDir
   , executeFindFiles
   , matchPattern
@@ -1185,17 +1186,23 @@ executeReplaceFileContent root (ReplaceFileContentArgs path oldContent newConten
                           Left ex -> pure $ ToolError ("Write error: " <> T.pack (show ex))
                           Right () -> pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
 
-executeRunCommand :: FilePath -> RunCommandArgs -> IO ToolResult
-executeRunCommand root (RunCommandArgs cmd mTimeout) = do
+runWorkspaceShell :: FilePath -> Text -> Maybe Int -> IO (Either Text (ExitCode, String, String))
+runWorkspaceShell root cmd mTimeout = do
   let secs = maybe 60 (max 1) mTimeout
       sh = (shell (T.unpack cmd)) { cwd = Just root }
-  -- Timeout to prevent runaway or interactive processes from hanging the harness
   res <- try (timeout (secs * 1000000) (readCreateProcessWithExitCode sh "")) :: IO (Either SomeException (Maybe (ExitCode, String, String)))
   case res of
-    Left ex -> pure $ ToolError ("Process execution failed: " <> T.pack (show ex))
+    Left ex -> pure $ Left ("Process execution failed: " <> T.pack (show ex))
     Right Nothing ->
-      pure $ ToolError ("Command timed out after " <> T.pack (show secs) <> " seconds: " <> cmd)
-    Right (Just (exitCode, stdoutStr, stderrStr)) ->
+      pure $ Left ("Command timed out after " <> T.pack (show secs) <> " seconds: " <> cmd)
+    Right (Just triple) -> pure $ Right triple
+
+executeRunCommand :: FilePath -> RunCommandArgs -> IO ToolResult
+executeRunCommand root (RunCommandArgs cmd mTimeout) = do
+  outcome <- runWorkspaceShell root cmd mTimeout
+  case outcome of
+    Left err -> pure $ ToolError err
+    Right (exitCode, stdoutStr, stderrStr) ->
       let codeInt = case exitCode of
             ExitSuccess   -> 0
             ExitFailure c -> c
@@ -1207,6 +1214,14 @@ executeRunCommand root (RunCommandArgs cmd mTimeout) = do
             , "STDERR:\n" <> if T.null errTxt then "(empty)" else errTxt
             ]
       in pure $ ToolSuccess summary
+
+-- | Run a '--exec' command in the workspace and return its status plus streams.
+runExecCommand :: FilePath -> Text -> IO (ExitCode, Text, Text)
+runExecCommand root cmd = do
+  outcome <- runWorkspaceShell root cmd Nothing
+  case outcome of
+    Left err -> pure (ExitFailure 1, T.empty, err)
+    Right (code, out, err) -> pure (code, T.pack out, T.pack err)
 
 executeListDir :: FilePath -> ListDirArgs -> IO ToolResult
 executeListDir root (ListDirArgs path) = do

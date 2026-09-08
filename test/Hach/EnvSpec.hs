@@ -222,10 +222,49 @@ spec = do
         Left err -> err `shouldContain` "requires an argument"
         Right _  -> expectationFailure "Expected failure when --append-system-prompt has no argument"
 
+    it "parses --exec and implies --no-tui" $ do
+      parseCliArgs ["--exec", "echo hello"] `shouldBe` Right defaultCliOptions
+        { optExec = Just "echo hello"
+        , optNoTui = True
+        }
+      parseCliArgs ["--exec=ls -la"] `shouldBe` Right defaultCliOptions
+        { optExec = Just "ls -la"
+        , optNoTui = True
+        }
+
+    it "fails when --exec has no argument" $ do
+      case parseCliArgs ["--exec"] of
+        Left err -> err `shouldContain` "requires an argument"
+        Right _  -> expectationFailure "Expected failure when --exec has no argument"
+
     it "fails on unknown flag" $ do
       case parseCliArgs ["--some-bogus-flag"] of
         Left err -> err `shouldContain` "Unknown flag"
         Right _  -> expectationFailure "Expected failure on unknown flag"
+
+  describe "startupIntent" $ do
+    it "runs --exec instead of the headless agent loop" $ do
+      case parseCliArgs ["--exec", "echo hello"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentExec "echo hello"
+
+    it "runs --exec= the same way" $ do
+      case parseCliArgs ["--exec=ls -la"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentExec "ls -la"
+
+    it "prefers --version over --exec" $ do
+      case parseCliArgs ["--exec", "ls", "--version"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentVersion
+
+    it "falls through to headless when --no-tui is set without --exec" $ do
+      case parseCliArgs ["--no-tui"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentHeadless
+
+    it "starts the TUI by default" $ do
+      startupIntent defaultCliOptions `shouldBe` IntentTui
 
   describe "resolveConfigWith" $ do
     let dotEnvSample = "OPENROUTER_API_KEY=sk-dotenv\nOPENROUTER_MODEL=meta/muse-glimmer-30b\n"

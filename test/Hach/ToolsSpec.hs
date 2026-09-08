@@ -6,6 +6,7 @@ import Hach.Tools
 import Hach.Types
 import qualified Data.Text as T
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
+import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.Timeout (timeout)
 import Test.Hspec
@@ -289,6 +290,16 @@ spec = do
             readRes <- executeReadFile "." (ReadFileArgs targetFile)
             readRes `shouldBe` ToolSuccess "apple orange cherry"
           ToolError err -> expectationFailure ("Edit execution failed: " ++ T.unpack err)
+
+      it "runExecCommand runs the command in the workspace and returns its status" $ do
+        (code, out, err) <- runExecCommand testSandbox "echo hello-from-exec"
+        code `shouldBe` ExitSuccess
+        out `shouldSatisfy` ("hello-from-exec" `T.isInfixOf`)
+        err `shouldBe` ""
+
+      it "runExecCommand propagates a non-zero exit status" $ do
+        (code, _, _) <- runExecCommand testSandbox "sh -c 'exit 7'"
+        code `shouldBe` ExitFailure 7
 
       it "executes Bash command via executeCodingTool" $ do
         let call = ToolCall "c_b" "Bash" "{\"command\":\"echo hello-bash\"}"
