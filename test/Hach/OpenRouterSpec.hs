@@ -38,6 +38,56 @@ spec = do
               callArgsRaw tc `shouldBe` "{\"path\":\"Main.hs\"}"
             [] -> expectationFailure "Expected at least one tool call"
 
+    it "parses object-typed tool arguments into callArgsRaw JSON" $ do
+      let rawJson = LBS.concat
+            [ "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,"
+            , "\"tool_calls\":[{\"id\":\"call_abc\",\"type\":\"function\","
+            , "\"function\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"Main.hs\"}}}]}}]}"
+            ]
+      case parseChatResponse rawJson of
+        Left err -> expectationFailure ("Failed to parse object-typed arguments: " <> show err)
+        Right resp -> do
+          respContent resp `shouldBe` Nothing
+          case respToolCalls resp of
+            (tc : _) -> do
+              callId tc `shouldBe` "call_abc"
+              functionName tc `shouldBe` "read_file"
+              callArgsRaw tc `shouldBe` "{\"path\":\"Main.hs\"}"
+            [] -> expectationFailure "Expected at least one tool call"
+
+    it "parses array-typed tool arguments into callArgsRaw JSON" $ do
+      let rawJson = LBS.concat
+            [ "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,"
+            , "\"tool_calls\":[{\"id\":\"call_arr\",\"type\":\"function\","
+            , "\"function\":{\"name\":\"read_file\",\"arguments\":[\"Main.hs\"]}}]}}]}"
+            ]
+      case parseChatResponse rawJson of
+        Left err -> expectationFailure ("Failed to parse array-typed arguments: " <> show err)
+        Right resp ->
+          case respToolCalls resp of
+            (tc : _) -> callArgsRaw tc `shouldBe` "[\"Main.hs\"]"
+            [] -> expectationFailure "Expected at least one tool call"
+
+    it "parses array content by concatenating text parts" $ do
+      let rawJson = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Hello\"}]}}]}"
+      case parseChatResponse rawJson of
+        Left err -> expectationFailure ("Failed to parse array content: " <> show err)
+        Right resp -> do
+          respContent resp `shouldBe` Just "Hello"
+          respToolCalls resp `shouldBe` []
+
+    it "concatenates multiple array content text parts" $ do
+      let rawJson = LBS.concat
+            [ "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":["
+            , "{\"type\":\"text\",\"text\":\"Hel\"},"
+            , "{\"type\":\"text\",\"text\":\"lo\"}"
+            , "]}}]}"
+            ]
+      case parseChatResponse rawJson of
+        Left err -> expectationFailure ("Failed to parse multi-part array content: " <> show err)
+        Right resp ->
+          respContent resp `shouldBe` Just "Hello"
+
     it "extracts error message from API error envelope" $ do
       let rawJson = "{\"error\":{\"message\":\"Invalid API key provided\",\"code\":401}}"
       case parseChatResponse rawJson of
