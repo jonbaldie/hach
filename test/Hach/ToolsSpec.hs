@@ -319,11 +319,35 @@ spec = do
           ToolSuccess out -> out `shouldSatisfy` ("foo.txt" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("Glob failed: " ++ T.unpack err)
 
-      it "executes EnterPlanMode and ExitPlanMode" $ do
+      it "executes EnterPlanMode and enter_plan_mode" $ do
         r1 <- executeCodingTool "." (ToolCall "p1" "EnterPlanMode" "{}")
-        r1 `shouldSatisfy` \case ToolSuccess out -> "plan mode" `T.isInfixOf` out; _ -> False
-        r2 <- executeCodingTool "." (ToolCall "p2" "ExitPlanMode" "{}")
-        r2 `shouldSatisfy` \case ToolSuccess out -> "Exited" `T.isInfixOf` out; _ -> False
+        r1 `shouldBe` ToolSuccess "Entered plan mode. The agent is now in read-only planning mode."
+        r2 <- executeCodingTool "." (ToolCall "p2" "enter_plan_mode" "{}")
+        r2 `shouldBe` ToolSuccess "Entered plan mode. The agent is now in read-only planning mode."
+
+      it "executes ExitPlanMode and exit_plan_mode" $ do
+        r1 <- executeCodingTool "." (ToolCall "p1" "ExitPlanMode" "{}")
+        r1 `shouldBe` ToolSuccess "Exited plan mode. The agent is now in standard execution mode."
+        r2 <- executeCodingTool "." (ToolCall "p2" "exit_plan_mode" "{}")
+        r2 `shouldBe` ToolSuccess "Exited plan mode. The agent is now in standard execution mode."
+
+      it "executes ExitWorktree and exit_worktree" $ do
+        r1 <- executeCodingTool "." (ToolCall "w1" "ExitWorktree" "{}")
+        r1 `shouldBe` ToolSuccess "Exited worktree and restored workspace root."
+        r2 <- executeCodingTool "." (ToolCall "w2" "exit_worktree" "{}")
+        r2 `shouldBe` ToolSuccess "Exited worktree and restored workspace root."
+
+      it "executes ListAgents and list_agents" $ do
+        r1 <- executeCodingTool "." (ToolCall "a1" "ListAgents" "{}")
+        r1 `shouldBe` ToolSuccess "Available subagents: explore, plan."
+        r2 <- executeCodingTool "." (ToolCall "a2" "list_agents" "{}")
+        r2 `shouldBe` ToolSuccess "Available subagents: explore, plan."
+
+      it "executes EndConversation and end_conversation" $ do
+        r1 <- executeCodingTool "." (ToolCall "e1" "EndConversation" "{}")
+        r1 `shouldBe` ToolSuccess "Conversation completed by agent."
+        r2 <- executeCodingTool "." (ToolCall "e2" "end_conversation" "{}")
+        r2 `shouldBe` ToolSuccess "Conversation completed by agent."
 
       it "manages tasks via TaskCreate and TaskList" $ do
         r1 <- executeCodingTool "." (ToolCall "t1" "TaskCreate" "{\"name\":\"Build feature\"}")
