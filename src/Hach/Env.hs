@@ -406,21 +406,17 @@ resolveEnvConfig mCliModel mDotEnvPath = do
 loadEnvConfig :: FilePath -> IO (Either String EnvConfig)
 loadEnvConfig path = resolveEnvConfig Nothing (Just path)
 
--- | Load project instructions from AGENT.md or CLAUDE.md in the workspace directory.
--- Precedence: AGENT.md is preferred; if missing, CLAUDE.md is loaded.
+-- | Load project instructions from AGENTS.md, AGENT.md, or CLAUDE.md in the workspace directory.
+-- Precedence: AGENTS.md is preferred; then AGENT.md; then CLAUDE.md.
 loadProjectInstructions :: FilePath -> IO (Maybe Text)
-loadProjectInstructions workspace = do
-  let agentMd = workspace </> "AGENT.md"
-      claudeMd = workspace </> "CLAUDE.md"
-  agentExists <- doesFileExist agentMd
-  if agentExists
-    then readFileUtf8 agentMd
-    else do
-      claudeExists <- doesFileExist claudeMd
-      if claudeExists
-        then readFileUtf8 claudeMd
-        else pure Nothing
+loadProjectInstructions workspace = firstExisting ["AGENTS.md", "AGENT.md", "CLAUDE.md"]
   where
+    firstExisting [] = pure Nothing
+    firstExisting (name : names) = do
+      let fp = workspace </> name
+      exists <- doesFileExist fp
+      if exists then readFileUtf8 fp else firstExisting names
+
     readFileUtf8 fp = do
       res <- try (BS.readFile fp) :: IO (Either SomeException BS.ByteString)
       case res of

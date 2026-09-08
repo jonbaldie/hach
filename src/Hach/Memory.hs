@@ -124,7 +124,8 @@ resolveMemoryImports baseDir maxDepth path = do
                   pure (T.lines content)
       | otherwise = pure [line]
 
--- | Walk directories from workspace root to cwd, loading CLAUDE.md or AGENT.md.
+-- | Walk directories from workspace root to cwd, loading AGENTS.md, AGENT.md, or CLAUDE.md.
+-- Precedence: AGENTS.md is preferred; then AGENT.md; then CLAUDE.md.
 loadHierarchicalMemory :: FilePath -> FilePath -> IO [Text]
 loadHierarchicalMemory root cwd = do
   let rel = makeRelative root cwd
@@ -133,17 +134,15 @@ loadHierarchicalMemory root cwd = do
   contents <- mapM loadDirMemory candidates
   pure (catMaybes contents)
   where
-    loadDirMemory dir = do
-      let claudeFp = dir </> "CLAUDE.md"
-          agentFp  = dir </> "AGENT.md"
-      claudeExists <- doesFileExist claudeFp
-      if claudeExists
-        then Just <$> resolveMemoryImports root 4 claudeFp
-        else do
-          agentExists <- doesFileExist agentFp
-          if agentExists
-            then Just <$> resolveMemoryImports root 4 agentFp
-            else pure Nothing
+    loadDirMemory dir = firstMemoryFile ["AGENTS.md", "AGENT.md", "CLAUDE.md"]
+      where
+        firstMemoryFile [] = pure Nothing
+        firstMemoryFile (name : names) = do
+          let fp = dir </> name
+          exists <- doesFileExist fp
+          if exists
+            then Just <$> resolveMemoryImports root 4 fp
+            else firstMemoryFile names
 
 -- | Load rules matching the active files from .claude/rules/*.md and .agents/rules/*.md.
 loadRules :: FilePath -> [FilePath] -> IO [Text]

@@ -360,3 +360,15 @@ spec = do
         TIO.writeFile (testSandbox </> "CLAUDE.md") "Claude rules"
         res <- loadProjectInstructions testSandbox
         res `shouldBe` Just "Agent rules"
+
+      it "loads AGENTS.md when it is the only instructions file" $ do
+        TIO.writeFile (testSandbox </> "AGENTS.md") "Agents rules"
+        res <- loadProjectInstructions testSandbox
+        res `shouldBe` Just "Agents rules"
+
+      it "prefers AGENTS.md over AGENT.md and CLAUDE.md when all exist" $ do
+        TIO.writeFile (testSandbox </> "AGENTS.md") "Agents rules"
+        TIO.writeFile (testSandbox </> "AGENT.md") "Agent rules"
+        TIO.writeFile (testSandbox </> "CLAUDE.md") "Claude rules"
+        res <- loadProjectInstructions testSandbox
+        res `shouldBe` Just "Agents rules"
