@@ -223,11 +223,23 @@ evalPermission mode rules tool args
       , "exit_worktree"
       ]
 
+    planAllowedTools =
+      [ "exitplanmode"
+      , "exit_plan_mode"
+      , "enterplanmode"
+      , "enter_plan_mode"
+      , "askuserquestion"
+      , "ask_user_question"
+      , "endconversation"
+      , "end_conversation"
+      , "skill"
+      ]
+
     evalModeDefault m t isWrite = case m of
       ModeBypassPermissions -> PermAllow
       ModeDontAsk           -> PermAllow
       ModePlan ->
-        if t `elem` readOnlyTools
+        if t `elem` readOnlyTools || t `elem` planAllowedTools
           then PermAllow
           else PermDeny "Plan mode is read-only. Tool execution denied."
       ModeAcceptEdits ->

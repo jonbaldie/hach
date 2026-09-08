@@ -78,6 +78,19 @@ spec = describe "Hach.Permissions" $ do
         PermDeny _ -> pure ()
         other      -> expectationFailure ("Expected PermDeny, got " <> show other)
 
+    it "allows ExitPlanMode, AskUserQuestion, and EndConversation" $ do
+      let args = object []
+      evalPermission ModePlan [] "ExitPlanMode" args `shouldBe` PermAllow
+      evalPermission ModePlan [] "exit_plan_mode" args `shouldBe` PermAllow
+      evalPermission ModePlan [] "AskUserQuestion" args `shouldBe` PermAllow
+      evalPermission ModePlan [] "ask_user_question" args `shouldBe` PermAllow
+      evalPermission ModePlan [] "EndConversation" args `shouldBe` PermAllow
+      evalPermission ModePlan [] "end_conversation" args `shouldBe` PermAllow
+      evalPermission ModePlan [] "Skill" args `shouldBe` PermAllow
+      evalPermission ModePlan [] "skill" args `shouldBe` PermAllow
+      evalPermission ModePlan [] "EnterPlanMode" args `shouldBe` PermAllow
+      evalPermission ModePlan [] "enter_plan_mode" args `shouldBe` PermAllow
+
   describe "DontAsk and BypassPermissions modes" $ do
     it "auto-approves all actions in DontAsk" $ do
       let cmdArgs = object ["command" .= ("make clean" :: String)]
