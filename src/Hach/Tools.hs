@@ -1051,10 +1051,10 @@ executeCodingTool root call = do
         Left err   -> pure $ ToolError ("Failed to parse Skill args: " <> T.pack err)
         Right args -> executeSkill root args
 
-    "EnterPlanMode" ->
+    name | name `elem` ["EnterPlanMode", "enter_plan_mode"] ->
       pure $ ToolSuccess "Entered plan mode. The agent is now in read-only planning mode."
 
-    "ExitPlanMode" ->
+    name | name `elem` ["ExitPlanMode", "exit_plan_mode"] ->
       pure $ ToolSuccess "Exited plan mode. The agent is now in standard execution mode."
 
     name | name `elem` ["EnterWorktree", "enter_worktree"] ->
@@ -1062,10 +1062,10 @@ executeCodingTool root call = do
         Left err   -> pure $ ToolError ("Failed to parse EnterWorktree args: " <> T.pack err)
         Right args -> executeEnterWorktree root args
 
-    "ExitWorktree" ->
+    name | name `elem` ["ExitWorktree", "exit_worktree"] ->
       pure $ ToolSuccess "Exited worktree and restored workspace root."
 
-    "ListAgents" ->
+    name | name `elem` ["ListAgents", "list_agents"] ->
       pure $ ToolSuccess "Available subagents: explore, plan."
 
     name | name `elem` ["SendMessage", "send_message"] ->
@@ -1111,7 +1111,7 @@ executeCodingTool root call = do
         Left err   -> pure $ ToolError ("Failed to parse AskUserQuestion args: " <> T.pack err)
         Right args -> executeAskUserQuestion args
 
-    "EndConversation" ->
+    name | name `elem` ["EndConversation", "end_conversation"] ->
       pure $ ToolSuccess "Conversation completed by agent."
 
     unknown ->
