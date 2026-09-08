@@ -29,6 +29,8 @@ import Hach.Types
   , initialGoalState
   , initialSessionTokenUsage
   , maxGoalConditionLength
+  , permissionModeName
+  , PermissionMode(..)
   , modelContextLimit
   )
 import qualified Data.Map.Strict as Map
@@ -244,8 +246,9 @@ handleSubmitPrompt rawPrompt state
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
+                 , tsPermissionMode    = ModePlan
                  }
-         , []
+         , [ActionSetPermissionMode ModePlan]
          )
   | trimmed == "/diff" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
@@ -316,7 +319,8 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/permissions" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice "Permissions policy: default"]
+          notice = "Permissions policy: " <> permissionModeName (tsPermissionMode state)
+          newTranscript = tsTranscript state ++ [DiNotice notice]
       in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
@@ -333,8 +337,9 @@ handleSubmitPrompt rawPrompt state
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
+                 , tsPermissionMode    = ModeAcceptEdits
                  }
-         , []
+         , [ActionSetPermissionMode ModeAcceptEdits]
          )
   | trimmed == "/doctor" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]

@@ -137,7 +137,7 @@ import Hach.Tasks
   , getBackgroundOutput
   , stopBackgroundProcess
   )
-import Hach.Permissions (matchStarGlob)
+import Hach.Permissions (isProtectedPath, matchStarGlob)
 import Hach.Types
 import Control.Applicative ((<|>))
 import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, writeTVar)
@@ -1138,7 +1138,9 @@ executeReadFile root (ReadFileArgs path) = do
               in pure $ ToolSuccess txt
 
 executeWriteFile :: FilePath -> WriteFileArgs -> IO ToolResult
-executeWriteFile root (WriteFileArgs path content) = do
+executeWriteFile root (WriteFileArgs path content)
+  | isProtectedPath path = pure $ ToolError ("Protected path: write denied to " <> T.pack path)
+  | otherwise = do
   pathRes <- resolveWorkspacePath root path
   case pathRes of
     Left err -> pure $ ToolError (T.pack err)
@@ -1155,6 +1157,7 @@ executeWriteFile root (WriteFileArgs path content) = do
 executeReplaceFileContent :: FilePath -> ReplaceFileContentArgs -> IO ToolResult
 executeReplaceFileContent root (ReplaceFileContentArgs path oldContent newContent)
   | T.null oldContent = pure $ ToolError "The 'old_content' parameter cannot be empty."
+  | isProtectedPath path = pure $ ToolError ("Protected path: edit denied to " <> T.pack path)
   | otherwise = do
       pathRes <- resolveWorkspacePath root path
       case pathRes of

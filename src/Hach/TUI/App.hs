@@ -86,8 +86,12 @@ runTui ioEnv initialPrompt mMaxTurns mAppendPrompt = do
 
   skills <- discoverSkills (ioWorkspace ioEnv)
   sysPrompt <- buildTuiSystemPrompt (ioWorkspace ioEnv) mAppendPrompt
+  initialMode <- currentIOPermissionMode ioEnv
 
-  let baseState = (initialTuiState (ioModel ioEnv) mMaxTurns) { tsSkills = skills }
+  let baseState = (initialTuiState (ioModel ioEnv) mMaxTurns)
+        { tsSkills = skills
+        , tsPermissionMode = initialMode
+        }
       (startingState, initialActions) = initialTuiLaunch initialPrompt baseState
 
   let app :: App TuiState AgentEvent Name
@@ -101,6 +105,7 @@ runTui ioEnv initialPrompt mMaxTurns mAppendPrompt = do
             forM_ initialActions $ \case
               ActionQuit -> halt
               ActionCancelAgent -> pure ()
+              ActionSetPermissionMode mode -> liftIO (setIOPermissionMode ioEnv mode)
               ActionRunAgent prompt -> do
                 triggerAgentRun eventChan workerVar ioEnv sysPrompt (tsMaxTurns currentState) prompt (tsHistory currentState)
                 vScrollToEnd (viewportScroll VpTranscript)
@@ -363,6 +368,8 @@ handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
         forM_ actions $ \case
           ActionQuit ->
             halt
+          ActionSetPermissionMode mode ->
+            liftIO (setIOPermissionMode ioEnv mode)
           ActionCancelAgent -> liftIO $ do
             mWorker <- atomically $ do
               w <- readTVar workerVar

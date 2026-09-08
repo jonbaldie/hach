@@ -33,7 +33,10 @@ main = do
   let sandboxDir = cwd </> ".test-sandbox"
   createDirectoryIfMissing True sandboxDir
 
-  ioEnv <- newIOEnv envApiKey envModel sandboxDir True
+  -- The integration test exercises the autonomous write path, so it opts
+  -- out of permission enforcement explicitly.
+  let perms = defaultIOEnvPermissions { iopInitialMode = ModeBypassPermissions }
+  ioEnv <- newIOEnvWithPermissions perms envApiKey envModel sandboxDir True
 
   let prompt =
         "Please use the write_file tool to write 'Hello from Haskell Pearl' into a file named 'live_test.txt'. " <>
