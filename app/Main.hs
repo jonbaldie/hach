@@ -58,23 +58,25 @@ main = do
         , iopRules       = setPermissionRules envSettings
         , iopHooks       = setHooks envSettings
         }
-  ioEnv <- newIOEnvWithPermissions perms envApiKey envModel cwd True
+  ioEnv <- newIOEnvWithPermissions perms envApiKey envModel cwd (headlessVerbose opts)
 
   case startupIntent opts of
     IntentTui -> runTui ioEnv optPrompt optMaxTurns optAppendSystemPrompt
     _ -> do
-      putStrLn "========================================================"
-      putStrLn "  Haskell Agentic Coding Harness (hach)                 "
-      putStrLn "========================================================"
-      putStrLn ("Workspace: " <> cwd)
-      putStrLn ("Model:     " <> T.unpack envModel)
-      putStrLn ("Permissions: " <> T.unpack (permissionModeName (iopInitialMode perms)))
-      putStrLn "========================================================"
+      when (headlessEmitsBanners opts) $ do
+        putStrLn "========================================================"
+        putStrLn "  Haskell Agentic Coding Harness (hach)                 "
+        putStrLn "========================================================"
+        putStrLn ("Workspace: " <> cwd)
+        putStrLn ("Model:     " <> T.unpack envModel)
+        putStrLn ("Permissions: " <> T.unpack (permissionModeName (iopInitialMode perms)))
+        putStrLn "========================================================"
 
       taskPrompt <- case optPrompt of
         Just p  -> pure p
         Nothing -> do
-          putStrLn "Enter your task/request:"
+          when (not optPrint) $
+            putStrLn "Enter your task/request:"
           TIO.getLine
 
       when (T.null (T.strip taskPrompt)) $ do
@@ -103,7 +105,8 @@ main = do
                 putStrLn ("Goal condition too long (max " <> show maxGoalConditionLength <> " characters).")
               else do
                 let condition = argText
-                putStrLn ("\nStarting goal-directed agent loop for condition: " <> T.unpack condition)
+                when (not optPrint) $
+                  putStrLn ("\nStarting goal-directed agent loop for condition: " <> T.unpack condition)
                 let agentConfig = AgentConfig
                       { cfgModel        = envModel
                       , cfgSystemPrompt = Just sysPrompt
@@ -116,17 +119,19 @@ main = do
                 (result, finalHistory, goalState) <-
                   runIO ioEnv (goalLoop agentConfig allToolDefs condition defaultBlockCap initialHistory)
 
-                case result of
-                  AgentCompleted _ans -> do
-                    putStrLn "\nTask completed."
-                    putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
-                    printGoalSummary goalState
-                  AgentMaxTurnsReached turns -> do
-                    putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
-                    printGoalSummary goalState
-                  AgentFailed err -> do
-                    putStrLn ("\nAgent failed with error: " <> T.unpack err)
-                    printGoalSummary goalState
+                if optPrint
+                  then TIO.putStrLn (formatPrintResult optOutputFormat result)
+                  else case result of
+                    AgentCompleted _ans -> do
+                      putStrLn "\nTask completed."
+                      putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
+                      printGoalSummary goalState
+                    AgentMaxTurnsReached turns -> do
+                      putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
+                      printGoalSummary goalState
+                    AgentFailed err -> do
+                      putStrLn ("\nAgent failed with error: " <> T.unpack err)
+                      printGoalSummary goalState
 
         else do
           finalPrompt <- expandSlashInvokedPrompt cwd skills trimmedPrompt
@@ -140,17 +145,20 @@ main = do
                 , UserMsg finalPrompt
                 ]
 
-          putStrLn ("\nStarting agent loop for task: " <> T.unpack taskPrompt)
+          when (not optPrint) $
+            putStrLn ("\nStarting agent loop for task: " <> T.unpack taskPrompt)
           (result, finalHistory) <- runIO ioEnv (agentLoop agentConfig allToolDefs initialHistory)
 
-          case result of
-            AgentCompleted _ans -> do
-              putStrLn "\nTask successfully completed!"
-              putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
-            AgentMaxTurnsReached turns -> do
-              putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
-            AgentFailed err -> do
-              putStrLn ("\nAgent failed with error: " <> T.unpack err)
+          if optPrint
+            then TIO.putStrLn (formatPrintResult optOutputFormat result)
+            else case result of
+              AgentCompleted _ans -> do
+                putStrLn "\nTask successfully completed!"
+                putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
+              AgentMaxTurnsReached turns -> do
+                putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
+              AgentFailed err -> do
+                putStrLn ("\nAgent failed with error: " <> T.unpack err)
 
 -- | Print a summary of the goal state after a headless goal run.
 printGoalSummary :: GoalState -> IO ()

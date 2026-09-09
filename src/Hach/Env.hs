@@ -11,6 +11,9 @@ module Hach.Env
   , parseCliArgs
   , StartupIntent(..)
   , startupIntent
+  , headlessEmitsBanners
+  , headlessVerbose
+  , formatPrintResult
   , resolvePermissionMode
   , resolveConfigWith
   , resolveConfigWithSettings
@@ -22,11 +25,14 @@ module Hach.Env
   ) where
 
 import Hach.Settings (Settings(..), defaultSettings, loadLayeredSettings)
-import Hach.Types (PermissionMode(..))
+import Hach.Types (AgentResult(..), PermissionMode(..))
 import Control.Applicative ((<|>))
 import Control.Exception (try, SomeException)
+import Data.Aeson ((.=))
+import qualified Data.Aeson as Aeson
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isSpace, toLower)
 import Data.List (isPrefixOf, stripPrefix)
 import Data.Map.Strict (Map)
@@ -149,6 +155,35 @@ startupIntent CliOptions{..}
   | Just cmd <- optExec = IntentExec cmd
   | optNoTui = IntentHeadless
   | otherwise = IntentTui
+
+-- | Decorative startup banners belong to interactive/--no-tui headless
+-- runs. '--print' / '-p' is scripted: stdout is only the final answer.
+headlessEmitsBanners :: CliOptions -> Bool
+headlessEmitsBanners CliOptions{..} = not optPrint
+
+-- | Intermediate turn/tool events are logged unless '--print' / '-p'.
+headlessVerbose :: CliOptions -> Bool
+headlessVerbose CliOptions{..} = not optPrint
+
+-- | Format the agent result for '--print' / '-p' stdout.
+formatPrintResult :: OutputFormat -> AgentResult -> Text
+formatPrintResult fmt result = case fmt of
+  OutputText -> case result of
+    AgentCompleted ans -> ans
+    AgentMaxTurnsReached turns ->
+      T.pack ("Agent reached maximum turn limit of " <> show turns <> ".")
+    AgentFailed err -> err
+  OutputJson ->
+    TE.decodeUtf8 . LBS.toStrict . Aeson.encode $ case result of
+      AgentCompleted ans ->
+        Aeson.object ["answer" .= ans]
+      AgentMaxTurnsReached turns ->
+        Aeson.object
+          [ "error" .= ("max_turns" :: Text)
+          , "turns" .= turns
+          ]
+      AgentFailed err ->
+        Aeson.object ["error" .= err]
 
 -- | Parse command line arguments into 'CliOptions'.
 parseCliArgs :: [String] -> Either String CliOptions
