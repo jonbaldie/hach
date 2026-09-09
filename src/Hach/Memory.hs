@@ -179,8 +179,9 @@ loadFullMemory :: FilePath -> [FilePath] -> IO Text
 loadFullMemory workspace activeFiles = do
   home <- getHomeDirectory
   mGlobalClaude <- checkFile (home </> ".claude" </> "CLAUDE.md")
-  mGlobalAgent  <- checkFile (home </> ".agents" </> "CLAUDE.md")
-  let mGlobal = mGlobalClaude `orMaybe` mGlobalAgent
+  mGlobalAgent  <- checkFile (home </> ".agents" </> "AGENT.md")
+  mGlobalAgents <- checkFile (home </> ".agents" </> "AGENTS.md")
+  let mGlobal = mGlobalClaude `orMaybe` mGlobalAgent `orMaybe` mGlobalAgents
 
   hierarchical <- loadHierarchicalMemory workspace workspace
   rules <- loadRules workspace activeFiles
