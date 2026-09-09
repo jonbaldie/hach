@@ -657,19 +657,19 @@ handleTranscriptKey key state@TuiState{..} =
   let toolCards = [tc | TiToolCard tc <- tsTranscript]
       totalCards = length toolCards
   in case key of
-    KeyUp
-      | totalCards > 0 ->
-          let newIdx = max 0 (tsSelectedToolIndex - 1)
-          in (state { tsSelectedToolIndex = newIdx }, [])
-      | otherwise ->
-          (state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 1) }, [ActionScrollTranscript (-1)])
+    KeyUp ->
+      let scrolled = state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 1) }
+          selected
+            | totalCards > 0 = scrolled { tsSelectedToolIndex = max 0 (tsSelectedToolIndex - 1) }
+            | otherwise      = scrolled
+      in (selected, [ActionScrollTranscript (-1)])
 
-    KeyDown
-      | totalCards > 0 ->
-          let newIdx = min (totalCards - 1) (tsSelectedToolIndex + 1)
-          in (state { tsSelectedToolIndex = newIdx }, [])
-      | otherwise ->
-          (state { tsTranscriptScroll = tsTranscriptScroll + 1 }, [ActionScrollTranscript 1])
+    KeyDown ->
+      let scrolled = state { tsTranscriptScroll = tsTranscriptScroll + 1 }
+          selected
+            | totalCards > 0 = scrolled { tsSelectedToolIndex = min (totalCards - 1) (tsSelectedToolIndex + 1) }
+            | otherwise      = scrolled
+      in (selected, [ActionScrollTranscript 1])
 
     KeyPageUp ->
       (state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 5) }, [ActionScrollTranscript (-5)])

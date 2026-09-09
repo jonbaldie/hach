@@ -350,16 +350,16 @@ spec = do
             s0 = baseState { tsFocus = FocusTranscript, tsTranscript = [tool1, tool2, tool3], tsSelectedToolIndex = 1 }
             (sUp, aUp) = updateTui (EvUserKey KeyUp) s0
         tsSelectedToolIndex sUp `shouldBe` 0
-        aUp `shouldBe` []
+        aUp `shouldBe` [ActionScrollTranscript (-1)]
         let (sUp2, aUp2) = updateTui (EvUserKey KeyUp) sUp
         tsSelectedToolIndex sUp2 `shouldBe` 0
-        aUp2 `shouldBe` []
+        aUp2 `shouldBe` [ActionScrollTranscript (-1)]
         let (sDown, aDown) = updateTui (EvUserKey KeyDown) s0
         tsSelectedToolIndex sDown `shouldBe` 2
-        aDown `shouldBe` []
+        aDown `shouldBe` [ActionScrollTranscript 1]
         let (sDown2, aDown2) = updateTui (EvUserKey KeyDown) sDown
         tsSelectedToolIndex sDown2 `shouldBe` 2
-        aDown2 `shouldBe` []
+        aDown2 `shouldBe` [ActionScrollTranscript 1]
 
       it "scrolls transcript one line on Up and Down in FocusTranscript when no tool cards exist" $ do
         let s0 = baseState { tsFocus = FocusTranscript, tsTranscript = [TiUser "hi", TiAssistant "hello"] }
@@ -367,6 +367,20 @@ spec = do
         aDown `shouldBe` [ActionScrollTranscript 1]
         let (_sUp, aUp) = updateTui (EvUserKey KeyUp) sDown
         aUp `shouldBe` [ActionScrollTranscript (-1)]
+
+      it "scrolls transcript on Up and Down in FocusTranscript even when tool cards exist" $ do
+        let card = ToolCard "1" "bash" "ls" (Finished (ToolSuccess "ok")) False
+            st = baseState
+              { tsFocus = FocusTranscript
+              , tsTranscript = [TiUser "Prompt 1", TiToolCard card, TiAssistant "Response 1"]
+              , tsTranscriptScroll = 10
+              }
+            (stUp, actionsUp) = updateTui (EvUserKey KeyUp) st
+        actionsUp `shouldBe` [ActionScrollTranscript (-1)]
+        tsTranscriptScroll stUp `shouldBe` 9
+        let (stDown, actionsDown) = updateTui (EvUserKey KeyDown) st
+        actionsDown `shouldBe` [ActionScrollTranscript 1]
+        tsTranscriptScroll stDown `shouldBe` 11
 
       it "scrolls transcript 5 lines on PgUp and PgDn in FocusTranscript" $ do
         let s0 = baseState { tsFocus = FocusTranscript }
