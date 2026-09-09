@@ -6,6 +6,7 @@ module Hach.TUI.UI
   , tuiAttrMap
   , formatTokens
   , formatCompactLimit
+  , formatToolTarget
   , renderTokensDisplay
   , tokenWarnAttr
   , tokenCritAttr
@@ -393,25 +394,28 @@ formatToolTarget name rawArgs =
           case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
             Just (p :: Text) -> p
             Nothing          -> truncateText 30 rawArgs
-        "replace_file_content" ->
+        -- Alias sets mirror executeCodingTool's dispatch in Hach.Tools.
+        n | n `elem` ["replace_file_content", "Edit", "edit"] ->
           case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
             Just (p :: Text) -> p
             Nothing          -> truncateText 30 rawArgs
-        "find_files" ->
+        n | n `elem` ["find_files", "Glob", "glob"] ->
           case AesonTypes.parseMaybe (\obj -> obj .: "pattern") o of
             Just (p :: Text) -> p
             Nothing          -> truncateText 30 rawArgs
-        "grep_search" ->
+        n | n `elem` ["grep_search", "Grep", "grep"] ->
           case AesonTypes.parseMaybe (\obj -> obj .: "query") o of
             Just (q :: Text) -> q
-            Nothing          -> truncateText 30 rawArgs
-        "run_command" ->
+            Nothing          -> case AesonTypes.parseMaybe (\obj -> obj .: "pattern") o of
+              Just (q :: Text) -> q
+              Nothing          -> truncateText 30 rawArgs
+        n | n `elem` ["run_command", "Bash", "bash"] ->
           case AesonTypes.parseMaybe (\obj -> obj .: "command") o of
             Just (c :: Text) -> c
             Nothing          -> case AesonTypes.parseMaybe (\obj -> obj .: "cmd") o of
               Just (c :: Text) -> c
               Nothing          -> truncateText 30 rawArgs
-        "list_dir" ->
+        n | n `elem` ["list_dir", "ListDir"] ->
           case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
             Just (p :: Text) -> p
             Nothing          -> "."

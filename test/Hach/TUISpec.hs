@@ -20,7 +20,7 @@ import Hach.TUI.App
 import Test.QuickCheck
 import Hach.TUI.State
 import Hach.TUI.Types
-import Hach.TUI.UI (drawUI, formatCompactLimit, formatTokens, renderMaxTurns, tuiAttrMap)
+import Hach.TUI.UI (drawUI, formatCompactLimit, formatToolTarget, formatTokens, renderMaxTurns, tuiAttrMap)
 import Hach.Types
   ( AgentConfig(..)
   , AgentEvent(..)
@@ -723,6 +723,35 @@ spec = do
       it "formats small negative counts" $ do
         formatTokens (-5) `shouldBe` "-5"
         formatTokens (-1500) `shouldBe` "-1,500"
+
+    describe "formatToolTarget" $ do
+      it "extracts clean targets for canonical snake_case tool names" $ do
+        formatToolTarget "run_command" "{\"command\":\"npm test\"}" `shouldBe` "npm test"
+        formatToolTarget "replace_file_content" "{\"path\":\"src/Main.hs\"}" `shouldBe` "src/Main.hs"
+        formatToolTarget "find_files" "{\"pattern\":\"*.hs\"}" `shouldBe` "*.hs"
+        formatToolTarget "grep_search" "{\"query\":\"TODO\"}" `shouldBe` "TODO"
+        formatToolTarget "list_dir" "{\"path\":\"src\"}" `shouldBe` "src"
+        formatToolTarget "read_file" "{\"path\":\"README.md\"}" `shouldBe` "README.md"
+        formatToolTarget "write_file" "{\"path\":\"TODO.md\"}" `shouldBe` "TODO.md"
+
+      it "extracts clean targets for alias tool names (Issue #71)" $ do
+        formatToolTarget "Bash" "{\"command\":\"npm test\"}" `shouldBe` "npm test"
+        formatToolTarget "bash" "{\"command\":\"make check\"}" `shouldBe` "make check"
+        formatToolTarget "Edit" "{\"path\":\"src/Main.hs\"}" `shouldBe` "src/Main.hs"
+        formatToolTarget "edit" "{\"path\":\"app/Main.hs\"}" `shouldBe` "app/Main.hs"
+        formatToolTarget "Glob" "{\"pattern\":\"*.hs\"}" `shouldBe` "*.hs"
+        formatToolTarget "glob" "{\"pattern\":\"**/*.json\"}" `shouldBe` "**/*.json"
+        formatToolTarget "Grep" "{\"query\":\"TODO\"}" `shouldBe` "TODO"
+        formatToolTarget "grep" "{\"pattern\":\"TODO\"}" `shouldBe` "TODO"
+        formatToolTarget "ListDir" "{\"path\":\"src\"}" `shouldBe` "src"
+
+      it "still truncates raw args for unknown tool names" $ do
+        formatToolTarget "browser" "{\"url\":\"https://example.com/page\"}"
+          `shouldBe` "{\"url\":\"https://example.com/pa..."
+
+      it "handles non-object or malformed args by returning raw text" $ do
+        formatToolTarget "Bash" "not json" `shouldBe` "not json"
+        formatToolTarget "bash" "[1,2,3]" `shouldBe` "[1,2,3]"
 
     describe "renderMaxTurns" $ do
       it "shows the infinity sign when turns are unlimited (Nothing)" $ do
