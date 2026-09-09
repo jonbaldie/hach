@@ -293,7 +293,10 @@ renderTranscriptItems TuiState{..} =
         TiNotice n ->
           (toolIdx, renderNotice n : acc)
         TiToolCard tc ->
-          (toolIdx + 1, renderToolCard tsSelectedToolIndex isFocused toolIdx tc : acc)
+          let selected = isFocused && tsSelectedToolIndex == toolIdx
+              card = renderToolCard selected tc
+              reveal = selected && not tsTranscriptManualScroll
+          in (toolIdx + 1, (if reveal then visible card else card) : acc)
       (_, revWidgets) = foldl' step (0, []) tsTranscript
       thinkingWidget = [renderThinkingLine | tsStatus == StatusThinking]
   in reverse revWidgets ++ thinkingWidget
@@ -447,10 +450,9 @@ formatLifecycleSummary = \case
   Cancelled ->
     ("✖ cancelled", toolErrorAttr, toolErrorAttr)
 
-renderToolCard :: Int -> Bool -> Int -> ToolCard -> Widget Name
-renderToolCard selectedIdx isTranscriptFocused idx ToolCard{..} =
-  let isSelected = isTranscriptFocused && selectedIdx == idx
-      cursorMark = if isSelected then withAttr userPromptAttr (txt "▸ ") else txt "  "
+renderToolCard :: Bool -> ToolCard -> Widget Name
+renderToolCard isSelected ToolCard{..} =
+  let cursorMark = if isSelected then withAttr userPromptAttr (txt "▸ ") else txt "  "
       (statusTxt, statusAttr, iconAttr) = formatLifecycleSummary tcLifecycle
       icon = withAttr iconAttr (txt "⏺ ")
       nameWidget = withAttr toolNameAttr (txt tcName)
@@ -506,7 +508,7 @@ renderToolCard selectedIdx isTranscriptFocused idx ToolCard{..} =
         padBottom (Pad 1) $
         vBox [headerLine, subLine, expandedBody]
 
-  in if isSelected then visible cardWidget else cardWidget
+  in cardWidget
 
 --------------------------------------------------------------------------------
 -- Task Input Panel
@@ -578,6 +580,7 @@ helpOverlay =
     [ withAttr brandAttr (txt "Navigation & Global:")
     , padLeft (Pad 2) $ vBox
         [ hBox [withAttr shortcutKeyAttr (txt "Tab / Shift+Tab   "), withAttr dimAttr (txt "Switch focus (Input ⇄ Transcript)")]
+        , hBox [withAttr shortcutKeyAttr (txt "Mouse wheel       "), withAttr dimAttr (txt "Scroll transcript without changing focus")]
         , hBox [withAttr shortcutKeyAttr (txt "Tab (in input)    "), withAttr dimAttr (txt "Accept a /skill autocomplete suggestion, else switch focus")]
         , hBox [withAttr shortcutKeyAttr (txt "Ctrl+Q            "), withAttr dimAttr (txt "Quit the application immediately")]
         , hBox [withAttr shortcutKeyAttr (txt "Esc / Ctrl+C      "), withAttr dimAttr (txt "Cancel running agent turn or dismiss help")]
