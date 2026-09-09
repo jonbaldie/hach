@@ -4,9 +4,13 @@ module Hach.EnvSpec (spec) where
 
 import Hach.Env
 import Hach.Settings (defaultSettings)
-import Hach.Types (PermissionMode(..))
+import Hach.Types (AgentResult(..), PermissionMode(..))
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy as LBS
+import Data.Aeson ((.=))
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 import System.FilePath ((</>))
@@ -265,6 +269,45 @@ spec = do
 
     it "starts the TUI by default" $ do
       startupIntent defaultCliOptions `shouldBe` IntentTui
+
+  describe "print mode (--print / -p)" $ do
+    it "suppresses banners and verbose events when --print is set" $ do
+      case parseCliArgs ["-p", "What is 2 + 2?"] of
+        Left err -> expectationFailure err
+        Right opts -> do
+          optPrint opts `shouldBe` True
+          headlessEmitsBanners opts `shouldBe` False
+          headlessVerbose opts `shouldBe` False
+
+    it "keeps banners and verbose events for --no-tui without --print" $ do
+      case parseCliArgs ["--no-tui", "What is 2 + 2?"] of
+        Left err -> expectationFailure err
+        Right opts -> do
+          optPrint opts `shouldBe` False
+          headlessEmitsBanners opts `shouldBe` True
+          headlessVerbose opts `shouldBe` True
+
+    it "prints the agent answer instead of the completion banner" $ do
+      let out = formatPrintResult OutputText (AgentCompleted "4")
+      out `shouldBe` "4"
+      out `shouldNotSatisfy` T.isInfixOf "Task successfully completed"
+      out `shouldNotSatisfy` T.isInfixOf "Haskell Agentic"
+
+    it "emits JSON containing the answer when --output-format json" $ do
+      let out = formatPrintResult OutputJson (AgentCompleted "4")
+          decoded = Aeson.decode (LBS.fromStrict (TE.encodeUtf8 out))
+      decoded `shouldBe` Just (Aeson.object ["answer" .= ("4" :: T.Text)])
+
+    it "escapes quotes in JSON print output" $ do
+      let ans = "say \"hi\""
+          out = formatPrintResult OutputJson (AgentCompleted ans)
+          decoded = Aeson.decode (LBS.fromStrict (TE.encodeUtf8 out))
+      decoded `shouldBe` Just (Aeson.object ["answer" .= ans])
+
+    it "prints failure text without interactive banners" $ do
+      let out = formatPrintResult OutputText (AgentFailed "boom")
+      out `shouldBe` "boom"
+      out `shouldNotSatisfy` T.isInfixOf "Agent failed with error"
 
   describe "resolveConfigWith" $ do
     let dotEnvSample = "OPENROUTER_API_KEY=sk-dotenv\nOPENROUTER_MODEL=meta/muse-glimmer-30b\n"
