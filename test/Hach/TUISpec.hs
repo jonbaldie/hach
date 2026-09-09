@@ -8,6 +8,7 @@ import Hach.Interpreter.IO (ioAlgebra, ioModel, newIOEnv)
 import Hach.Skills (SkillSource(..), mkSkill)
 import Hach.TUI.App
   ( buildTuiSystemPrompt
+  , brickToUserKey
   , cancelledToolCallPlaceholder
   , dialogueToMessages
   , goalAgentConfig
@@ -41,6 +42,7 @@ import Hach.Types
   , modelContextLimit
   )
 import qualified Brick.Main as M
+import Brick.Types (BrickEvent(..), Location(..))
 import Control.Monad (forM_)
 import Data.IORef
 import qualified Data.Map.Strict as Map
@@ -469,6 +471,51 @@ spec = do
         actionsUp `shouldBe` [ActionScrollTranscript (-2)]
         actionsDown `shouldBe` [ActionScrollTranscript 2]
 
+      it "keeps incoming output from undoing a wheel scroll while editing a prompt" $ do
+        let initial = baseState { tsInputBuffer = "my draft", tsStatus = StatusThinking }
+            (scrolled, actions) = updateTui (EvUserKey KeyScrollUp) initial
+            response = EvDone "New output"
+            updated = handleAgentEvent response scrolled
+        actions `shouldBe` [ActionScrollTranscript (-2)]
+        tsFocus scrolled `shouldBe` FocusInput
+        tsInputBuffer scrolled `shouldBe` "my draft"
+        shouldAutoScroll scrolled response `shouldBe` False
+        shouldAutoScroll updated response `shouldBe` False
+
+      it "does not force the selected tool card into view after wheel scrolling" $ do
+        let card = ToolCard "c1" "read_file" "{}" Pending False
+            initial = baseState
+              { tsFocus = FocusTranscript
+              , tsTranscript =
+                  [ TiAssistant (T.unlines ("START_OF_TRANSCRIPT" : replicate 80 "older output"))
+                  , TiToolCard card
+                  ]
+              }
+            atBeginning st = any ("START_OF_TRANSCRIPT" `T.isInfixOf`) (renderTestRows st (100, 30))
+        atBeginning initial `shouldBe` False
+        forM_ [KeyScrollUp, KeyScrollDown] $ \key -> do
+          let (scrolled, _) = updateTui (EvUserKey key) initial
+          atBeginning scrolled `shouldBe` True
+          tsFocus scrolled `shouldBe` FocusTranscript
+          tsSelectedToolIndex scrolled `shouldBe` 0
+
+      it "resumes normal following after submitting a new prompt or clearing the transcript" $ do
+        let (scrolled, _) = updateTui (EvUserKey KeyScrollUp) baseState
+        forM_ ["next task", "/goal finish the task", "/clear"] $ \prompt -> do
+          let (submitted, _) = updateTui (EvSubmit prompt) scrolled
+          shouldAutoScroll (submitted { tsFocus = FocusInput }) (EvDone "answer") `shouldBe` True
+
+      it "reveals the selected tool again when keyboard navigation resumes" $ do
+        let card = ToolCard "c1" "read_file" "{}" Pending False
+            initial = baseState
+              { tsFocus = FocusTranscript
+              , tsTranscript = [TiAssistant (T.unlines (replicate 80 "older output")), TiToolCard card]
+              }
+            (scrolled, _) = updateTui (EvUserKey KeyScrollUp) initial
+        forM_ [KeyUp, KeyDown, KeyEnter, KeyChar ' '] $ \key -> do
+          let (selected, _) = updateTui (EvUserKey key) scrolled
+          any ("read_file" `T.isInfixOf`) (renderTestRows selected (100, 30)) `shouldBe` True
+
     describe "Headless Render Tests" $ do
       it "renders user text, assistant text and tool cards with strictly increasing row indices in transcript order" $ do
         let card = ToolCard "call-1" "read_file" "{\"path\":\"foo.txt\"}" (Finished (ToolSuccess "file contents")) False
@@ -504,6 +551,19 @@ spec = do
         any ("SECRET_PAYLOAD_12345" `T.isInfixOf`) rowsExpanded `shouldBe` True
 
     describe "Vty to UserKey Event Conversion" $ do
+      it "scrolls on Brick mouse events over a viewport in either focus mode" $ do
+        forM_ [FocusInput, FocusTranscript] $ \focusArea ->
+          forM_ [(Vty.BScrollUp, -2), (Vty.BScrollDown, 2)] $ \(button, delta) -> do
+            let event = MouseDown () button [] (Location (8, 67)) :: BrickEvent () ()
+                initial = baseState { tsFocus = focusArea, tsInputBuffer = "my draft" }
+            case brickToUserKey event of
+              Nothing -> expectationFailure "Brick wheel event was dropped"
+              Just key -> do
+                let (scrolled, actions) = updateTui (EvUserKey key) initial
+                actions `shouldBe` [ActionScrollTranscript delta]
+                tsFocus scrolled `shouldBe` focusArea
+                tsInputBuffer scrolled `shouldBe` "my draft"
+
       it "converts mouse scroll wheel up to KeyScrollUp" $ do
         vtyToUserKey (Vty.EvMouseDown 10 10 Vty.BScrollUp []) `shouldBe` Just KeyScrollUp
 
@@ -1551,4 +1611,3 @@ spec = do
           prompt <- buildTuiSystemPrompt tuiSandbox (Just "Reply in JSON only")
           prompt `shouldSatisfy` ("Follow strict types." `T.isInfixOf`)
           prompt `shouldSatisfy` ("Reply in JSON only" `T.isInfixOf`)
-

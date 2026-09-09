@@ -5,6 +5,7 @@ module Hach.TUI.App
   ( runTui
   , buildTuiSystemPrompt
   , vtyToUserKey
+  , brickToUserKey
   , dialogueToMessages
   , transcriptToMessages
   , transcriptItemsToMessages
@@ -61,6 +62,15 @@ vtyToUserKey = \case
   Vty.EvKey (Vty.KFun 1) []            -> Just KeyF1
   Vty.EvKey (Vty.KChar c) []           -> Just (KeyChar c)
   _                                    -> Nothing
+
+-- | Brick wraps wheel input over viewports in 'MouseDown', while input
+-- outside those regions remains a raw 'VtyEvent'. Handle both forms.
+brickToUserKey :: BrickEvent n e -> Maybe UserKey
+brickToUserKey = \case
+  VtyEvent event -> vtyToUserKey event
+  MouseDown _ Vty.BScrollUp _ _ -> Just KeyScrollUp
+  MouseDown _ Vty.BScrollDown _ _ -> Just KeyScrollDown
+  _ -> Nothing
 
 -- | Algebra that pipes every agent execution event into the Brick BChan.
 tuiAlgebra :: BChan AgentEvent -> IOEnv -> AgentAlgebra IO
@@ -371,8 +381,8 @@ handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
     when (shouldAutoScroll currentState agentEv) $
       vScrollToEnd (viewportScroll VpTranscript)
 
-  VtyEvent vtyEv -> do
-    case vtyToUserKey vtyEv of
+  event -> do
+    case brickToUserKey event of
       Just key -> do
         currentState <- get
         let (nextState, actions) = updateTui (EvUserKey key) currentState
@@ -398,6 +408,3 @@ handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
             vScrollBy (viewportScroll VpTranscript) delta
       Nothing ->
         pure ()
-
-  _ ->
-    pure ()

@@ -138,6 +138,7 @@ data TuiState = TuiState
   , tsInputBuffer        :: !Text
   , tsTranscript         :: ![TranscriptItem]
   , tsTranscriptScroll   :: !Int
+  , tsTranscriptManualScroll :: !Bool
   , tsSelectedToolIndex  :: !Int
   , tsShowHelp           :: !Bool
   , tsShouldQuit         :: !Bool
@@ -177,6 +178,7 @@ initialTuiState model maxTurns = TuiState
   , tsInputBuffer        = ""
   , tsTranscript         = []
   , tsTranscriptScroll   = 0
+  , tsTranscriptManualScroll = False
   , tsSelectedToolIndex  = 0
   , tsShowHelp           = False
   , tsShouldQuit         = False

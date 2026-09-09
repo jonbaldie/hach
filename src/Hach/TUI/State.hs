@@ -105,6 +105,7 @@ handleSubmitPrompt rawPrompt state
           newStatus = if busy then StatusIdle else tsStatus state
       in ( state { tsTranscript         = []
                  , tsTranscriptScroll   = 0
+                 , tsTranscriptManualScroll = False
                  , tsSelectedToolIndex  = 0
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
@@ -466,6 +467,7 @@ handleSubmitPrompt rawPrompt state
                         , tsPromptHistoryIndex = Nothing
                         , tsPromptDraft        = ""
                         , tsGoalState          = Just gs
+                        , tsTranscriptManualScroll = False
                         , tsCancelRequested    = False
                         }
                 , [ActionRunGoal condition] )
@@ -483,6 +485,7 @@ handleSubmitPrompt rawPrompt state
             , tsPromptHistoryIndex = Nothing
             , tsPromptDraft        = ""
             , tsCancelRequested    = False
+            , tsTranscriptManualScroll = False
             }
       in (newState, [ActionRunAgent trimmed])
   where
@@ -547,10 +550,10 @@ handleUserKey key state@TuiState{..} =
       (state { tsFocus = prevFocus tsFocus }, [])
 
     KeyScrollUp ->
-      (state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 2) }, [ActionScrollTranscript (-2)])
+      (state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 2), tsTranscriptManualScroll = True }, [ActionScrollTranscript (-2)])
 
     KeyScrollDown ->
-      (state { tsTranscriptScroll = tsTranscriptScroll + 2 }, [ActionScrollTranscript 2])
+      (state { tsTranscriptScroll = tsTranscriptScroll + 2, tsTranscriptManualScroll = True }, [ActionScrollTranscript 2])
 
     -- 2. Focus-specific actions
     _ -> case tsFocus of
@@ -658,14 +661,14 @@ handleTranscriptKey key state@TuiState{..} =
       totalCards = length toolCards
   in case key of
     KeyUp ->
-      let scrolled = state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 1) }
+      let scrolled = state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 1), tsTranscriptManualScroll = False }
           selected
             | totalCards > 0 = scrolled { tsSelectedToolIndex = max 0 (tsSelectedToolIndex - 1) }
             | otherwise      = scrolled
       in (selected, [ActionScrollTranscript (-1)])
 
     KeyDown ->
-      let scrolled = state { tsTranscriptScroll = tsTranscriptScroll + 1 }
+      let scrolled = state { tsTranscriptScroll = tsTranscriptScroll + 1, tsTranscriptManualScroll = False }
           selected
             | totalCards > 0 = scrolled { tsSelectedToolIndex = min (totalCards - 1) (tsSelectedToolIndex + 1) }
             | otherwise      = scrolled
@@ -678,14 +681,14 @@ handleTranscriptKey key state@TuiState{..} =
       (state { tsTranscriptScroll = tsTranscriptScroll + 5 }, [ActionScrollTranscript 5])
 
     KeyEnter ->
-      (toggleToolExpanded tsSelectedToolIndex state, [])
+      (toggleToolExpanded tsSelectedToolIndex (state { tsTranscriptManualScroll = False }), [])
 
     KeyChar ' ' ->
-      (toggleToolExpanded tsSelectedToolIndex state, [])
+      (toggleToolExpanded tsSelectedToolIndex (state { tsTranscriptManualScroll = False }), [])
 
     KeyChar 'c' ->
       -- Clear transcript and reset context window tokens
-      (state { tsTranscript = [], tsTranscriptScroll = 0, tsSelectedToolIndex = 0, tsContextTokens = 0, tsTokenUsage = Nothing, tsUsageStatus = UsageVerified }, [])
+      (state { tsTranscript = [], tsTranscriptScroll = 0, tsTranscriptManualScroll = False, tsSelectedToolIndex = 0, tsContextTokens = 0, tsTokenUsage = Nothing, tsUsageStatus = UsageVerified }, [])
 
     _ ->
       (state, [])
@@ -917,9 +920,9 @@ goalStatusText (Just gs) =
       , Just gs )
 
 -- | Determine whether the transcript viewport should automatically scroll to the bottom.
--- Auto-scroll policy: when focus is on the prompt input, every transcript-appending
--- Harness event scrolls the transcript viewport to the end.
--- When focus is on the transcript, incoming events leave the viewport alone.
+-- Manual scrolling takes precedence over following incoming output.
+-- Otherwise, follow appending events when focus is on the prompt input.
 shouldAutoScroll :: TuiState -> AgentEvent -> Bool
 shouldAutoScroll state ev =
-  tsFocus state == FocusInput && isTranscriptAppendingEvent ev
+  not (tsTranscriptManualScroll state)
+    && tsFocus state == FocusInput && isTranscriptAppendingEvent ev
