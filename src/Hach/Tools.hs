@@ -166,6 +166,7 @@ import System.Directory
   , doesDirectoryExist
   , doesFileExist
   , listDirectory
+  , pathIsSymbolicLink
   )
 import System.Exit (ExitCode(..))
 import System.FilePath
@@ -1268,12 +1269,16 @@ executeFindFiles root (FindFilesArgs pat searchPath) = do
           let validEntries = filter (`notElem` ignoredDirs) entries
           subResults <- forM validEntries $ \entry -> do
             let full = current </> entry
-            isDir <- doesDirectoryExist full
-            if isDir
-              then traverseDir canonRoot full
+            isSymlink <- pathIsSymbolicLink full
+            if isSymlink
+              then pure []
               else do
-                let rel = makeRelative canonRoot full
-                pure [rel]
+                isDir <- doesDirectoryExist full
+                if isDir
+                  then traverseDir canonRoot full
+                  else do
+                    let rel = makeRelative canonRoot full
+                    pure [rel]
           pure (concat subResults)
 
 -- | Pattern matcher for find_files: '*' wildcards match across path separators
@@ -1321,12 +1326,16 @@ executeGrepSearch root (GrepSearchArgs query searchPath caseSensitive) = do
           let valid = filter (`notElem` ignoredDirs) entries
           subResults <- forM valid $ \entry -> do
             let full = current </> entry
-            isDir <- doesDirectoryExist full
-            if isDir
-              then collectFiles canonRoot full
+            isSymlink <- pathIsSymbolicLink full
+            if isSymlink
+              then pure []
               else do
-                let rel = makeRelative canonRoot full
-                pure [(rel, full)]
+                isDir <- doesDirectoryExist full
+                if isDir
+                  then collectFiles canonRoot full
+                  else do
+                    let rel = makeRelative canonRoot full
+                    pure [(rel, full)]
           pure (concat subResults)
 
     grepInFile rel full = do
@@ -1480,5 +1489,4 @@ executeAskUserQuestion :: AskUserQuestionArgs -> IO ToolResult
 executeAskUserQuestion (AskUserQuestionArgs q opts) = do
   let optsTxt = if null opts then "" else "\nOptions:\n" <> T.unlines (map (\o -> "- " <> o) opts)
   pure $ ToolSuccess ("Prompted user: " <> q <> optsTxt)
-
 

@@ -5,7 +5,7 @@ module Hach.ToolsSpec (spec) where
 import Hach.Tools
 import Hach.Types
 import qualified Data.Text as T
-import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
+import System.Directory (canonicalizePath, createDirectoryIfMissing, createDirectoryLink, removeDirectoryRecursive, removePathForcibly)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.Timeout (timeout)
@@ -257,6 +257,49 @@ spec = do
           ToolSuccess out -> out `shouldSatisfy` ("searchme.txt" `T.isInfixOf`)
           ToolError err   -> expectationFailure (T.unpack err)
 
+      it "does not follow directory symlinks in find_files or grep_search" $ do
+        sandboxRoot <- canonicalizePath testSandbox
+        let workspace = sandboxRoot </> "issue-67-external-workspace"
+            outside = sandboxRoot </> "issue-67-external-target"
+            secretFile = outside </> "secret.txt"
+            externalLink = workspace </> "external"
+        removePathForcibly workspace
+        removePathForcibly outside
+        createDirectoryIfMissing True workspace
+        createDirectoryIfMissing True outside
+        writeFile secretFile "TOP SECRET CONTENT\n"
+        createDirectoryLink outside externalLink
+
+        findRes <- timeout 2000000 (executeFindFiles workspace (FindFilesArgs "*.txt" "."))
+        grepRes <- timeout 2000000 (executeGrepSearch workspace (GrepSearchArgs "TOP SECRET" "." True))
+        case (findRes, grepRes) of
+          (Just (ToolSuccess findOut), Just (ToolSuccess grepOut)) ->
+            [ "secret.txt" `T.isInfixOf` findOut
+            , "TOP SECRET" `T.isInfixOf` grepOut
+            ] `shouldBe` [False, False]
+          (Nothing, _) -> expectationFailure "find_files timed out while traversing a directory symlink"
+          (_, Nothing) -> expectationFailure "grep_search timed out while traversing a directory symlink"
+          (Just (ToolError err), _) -> expectationFailure (T.unpack err)
+          (_, Just (ToolError err)) -> expectationFailure (T.unpack err)
+
+      it "terminates when a directory symlink points back to the workspace" $ do
+        sandboxRoot <- canonicalizePath testSandbox
+        let workspace = sandboxRoot </> "issue-67-cycle-workspace"
+            cycleLink = workspace </> "loop"
+        removePathForcibly workspace
+        createDirectoryIfMissing True workspace
+        createDirectoryLink workspace cycleLink
+
+        findRes <- timeout 2000000 (executeFindFiles workspace (FindFilesArgs "*" "."))
+        grepRes <- timeout 2000000 (executeGrepSearch workspace (GrepSearchArgs "anything" "." True))
+        case (findRes, grepRes) of
+          (Just (ToolSuccess findOut), Just (ToolSuccess grepOut)) ->
+            [findOut, grepOut] `shouldBe` ["No matching files found.", "No matches found."]
+          (Nothing, _) -> expectationFailure "find_files did not terminate on a cyclic directory symlink"
+          (_, Nothing) -> expectationFailure "grep_search did not terminate on a cyclic directory symlink"
+          (Just (ToolError err), _) -> expectationFailure (T.unpack err)
+          (_, Just (ToolError err)) -> expectationFailure (T.unpack err)
+
       it "executes find_files via executeCodingTool and reports accurate error on parse failure" $ do
         let nestedFile = testSandbox </> "sub" </> "alpha.txt"
         _ <- executeWriteFile "." (WriteFileArgs nestedFile "alpha")
@@ -400,5 +443,3 @@ spec = do
         case rStop of
           ToolSuccess out -> out `shouldSatisfy` ("Stopped task bg-1" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("TaskStop failed: " ++ T.unpack err)
-
-
