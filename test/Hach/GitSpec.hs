@@ -38,6 +38,36 @@ spec = describe "Hach.Git" $ do
       gsiModified status `shouldBe` ["src/Hach/Core.hs"]
       gsiUntracked status `shouldBe` ["new-file.txt"]
 
+    it "correctly parses renamed and quoted paths (issue #68)" $ do
+      let raw = "## main\nR  old.txt -> new.txt\n M \"file with spaces.txt\"\n"
+          status = parsePorcelainStatus "main" raw
+      gsiModified status `shouldBe` ["new.txt", "file with spaces.txt"]
+
+    it "handles quoted renames, copies, and escape sequences" $ do
+      let raw = T.unlines
+            [ "## main"
+            , "R  \"old with spaces.txt\" -> \"new with spaces.txt\""
+            , "RM \"old -> arrow.txt\" -> \"new -> arrow.txt\""
+            , "C  source.txt -> copy.txt"
+            , "?? \"file\\\"quotes.txt\""
+            , "?? \"file\\\\backslash.txt\""
+            , "?? \"caf\\303\\251.txt\""
+            , "?? \"literal -> arrow.txt\""
+            ]
+          status = parsePorcelainStatus "main" raw
+      gsiModified status `shouldBe`
+        [ "new with spaces.txt"
+        , "new -> arrow.txt"
+        , "copy.txt"
+        ]
+      gsiUntracked status `shouldBe`
+        [ "file\"quotes.txt"
+        , "file\\backslash.txt"
+        , "café.txt"
+        , "literal -> arrow.txt"
+        ]
+
+
     it "identifies clean working tree" $ do
       let raw = "## main\n"
           status = parsePorcelainStatus "main" raw
