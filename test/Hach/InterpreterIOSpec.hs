@@ -3,15 +3,19 @@
 module Hach.InterpreterIOSpec (spec) where
 
 import Hach.Core (AgentAlgebra (..), agentLoop, foldAgentProgram)
-import Hach.Env (resolvePermissionMode)
+import Hach.Env (resolveEffortLevel, resolvePermissionMode)
 import Hach.Interpreter.IO
 import Hach.Permissions (isProtectedPath)
-import Hach.Settings (Settings (..), defaultSettings)
+import Hach.Settings (Settings (..), defaultSettings, loadLayeredSettings)
 import Hach.Tools (ReplaceFileContentArgs (..), WriteFileArgs (..), executeCodingTool, executeReplaceFileContent, executeWriteFile)
 import Hach.Types
+import Hach.TUI.App (runEnvForModel)
 import Hach.TUI.State (updateTui)
 import Hach.TUI.Types
+import Control.Exception (finally)
 import Control.Monad (when)
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -22,7 +26,8 @@ import System.Directory
   , doesFileExist
   , removeDirectoryRecursive
   )
-import System.FilePath ((</>))
+import System.Environment (lookupEnv, setEnv, unsetEnv)
+import System.FilePath (takeDirectory, (</>))
 import System.Process (callProcess)
 import Test.Hspec
 
@@ -238,3 +243,74 @@ spec = describe "Hach.Interpreter.IO (permission + hook enforcement)" $ do
         interpExitWorktree alg
         _ <- interpTool alg (ToolCall "c2" "write_file" "{\"path\":\"root.txt\",\"content\":\"hi\"}")
         doesFileExist (testDir </> "root.txt") `shouldReturn` True
+
+    describe "effort_level propagation to OpenRouter requests" $ do
+      let userDir = testDir </> "user-config"
+          writeSettings rel json = do
+            let path = testDir </> rel
+            createDirectoryIfMissing True (takeDirectory path)
+            writeFile path json
+          withUserConfig action = do
+            orig <- lookupEnv "CLAUDE_CONFIG_DIR"
+            createDirectoryIfMissing True userDir
+            setEnv "CLAUDE_CONFIG_DIR" userDir
+            action `finally` case orig of
+              Just v  -> setEnv "CLAUDE_CONFIG_DIR" v
+              Nothing -> unsetEnv "CLAUDE_CONFIG_DIR"
+          envFromLoadedSettings = do
+            settings <- loadLayeredSettings testDir
+            effort <- case resolveEffortLevel settings of
+              Left err -> fail err
+              Right e  -> pure e
+            env0 <- newIOEnv "k" "openai/gpt-5.6-luna" testDir False
+            pure env0 { ioEffortLevel = effort }
+          productionJson env =
+            Aeson.toJSON (chatRequestFor env [UserMsg "hello"] [] (Just "auto"))
+          evaluatorJson env =
+            Aeson.toJSON (chatRequestFor env [UserMsg "eval"] [] Nothing)
+
+      it "emits reasoning.effort from loaded project settings" $ withUserConfig $ do
+        writeSettings (".agents" </> "settings.json")
+          "{\"effort_level\":\"high\",\"permission_mode\":\"default\"}"
+        env <- envFromLoadedSettings
+        reasoningEffort (productionJson env) `shouldBe` Just "high"
+
+      it "lets local settings override project effort" $ withUserConfig $ do
+        writeSettings (".agents" </> "settings.json") "{\"effort_level\":\"high\"}"
+        writeSettings (".agents" </> "settings.local.json") "{\"effort_level\":\"low\"}"
+        env <- envFromLoadedSettings
+        reasoningEffort (productionJson env) `shouldBe` Just "low"
+
+      it "omits reasoning when effort is unset" $ withUserConfig $ do
+        writeSettings (".agents" </> "settings.json") "{\"permission_mode\":\"default\"}"
+        env <- envFromLoadedSettings
+        reasoningEffort (productionJson env) `shouldBe` Nothing
+
+      it "includes effort on goal-evaluator requests" $ withUserConfig $ do
+        writeSettings (".agents" </> "settings.json") "{\"effort_level\":\"high\"}"
+        env <- envFromLoadedSettings
+        reasoningEffort (evaluatorJson env) `shouldBe` Just "high"
+
+      it "preserves effort when the active model changes" $ withUserConfig $ do
+        writeSettings (".agents" </> "settings.json") "{\"effort_level\":\"high\"}"
+        env <- envFromLoadedSettings
+        let runEnv = runEnvForModel "openai/gpt-4o" env
+        ioModel runEnv `shouldBe` "openai/gpt-4o"
+        reasoningEffort (productionJson runEnv) `shouldBe` Just "high"
+
+      it "rejects unsupported effort from loaded settings" $ withUserConfig $ do
+        writeSettings (".agents" </> "settings.json") "{\"effort_level\":\"turbo\"}"
+        settings <- loadLayeredSettings testDir
+        case resolveEffortLevel settings of
+          Left err -> err `shouldContain` "Unsupported effort_level: turbo"
+          Right v  -> expectationFailure ("expected Left, got " <> show v)
+
+reasoningEffort :: Aeson.Value -> Maybe Text
+reasoningEffort (Aeson.Object o) =
+  case KeyMap.lookup "reasoning" o of
+    Just (Aeson.Object r) ->
+      case KeyMap.lookup "effort" r of
+        Just (Aeson.String e) -> Just e
+        _ -> Nothing
+    _ -> Nothing
+reasoningEffort _ = Nothing

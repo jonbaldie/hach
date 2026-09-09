@@ -15,6 +15,7 @@ module Hach.Env
   , headlessVerbose
   , formatPrintResult
   , resolvePermissionMode
+  , resolveEffortLevel
   , resolveConfigWith
   , resolveConfigWithSettings
   , resolveEnvConfig
@@ -25,7 +26,7 @@ module Hach.Env
   ) where
 
 import Hach.Settings (Settings(..), defaultSettings, loadLayeredSettings)
-import Hach.Types (AgentResult(..), PermissionMode(..))
+import Hach.Types (AgentResult(..), EffortLevel, PermissionMode(..), parseEffortLevel)
 import Control.Applicative ((<|>))
 import Control.Exception (try, SomeException)
 import Data.Aeson ((.=))
@@ -137,6 +138,14 @@ resolvePermissionMode
 resolvePermissionMode mFlag skipPerms settings
   | skipPerms = ModeBypassPermissions
   | otherwise = fromMaybe ModeDefault (mFlag <|> setPermissionMode settings)
+
+-- | Resolve `effort_level` from layered settings. Unset stays unset so the
+-- OpenRouter request omits `reasoning`. Unsupported values are an error.
+resolveEffortLevel :: Settings -> Either String (Maybe EffortLevel)
+resolveEffortLevel settings =
+  case setEffortLevel settings of
+    Nothing -> Right Nothing
+    Just raw -> Just <$> parseEffortLevel raw
 
 -- | What the CLI should do after parsing. '--exec' is a real command to run,
 -- not a prompt for the headless agent; '--version' outranks it.

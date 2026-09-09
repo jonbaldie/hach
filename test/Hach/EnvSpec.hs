@@ -3,8 +3,8 @@
 module Hach.EnvSpec (spec) where
 
 import Hach.Env
-import Hach.Settings (defaultSettings)
-import Hach.Types (AgentResult(..), PermissionMode(..))
+import Hach.Settings (Settings(..), defaultSettings)
+import Hach.Types (AgentResult(..), EffortLevel(..), PermissionMode(..), parseEffortLevel)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Aeson ((.=))
@@ -18,6 +18,30 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "resolveEffortLevel" $ do
+    it "leaves unset effort as Nothing" $ do
+      resolveEffortLevel defaultSettings `shouldBe` Right Nothing
+
+    it "accepts a supported configured effort" $ do
+      resolveEffortLevel defaultSettings { setEffortLevel = Just "high" }
+        `shouldBe` Right (Just EffortHigh)
+
+    it "normalizes case and surrounding whitespace" $ do
+      resolveEffortLevel defaultSettings { setEffortLevel = Just "  HIGH  " }
+        `shouldBe` Right (Just EffortHigh)
+
+    it "rejects unsupported values with a clear error" $ do
+      case resolveEffortLevel defaultSettings { setEffortLevel = Just "turbo" } of
+        Left err -> do
+          err `shouldContain` "Unsupported effort_level: turbo"
+          err `shouldContain` "high"
+        Right v -> expectationFailure ("expected Left, got " <> show v)
+
+    it "rejects empty effort_level" $ do
+      case parseEffortLevel "   " of
+        Left err -> err `shouldContain` "Unsupported effort_level"
+        Right v  -> expectationFailure ("expected Left, got " <> show v)
+
   describe "parseEnvContent" $ do
     it "parses standard key-value pairs" $ do
       let content = "KEY1=value1\nKEY2=value2\n"

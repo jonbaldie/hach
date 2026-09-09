@@ -53,12 +53,19 @@ main = do
       exitFailure
     Right cfg -> pure cfg
 
+  effort <- case resolveEffortLevel envSettings of
+    Left err -> do
+      putStrLn ("Configuration error: " <> err)
+      exitFailure
+    Right e -> pure e
+
   let perms = defaultIOEnvPermissions
         { iopInitialMode = resolvePermissionMode optPermissionMode optDangerouslySkipPerms envSettings
         , iopRules       = setPermissionRules envSettings
         , iopHooks       = setHooks envSettings
         }
-  ioEnv <- newIOEnvWithPermissions perms envApiKey envModel cwd (headlessVerbose opts)
+  ioEnv0 <- newIOEnvWithPermissions perms envApiKey envModel cwd (headlessVerbose opts)
+  let ioEnv = ioEnv0 { ioEffortLevel = effort }
 
   case startupIntent opts of
     IntentTui -> runTui ioEnv optPrompt optMaxTurns optAppendSystemPrompt

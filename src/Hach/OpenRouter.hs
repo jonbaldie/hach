@@ -35,6 +35,7 @@ data ChatRequest = ChatRequest
   , reqMessages   :: ![Message]
   , reqTools      :: ![ToolDef]
   , reqToolChoice :: !(Maybe Text)
+  , reqEffort     :: !(Maybe EffortLevel)
   } deriving (Show, Eq)
 
 instance ToJSON ChatRequest where
@@ -50,7 +51,11 @@ instance ToJSON ChatRequest where
                                        Just tc -> tc
                                        Nothing -> "auto")
                  ]
-    in object (base ++ toolsPart)
+        effortPart =
+          case reqEffort of
+            Just effort -> [ "reasoning" .= object ["effort" .= effort] ]
+            Nothing     -> []
+    in object (base ++ toolsPart ++ effortPart)
 
 -- Helper wire types for OpenRouter response envelope
 newtype ChoiceWire = ChoiceWire AssistantResponse
