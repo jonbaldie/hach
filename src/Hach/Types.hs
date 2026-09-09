@@ -75,6 +75,12 @@ module Hach.Types
 
     -- * Output Styles
   , OutputStyle(..)
+
+    -- * Reasoning effort
+  , EffortLevel(..)
+  , effortLevelName
+  , supportedEffortLevels
+  , parseEffortLevel
   ) where
 
 import Data.Aeson
@@ -920,6 +926,65 @@ instance FromJSON GitStatusInfo where
       <*> o .: "clean"
       <*> o .:? "modified" .!= []
       <*> o .:? "untracked" .!= []
+
+--------------------------------------------------------------------------------
+-- Reasoning effort
+--------------------------------------------------------------------------------
+
+-- | OpenRouter `reasoning.effort` values.
+data EffortLevel
+  = EffortMax
+  | EffortXHigh
+  | EffortHigh
+  | EffortMedium
+  | EffortLow
+  | EffortMinimal
+  | EffortNone
+  deriving (Show, Eq, Enum, Bounded, Generic)
+
+-- | Canonical lowercase name matching OpenRouter's effort vocabulary.
+effortLevelName :: EffortLevel -> Text
+effortLevelName = \case
+  EffortMax     -> "max"
+  EffortXHigh   -> "xhigh"
+  EffortHigh    -> "high"
+  EffortMedium  -> "medium"
+  EffortLow     -> "low"
+  EffortMinimal -> "minimal"
+  EffortNone    -> "none"
+
+-- | Supported `effort_level` strings, in descending-effort order.
+supportedEffortLevels :: [Text]
+supportedEffortLevels = fmap effortLevelName [minBound ..]
+
+-- | Parse a configured effort string. Comparison is case-insensitive after
+-- stripping whitespace. Unknown values are rejected rather than dropped.
+parseEffortLevel :: Text -> Either String EffortLevel
+parseEffortLevel raw =
+  case T.toLower (T.strip raw) of
+    "max"     -> Right EffortMax
+    "xhigh"   -> Right EffortXHigh
+    "high"    -> Right EffortHigh
+    "medium"  -> Right EffortMedium
+    "low"     -> Right EffortLow
+    "minimal" -> Right EffortMinimal
+    "none"    -> Right EffortNone
+    _         ->
+      Left
+        ( "Unsupported effort_level: "
+            <> T.unpack (T.strip raw)
+            <> ". Supported values: "
+            <> T.unpack (T.intercalate ", " supportedEffortLevels)
+        )
+
+instance ToJSON EffortLevel where
+  toJSON = Aeson.String . effortLevelName
+
+instance FromJSON EffortLevel where
+  parseJSON = Aeson.withText "EffortLevel" $ \t ->
+    case parseEffortLevel t of
+      Right e  -> pure e
+      Left err -> fail err
 
 --------------------------------------------------------------------------------
 -- Output Styles

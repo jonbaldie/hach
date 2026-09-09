@@ -202,11 +202,43 @@ spec = do
 
   describe "ChatRequest serialization" $ do
     it "omits tools when list is empty" $ do
-      let req = ChatRequest "test-model" [UserMsg "Hello"] [] Nothing
+      let req = ChatRequest "test-model" [UserMsg "Hello"] [] Nothing Nothing
           jsonVal = Aeson.toJSON req
       case jsonVal of
         Aeson.Object o ->
           case KeyMap.lookup "tools" o of
             Just _  -> expectationFailure "tools should be omitted when empty"
             Nothing -> pure ()
+        _ -> expectationFailure "Expected Object"
+
+    it "includes reasoning.effort when high effort is configured" $ do
+      let req = ChatRequest "openai/gpt-5.6-luna" [UserMsg "hello"] [] Nothing (Just EffortHigh)
+          jsonVal = Aeson.toJSON req
+      case jsonVal of
+        Aeson.Object o ->
+          case KeyMap.lookup "reasoning" o of
+            Just (Aeson.Object r) ->
+              KeyMap.lookup "effort" r `shouldBe` Just (Aeson.String "high")
+            other -> expectationFailure
+              ("expected reasoning.effort=high, got " <> show other)
+        _ -> expectationFailure "Expected Object"
+
+    it "omits reasoning when effort is unset" $ do
+      let req = ChatRequest "openai/gpt-5.6-luna" [UserMsg "hello"] [] Nothing Nothing
+          jsonVal = Aeson.toJSON req
+      case jsonVal of
+        Aeson.Object o ->
+          KeyMap.lookup "reasoning" o `shouldBe` Nothing
+        _ -> expectationFailure "Expected Object"
+
+    it "emits reasoning.effort none rather than omitting the field" $ do
+      let req = ChatRequest "openai/gpt-5.6-luna" [UserMsg "hello"] [] Nothing (Just EffortNone)
+          jsonVal = Aeson.toJSON req
+      case jsonVal of
+        Aeson.Object o ->
+          case KeyMap.lookup "reasoning" o of
+            Just (Aeson.Object r) ->
+              KeyMap.lookup "effort" r `shouldBe` Just (Aeson.String "none")
+            other -> expectationFailure
+              ("expected reasoning.effort=none, got " <> show other)
         _ -> expectationFailure "Expected Object"

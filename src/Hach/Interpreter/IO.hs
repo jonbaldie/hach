@@ -16,6 +16,7 @@ module Hach.Interpreter.IO
   , runIO
   , evaluatorSystemPrompt
   , parseGoalEvaluation
+  , chatRequestFor
   ) where
 
 import Hach.Core
@@ -72,6 +73,7 @@ data IOEnv = IOEnv
   , ioCurrentWorktree  :: !(IORef (Maybe FilePath))
   , ioVerbose          :: !Bool
   , ioPerms            :: !PermissionRuntime
+  , ioEffortLevel      :: !(Maybe EffortLevel)
   }
 
 -- | Initialize a new 'IOEnv' with a TLS manager and open permission defaults.
@@ -95,6 +97,7 @@ newIOEnvWithPermissions perms apiKey model workspace verbose = do
     , ioCurrentWorktree  = wtRef
     , ioVerbose          = verbose
     , ioPerms            = PermissionRuntime modeRef (iopRules perms) (iopHooks perms)
+    , ioEffortLevel      = Nothing
     }
 
 -- | Switch the live permission mode; subsequent tool calls are checked
@@ -240,16 +243,22 @@ parseGoalEvaluation content =
 ioAlgebra :: IOEnv -> AgentAlgebra IO
 ioAlgebra env = ioAlgebraWithLog (renderEventIO (ioVerbose env)) env
 
+-- | Build the OpenRouter payload for this environment. Effort is taken from
+-- the session env so a later model switch does not drop it.
+chatRequestFor :: IOEnv -> [Message] -> [ToolDef] -> Maybe Text -> ChatRequest
+chatRequestFor IOEnv{..} msgs tools choice = ChatRequest
+  { reqModel      = ioModel
+  , reqMessages   = msgs
+  , reqTools      = tools
+  , reqToolChoice = choice
+  , reqEffort     = ioEffortLevel
+  }
+
 -- | Concrete IO algebra parameterized by an event logger (useful for TUI piping).
 ioAlgebraWithLog :: (AgentEvent -> IO ()) -> IOEnv -> AgentAlgebra IO
-ioAlgebraWithLog logger IOEnv{..} = AgentAlgebra
+ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
   { interpPrompt = \msgs tools -> do
-      let req = ChatRequest
-            { reqModel      = ioModel
-            , reqMessages   = msgs
-            , reqTools      = tools
-            , reqToolChoice = Just "auto"
-            }
+      let req = chatRequestFor env msgs tools (Just "auto")
       sendChatCompletion ioManager ioApiKey req
 
   , interpTool = \call -> do
@@ -283,12 +292,7 @@ ioAlgebraWithLog logger IOEnv{..} = AgentAlgebra
       let evalMsgs = SystemMsg evaluatorSystemPrompt
                    : UserMsg ("Condition: " <> condition <> "\n\nTranscript:\n" <> transcriptToText transcript)
                    : []
-          req = ChatRequest
-            { reqModel      = ioModel
-            , reqMessages   = evalMsgs
-            , reqTools      = []
-            , reqToolChoice = Nothing
-            }
+          req = chatRequestFor env evalMsgs [] Nothing
       res <- sendChatCompletion ioManager ioApiKey req
       case res of
         Right asstResp -> do
