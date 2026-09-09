@@ -579,6 +579,7 @@ data AgentEvent
   | EvGoalCleared !Text
   | EvGoalBlocked !Text
   | EvPermissionDenied !Text !Text
+  | EvPermissionAsk !Int !Text !Text !Text
   | EvHookTriggered !Text !Text
   | EvSessionSaved !Text
   | EvNotificationSent !Text

@@ -12,6 +12,7 @@ module Hach.TUI.Types
     -- * Screen Elements
   , ToolLifecycle(..)
   , ToolCard(..)
+  , PermissionPrompt(..)
   , TranscriptItem(..)
   , pattern DiUser
   , pattern DiAssistant
@@ -55,6 +56,7 @@ data TuiStatus
   = StatusIdle
   | StatusThinking
   | StatusRunningTool !Text
+  | StatusAwaitingPermission !Text
   | StatusFinished
   | StatusError !Text
   deriving (Show, Eq)
@@ -89,6 +91,14 @@ data ToolLifecycle
   | Denied !Text
   | Cancelled
   deriving (Show, Eq)
+
+-- | Pending interactive permission ask shown in the TUI.
+data PermissionPrompt = PermissionPrompt
+  { ppId     :: !Int
+  , ppTool   :: !Text
+  , ppArgs   :: !Text
+  , ppReason :: !Text
+  } deriving (Show, Eq)
 
 -- | Tool card record carried in the transcript.
 data ToolCard = ToolCard
@@ -153,6 +163,7 @@ data TuiState = TuiState
   , tsSkills             :: !SkillCatalog
   , tsGoalState          :: !(Maybe GoalState)
   , tsPermissionMode     :: !PermissionMode
+  , tsPendingAsk         :: !(Maybe PermissionPrompt)
   } deriving (Show, Eq)
 
 -- | Project tool cards from the transcript for the Tool Activity pane.
@@ -193,6 +204,7 @@ initialTuiState model maxTurns = TuiState
   , tsSkills             = Map.empty
   , tsGoalState          = Nothing
   , tsPermissionMode     = ModeDefault
+  , tsPendingAsk         = Nothing
   }
 
 -- | Simplified user keystroke events abstracted from Vty.
@@ -229,6 +241,7 @@ data TuiAction
   | ActionQuit
   | ActionScrollTranscript !Int
   | ActionSetPermissionMode !PermissionMode
+  | ActionRespondPermission !Int !Bool
   deriving (Show, Eq)
 
 -- | Canonical list of built-in slash commands recognised by the TUI.
@@ -264,5 +277,5 @@ builtinCommands =
 pattern ActionScrollHistory :: Int -> TuiAction
 pattern ActionScrollHistory delta = ActionScrollTranscript delta
 
-{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionSetPermissionMode #-}
-{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionSetPermissionMode #-}
+{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionSetPermissionMode, ActionRespondPermission #-}
+{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionSetPermissionMode, ActionRespondPermission #-}

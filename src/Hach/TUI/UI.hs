@@ -159,9 +159,10 @@ tuiAttrMap = attrMap Vty.defAttr
 -- | Draw the full TUI layout.
 drawUI :: TuiState -> [Widget Name]
 drawUI state@TuiState{..} =
-  if tsShowHelp
-    then [helpOverlay, baseLayout state]
-    else [baseLayout state]
+  case tsPendingAsk of
+    Just prompt -> [permissionOverlay prompt, baseLayout state]
+    Nothing | tsShowHelp -> [helpOverlay, baseLayout state]
+    Nothing -> [baseLayout state]
 
 -- | The core dashboard layout with Claude Code / AGY CLI proportions.
 baseLayout :: TuiState -> Widget Name
@@ -253,11 +254,12 @@ renderHeader TuiState{..} =
 
 renderStatus :: TuiStatus -> Widget Name
 renderStatus = \case
-  StatusIdle          -> withAttr statusIdleAttr (txt "● idle")
-  StatusThinking      -> withAttr statusThinkingAttr (txt "● thinking...")
-  StatusRunningTool t -> withAttr statusRunningAttr (txt ("● running " <> t <> "..."))
-  StatusFinished      -> withAttr statusIdleAttr (txt "✔ ready")
-  StatusError err     -> withAttr statusErrorAttr (txt ("✖ error: " <> T.take 25 err))
+  StatusIdle                   -> withAttr statusIdleAttr (txt "● idle")
+  StatusThinking               -> withAttr statusThinkingAttr (txt "● thinking...")
+  StatusRunningTool t          -> withAttr statusRunningAttr (txt ("● running " <> t <> "..."))
+  StatusAwaitingPermission t   -> withAttr statusThinkingAttr (txt ("● approve " <> t <> "?"))
+  StatusFinished               -> withAttr statusIdleAttr (txt "✔ ready")
+  StatusError err              -> withAttr statusErrorAttr (txt ("✖ error: " <> T.take 25 err))
 
 --------------------------------------------------------------------------------
 -- Transcript Panel (Claude Code Style Unified Stream)
@@ -642,6 +644,29 @@ renderFooter =
     , withAttr dimAttr (txt " help  •  ")
     , withAttr shortcutKeyAttr (txt "^q")
     , withAttr dimAttr (txt " quit")
+    ]
+
+permissionOverlay :: PermissionPrompt -> Widget Name
+permissionOverlay PermissionPrompt{..} =
+  center $
+  withBorderStyle unicodeBold $
+  withAttr activeBorderAttr $
+  borderWithLabel (withAttr brandAttr (txt " Approval required ")) $
+  padAll 2 $
+  vBox
+    [ withAttr toolNameAttr (txt ppTool)
+    , withAttr toolTargetAttr (txt (formatToolTarget ppTool ppArgs))
+    , txt " "
+    , withAttr dimAttr (txtWrap ppReason)
+    , txt " "
+    , hBox
+        [ withAttr shortcutKeyAttr (txt "y")
+        , withAttr dimAttr (txt " approve  •  ")
+        , withAttr shortcutKeyAttr (txt "n")
+        , withAttr dimAttr (txt " deny  •  ")
+        , withAttr shortcutKeyAttr (txt "esc")
+        , withAttr dimAttr (txt " cancel")
+        ]
     ]
 
 -- | Help dialog overlay.

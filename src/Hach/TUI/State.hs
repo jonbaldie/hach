@@ -54,9 +54,10 @@ updateTui event state = case event of
 -- | Whether the agent harness is currently busy running an inference turn or tool.
 isBusy :: TuiStatus -> Bool
 isBusy = \case
-  StatusThinking      -> True
-  StatusRunningTool _ -> True
-  _                   -> False
+  StatusThinking               -> True
+  StatusRunningTool _          -> True
+  StatusAwaitingPermission _   -> True
+  _                            -> False
 
 -- | Format a comprehensive cost and token breakdown report.
 formatCostReport :: TuiState -> T.Text
@@ -116,8 +117,9 @@ handleSubmitPrompt rawPrompt state
                  , tsCancelRequested    = if busy then True else False
                  , tsContextTokens      = 0
                  , tsTokenUsage         = Nothing
-                 , tsUsageStatus        = UsageVerified
-                 }
+                  , tsUsageStatus        = UsageVerified
+                  , tsPendingAsk         = Nothing
+                  }
          , actions
          )
   | trimmed == "/help" =
@@ -505,6 +507,7 @@ handleUserKey key state@TuiState{..} =
                   , tsStatus = StatusError "Turn cancelled by user."
                   , tsFocus = FocusInput
                   , tsTranscript = cancelUnresolvedToolCards tsTranscript
+                  , tsPendingAsk = Nothing
                   }
           , [ActionCancelAgent]
           )
@@ -517,6 +520,7 @@ handleUserKey key state@TuiState{..} =
                   , tsStatus = StatusError "Turn cancelled by user."
                   , tsFocus = FocusInput
                   , tsTranscript = cancelUnresolvedToolCards tsTranscript
+                  , tsPendingAsk = Nothing
                   }
           , [ActionCancelAgent]
           )
@@ -525,43 +529,63 @@ handleUserKey key state@TuiState{..} =
       | otherwise ->
           (state, [])
 
-    KeyF1 ->
-      (state { tsShowHelp = not tsShowHelp }, [])
+    other ->
+      case tsPendingAsk of
+        Just prompt -> handlePermissionKey other prompt state
+        Nothing -> handleUnaskedKey other state
 
-    KeyChar 'q'
-      | tsFocus /= FocusInput && not (isBusy tsStatus) ->
-          (state { tsShouldQuit = True }, [ActionQuit])
+handlePermissionKey :: UserKey -> PermissionPrompt -> TuiState -> (TuiState, [TuiAction])
+handlePermissionKey key prompt state = case key of
+  KeyChar 'y' -> approve
+  KeyChar 'Y' -> approve
+  KeyEnter    -> approve
+  KeyChar 'n' -> deny
+  KeyChar 'N' -> deny
+  _           -> (state, [])
+  where
+    approve =
+      ( state { tsPendingAsk = Nothing, tsStatus = StatusRunningTool (ppTool prompt) }
+      , [ActionRespondPermission (ppId prompt) True]
+      )
+    deny =
+      ( state { tsPendingAsk = Nothing, tsStatus = StatusThinking }
+      , [ActionRespondPermission (ppId prompt) False]
+      )
 
-    KeyChar '?'
-      | tsFocus /= FocusInput ->
-          (state { tsShowHelp = not tsShowHelp }, [])
+handleUnaskedKey :: UserKey -> TuiState -> (TuiState, [TuiAction])
+handleUnaskedKey key state@TuiState{..} = case key of
+  KeyF1 ->
+    (state { tsShowHelp = not tsShowHelp }, [])
 
-    KeyTab ->
-      -- Accept the inline slash-completion ghost text (built-in commands
-      -- and user-invocable skills) when the user is typing a slash-command
-      -- prefix in the input box; otherwise cycle panel focus as usual.
-      case inputSlashCompletion tsSkills builtinCommands tsInputBuffer of
-        Just suffix | tsFocus == FocusInput ->
-          (editInputBuffer (<> suffix) state, [])
-        _ ->
-          (state { tsFocus = nextFocus tsFocus }, [])
+  KeyChar 'q'
+    | tsFocus /= FocusInput && not (isBusy tsStatus) ->
+        (state { tsShouldQuit = True }, [ActionQuit])
 
-    KeyBackTab ->
-      (state { tsFocus = prevFocus tsFocus }, [])
+  KeyChar '?'
+    | tsFocus /= FocusInput ->
+        (state { tsShowHelp = not tsShowHelp }, [])
 
-    KeyScrollUp ->
-      (state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 2), tsTranscriptManualScroll = True }, [ActionScrollTranscript (-2)])
+  KeyTab ->
+    case inputSlashCompletion tsSkills builtinCommands tsInputBuffer of
+      Just suffix | tsFocus == FocusInput ->
+        (editInputBuffer (<> suffix) state, [])
+      _ ->
+        (state { tsFocus = nextFocus tsFocus }, [])
 
-    KeyScrollDown ->
-      (state { tsTranscriptScroll = tsTranscriptScroll + 2, tsTranscriptManualScroll = True }, [ActionScrollTranscript 2])
+  KeyBackTab ->
+    (state { tsFocus = prevFocus tsFocus }, [])
 
-    -- 2. Focus-specific actions
-    _ -> case tsFocus of
-      FocusInput ->
-        handleInputKey key state
+  KeyScrollUp ->
+    (state { tsTranscriptScroll = max 0 (tsTranscriptScroll - 2), tsTranscriptManualScroll = True }, [ActionScrollTranscript (-2)])
 
-      FocusTranscript ->
-        handleTranscriptKey key state
+  KeyScrollDown ->
+    (state { tsTranscriptScroll = tsTranscriptScroll + 2, tsTranscriptManualScroll = True }, [ActionScrollTranscript 2])
+
+  _ -> case tsFocus of
+    FocusInput ->
+      handleInputKey key state
+    FocusTranscript ->
+      handleTranscriptKey key state
 
 -- | Leave prompt-history browse mode so subsequent Up/Down does not
 -- overwrite an in-progress edit of a recalled prompt.
@@ -765,13 +789,14 @@ handleAgentEvent event state@TuiState{..}
           if not (null tsTranscript) && last tsTranscript == TiAssistant ans
             then tsTranscript
             else tsTranscript ++ [TiAssistant ans]
-    in state { tsTranscript = finalTranscript, tsStatus = StatusFinished, tsFocus = FocusInput }
+    in state { tsTranscript = finalTranscript, tsStatus = StatusFinished, tsFocus = FocusInput, tsPendingAsk = Nothing }
 
   EvError err ->
     state
       { tsTranscript = tsTranscript ++ [TiNotice ("Error: " <> err)]
       , tsStatus     = StatusError err
       , tsFocus      = FocusInput
+      , tsPendingAsk = Nothing
       }
 
   EvTurnComplete _ ->
@@ -832,7 +857,13 @@ handleAgentEvent event state@TuiState{..}
   EvPermissionDenied tool reason ->
     let updatedTranscript = updateFirstMatchingToDenied tool reason tsTranscript
         finalTranscript   = updatedTranscript ++ [TiNotice ("Permission denied for " <> tool <> ": " <> reason)]
-    in state { tsTranscript = finalTranscript, tsStatus = StatusThinking }
+    in state { tsTranscript = finalTranscript, tsStatus = StatusThinking, tsPendingAsk = Nothing }
+
+  EvPermissionAsk askId tool args reason ->
+    state
+      { tsPendingAsk = Just (PermissionPrompt askId tool args reason)
+      , tsStatus     = StatusAwaitingPermission tool
+      }
   EvHookTriggered hook res ->
     state { tsTranscript = tsTranscript ++ [TiNotice ("Hook triggered: " <> hook <> " -> " <> res)] }
   EvSessionSaved path ->
