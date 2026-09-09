@@ -16,14 +16,95 @@ module Hach.Git
 
 import Hach.Types
 import Control.Exception (SomeException, try)
-import Data.Char (isAlphaNum, isSpace)
+import qualified Data.ByteString as BS
+import Data.Char (digitToInt, isAlphaNum, isOctDigit, isSpace)
 import Data.List (isInfixOf)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import System.Directory (doesFileExist)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.Process (CreateProcess(cwd), proc, readCreateProcessWithExitCode)
+
+-- | Unquote git C-style quoted path and decode escape sequences.
+unquoteGitPath :: Text -> Text
+unquoteGitPath t
+  | T.length t >= 2 && T.head t == '"' && T.last t == '"' =
+      let inner = T.init (T.tail t)
+      in decodeGitEscapes inner
+  | otherwise = t
+
+-- | Decode git C-style escape sequences (escaped quotes, slashes, whitespace, and octal UTF-8 bytes).
+decodeGitEscapes :: Text -> Text
+decodeGitEscapes txt =
+  let bytes = BS.pack (go (T.unpack txt))
+  in case TE.decodeUtf8' bytes of
+       Right decoded -> decoded
+       Left _        -> txt
+  where
+    go [] = []
+    go ('\\':c:cs) = case c of
+      'a'  -> 7  : go cs
+      'b'  -> 8  : go cs
+      't'  -> 9  : go cs
+      'n'  -> 10 : go cs
+      'v'  -> 11 : go cs
+      'f'  -> 12 : go cs
+      'r'  -> 13 : go cs
+      '"'  -> 34 : go cs
+      '\\' -> 92 : go cs
+      o | isOctDigit o ->
+          let (octDigits, rest) = takeOct 2 cs
+              val = foldl (\acc d -> acc * 8 + fromIntegral (digitToInt d)) (fromIntegral (digitToInt o)) octDigits
+          in val : go rest
+      other -> BS.unpack (TE.encodeUtf8 (T.singleton other)) ++ go cs
+    go (c:cs) =
+      BS.unpack (TE.encodeUtf8 (T.singleton c)) ++ go cs
+
+    takeOct :: Int -> String -> (String, String)
+    takeOct 0 cs = ([], cs)
+    takeOct n (d:cs) | isOctDigit d = let (ds, rest) = takeOct (n - 1) cs in (d:ds, rest)
+    takeOct _ cs = ([], cs)
+
+-- | Extract the destination path from a git porcelain status line.
+-- For rename/copy status codes (containing 'R' or 'C'), extracts the target path
+-- after the " -> " separator, handling quoted paths on either side.
+-- For all other status codes, returns the single file path.
+extractPath :: Text -> Text -> Text
+extractPath st rawPath
+  | isRenameOrCopy st =
+      let target = case T.uncons rawPath of
+            Just ('"', _) ->
+              case findClosingQuote (T.unpack rawPath) of
+                Just afterOrig ->
+                  let rest = T.strip (T.pack afterOrig)
+                  in case T.stripPrefix "->" rest of
+                       Just dest -> T.strip dest
+                       Nothing   -> case T.breakOn " -> " rawPath of
+                         (_, d) | not (T.null d) -> T.strip (T.drop 4 d)
+                         _                       -> rawPath
+                Nothing ->
+                  case T.breakOn " -> " rawPath of
+                    (_, d) | not (T.null d) -> T.strip (T.drop 4 d)
+                    _                       -> rawPath
+            _ ->
+              case T.breakOn " -> " rawPath of
+                (_, d) | not (T.null d) -> T.strip (T.drop 4 d)
+                _                       -> rawPath
+      in unquoteGitPath (T.strip target)
+  | otherwise = unquoteGitPath (T.strip rawPath)
+  where
+    isRenameOrCopy s = T.any (\c -> c == 'R' || c == 'C') s
+
+    findClosingQuote :: String -> Maybe String
+    findClosingQuote ('"':cs) = scan cs
+      where
+        scan [] = Nothing
+        scan ('\\':_:rest) = scan rest
+        scan ('"':rest) = Just rest
+        scan (_:rest) = scan rest
+    findClosingQuote _ = Nothing
 
 -- | Append Co-Authored-By attribution trailer to commit message if not already present.
 appendCoAuthor :: Text -> Text -> Text
@@ -60,7 +141,8 @@ parsePorcelainStatus defaultBranch raw =
       parseLine l =
         let trimmed = l
             st = T.take 2 trimmed
-            fp = T.unpack (T.strip (T.drop 2 trimmed))
+            rawPath = T.strip (T.drop 2 trimmed)
+            fp = T.unpack (extractPath st rawPath)
         in if T.null (T.strip (T.pack fp))
              then Nothing
              else Just (st, fp)
