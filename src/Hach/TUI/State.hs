@@ -829,7 +829,7 @@ handleAgentEvent event state@TuiState{..}
   EvPermissionDenied tool reason ->
     let updatedTranscript = updateFirstMatchingToDenied tool reason tsTranscript
         finalTranscript   = updatedTranscript ++ [TiNotice ("Permission denied for " <> tool <> ": " <> reason)]
-    in state { tsTranscript = finalTranscript }
+    in state { tsTranscript = finalTranscript, tsStatus = StatusThinking }
   EvHookTriggered hook res ->
     state { tsTranscript = tsTranscript ++ [TiNotice ("Hook triggered: " <> hook <> " -> " <> res)] }
   EvSessionSaved path ->

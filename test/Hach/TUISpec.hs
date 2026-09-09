@@ -284,6 +284,14 @@ spec = do
           , TiNotice "Permission denied for read_file: Protected path"
           ]
 
+      it "resets status to Thinking on EvPermissionDenied after EvToolCall" $ do
+        let calls = [ToolCall "call-1" "write_file" "{\"path\":\"config.json\"}"]
+            s0 = fst $ updateTui (EvHarness (EvLLMResponse (Just "Starting") calls Nothing)) baseState
+            (s1, _) = updateTui (EvHarness (EvToolCall "write_file" "{\"path\":\"config.json\"}")) s0
+            (s2, _) = updateTui (EvHarness (EvPermissionDenied "write_file" "Access denied by policy")) s1
+        tsStatus s1 `shouldBe` StatusRunningTool "write_file"
+        tsStatus s2 `shouldBe` StatusThinking
+
       it "transitions all unresolved (Pending or Running) cards -> Cancelled on cancel" $ do
         let calls =
               [ ToolCall "call-1" "tool1" "arg1"
