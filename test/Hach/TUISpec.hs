@@ -407,6 +407,56 @@ spec = do
         tsStatus s1 `shouldBe` StatusRunningTool "write_file"
         tsStatus s2 `shouldBe` StatusThinking
 
+      it "pauses a PermAsk on the pending tool and shows the reason (Issue #91)" $ do
+        let calls = [ToolCall "call-1" "write_file" "{\"path\":\"hello.txt\",\"content\":\"hello\"}"]
+            s0 = fst $ updateTui (EvHarness (EvLLMResponse (Just "Writing") calls Nothing)) baseState
+            (s1, _) = updateTui (EvHarness (EvToolCall "write_file" "{\"path\":\"hello.txt\",\"content\":\"hello\"}")) s0
+            (s2, actions) = updateTui
+              (EvHarness (EvPermissionAsk 1 "write_file" "{\"path\":\"hello.txt\",\"content\":\"hello\"}" "Tool execution requires approval: write_file"))
+              s1
+        actions `shouldBe` []
+        tsStatus s2 `shouldBe` StatusAwaitingPermission "write_file"
+        tsPendingAsk s2 `shouldBe` Just (PermissionPrompt 1 "write_file" "{\"path\":\"hello.txt\",\"content\":\"hello\"}" "Tool execution requires approval: write_file")
+
+      it "approves a pending ask with y or Enter and denies with n (Issue #91)" $ do
+        let sAsk = (fst $ updateTui
+              (EvHarness (EvPermissionAsk 7 "write_file" "{\"path\":\"hello.txt\"}" "needs approval"))
+              baseState)
+            (sYes, aYes) = updateTui (EvUserKey (KeyChar 'y')) sAsk
+            (_sEnter, aEnter) = updateTui (EvUserKey KeyEnter) sAsk
+            (sNo, aNo) = updateTui (EvUserKey (KeyChar 'n')) sAsk
+        aYes `shouldBe` [ActionRespondPermission 7 True]
+        tsPendingAsk sYes `shouldBe` Nothing
+        tsStatus sYes `shouldBe` StatusRunningTool "write_file"
+        aEnter `shouldBe` [ActionRespondPermission 7 True]
+        aNo `shouldBe` [ActionRespondPermission 7 False]
+        tsPendingAsk sNo `shouldBe` Nothing
+        tsStatus sNo `shouldBe` StatusThinking
+
+      it "cancels a pending ask with Esc and drops stale y (Issue #91)" $ do
+        let sAsk = fst $ updateTui
+              (EvHarness (EvPermissionAsk 3 "write_file" "{}" "needs approval"))
+              baseState
+            (sCancel, aCancel) = updateTui (EvUserKey KeyEsc) sAsk
+            (sStale, aStale) = updateTui (EvUserKey (KeyChar 'y')) sCancel
+        aCancel `shouldBe` [ActionCancelAgent]
+        tsPendingAsk sCancel `shouldBe` Nothing
+        tsCancelRequested sCancel `shouldBe` True
+        aStale `shouldBe` []
+        tsPendingAsk sStale `shouldBe` Nothing
+
+      it "renders the approval overlay with tool, target, and reason (Issue #91)" $ do
+        let sAsk = (fst $ updateTui
+              (EvHarness (EvPermissionAsk 1 "write_file" "{\"path\":\"hello.txt\"}" "Tool execution requires approval: write_file"))
+              baseState)
+            rows = renderTestRows sAsk (100, 30)
+            screen = T.unlines rows
+        screen `shouldSatisfy` ("Approval required" `T.isInfixOf`)
+        screen `shouldSatisfy` ("write_file" `T.isInfixOf`)
+        screen `shouldSatisfy` ("hello.txt" `T.isInfixOf`)
+        screen `shouldSatisfy` ("Tool execution requires approval" `T.isInfixOf`)
+        screen `shouldSatisfy` ("approve" `T.isInfixOf`)
+
       it "transitions all unresolved (Pending or Running) cards -> Cancelled on cancel" $ do
         let calls =
               [ ToolCall "call-1" "tool1" "arg1"

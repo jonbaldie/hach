@@ -16,6 +16,12 @@ module Hach.TUI.App
   , goalAgentConfig
   , runEnvForModel
   , initialTuiLaunch
+  , PermissionGate
+  , newPermissionGate
+  , resolveAskWithGate
+  , respondPermission
+  , cancelPermissionAsk
+  , awaitPermissionAsk
   ) where
 
 import Hach.Core
@@ -30,9 +36,22 @@ import Hach.Types
 import Brick
 import Brick.BChan (BChan, newBChan, writeBChan)
 import Control.Concurrent.Async (Async, async, cancel)
-import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, writeTVar)
+import Control.Concurrent.STM
+  ( TMVar
+  , TVar
+  , atomically
+  , newEmptyTMVarIO
+  , newTVarIO
+  , putTMVar
+  , readTVar
+  , retry
+  , takeTMVar
+  , tryTakeTMVar
+  , writeTVar
+  )
 import Control.Exception (SomeException, try)
-import Control.Monad (forM_, when)
+import Control.Monad (forM_, void, when)
+import System.Timeout (timeout)
 import Control.Monad.IO.Class (liftIO)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -72,6 +91,68 @@ brickToUserKey = \case
   MouseDown _ Vty.BScrollDown _ _ -> Just KeyScrollDown
   _ -> Nothing
 
+data PendingAsk = PendingAsk
+  { paId     :: !Int
+  , paTool   :: !Text
+  , paArgs   :: !Text
+  , paReason :: !Text
+  }
+
+data PermissionGate = PermissionGate
+  { pgNextId  :: !(TVar Int)
+  , pgPending :: !(TVar (Maybe PendingAsk))
+  , pgReply   :: !(TMVar (Int, Bool))
+  }
+
+newPermissionGate :: IO PermissionGate
+newPermissionGate = do
+  nextId <- newTVarIO 1
+  pending <- newTVarIO Nothing
+  reply <- newEmptyTMVarIO
+  pure (PermissionGate nextId pending reply)
+
+resolveAskWithGate :: PermissionGate -> (AgentEvent -> IO ()) -> Text -> Text -> Text -> IO Bool
+resolveAskWithGate gate emit tool args reason = do
+  askId <- atomically $ do
+    i <- readTVar (pgNextId gate)
+    writeTVar (pgNextId gate) (i + 1)
+    writeTVar (pgPending gate) (Just (PendingAsk i tool args reason))
+    void (tryTakeTMVar (pgReply gate))
+    pure i
+  emit (EvPermissionAsk askId tool args reason)
+  (replyId, approved) <- atomically (takeTMVar (pgReply gate))
+  atomically $ writeTVar (pgPending gate) Nothing
+  pure (replyId == askId && approved)
+
+respondPermission :: PermissionGate -> Int -> Bool -> IO Bool
+respondPermission gate expectedId approved = atomically $ do
+  mAsk <- readTVar (pgPending gate)
+  case mAsk of
+    Just ask | paId ask == expectedId -> do
+      writeTVar (pgPending gate) Nothing
+      void (tryTakeTMVar (pgReply gate))
+      putTMVar (pgReply gate) (paId ask, approved)
+      pure True
+    _ -> pure False
+
+cancelPermissionAsk :: PermissionGate -> IO ()
+cancelPermissionAsk gate = atomically $ do
+  mAsk <- readTVar (pgPending gate)
+  writeTVar (pgPending gate) Nothing
+  case mAsk of
+    Just ask -> do
+      void (tryTakeTMVar (pgReply gate))
+      putTMVar (pgReply gate) (paId ask, False)
+    Nothing -> pure ()
+
+awaitPermissionAsk :: PermissionGate -> Int -> IO (Maybe (Int, Text, Text, Text))
+awaitPermissionAsk gate usec = do
+  timeout usec $ atomically $ do
+    mAsk <- readTVar (pgPending gate)
+    case mAsk of
+      Nothing  -> retry
+      Just ask -> pure (paId ask, paTool ask, paArgs ask, paReason ask)
+
 -- | Algebra that pipes every agent execution event into the Brick BChan.
 tuiAlgebra :: BChan AgentEvent -> IOEnv -> AgentAlgebra IO
 tuiAlgebra chan env = ioAlgebraWithLog (writeBChan chan) env
@@ -91,9 +172,11 @@ buildTuiSystemPrompt workspace mAppendPrompt = do
 
 -- | Run the full modern TUI application.
 runTui :: IOEnv -> Maybe Text -> Maybe Int -> Maybe Text -> IO ()
-runTui ioEnv initialPrompt mMaxTurns mAppendPrompt = do
+runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt = do
   eventChan <- newBChan 100
   workerVar <- newTVarIO (Nothing :: Maybe (Async ()))
+  gate <- newPermissionGate
+  let ioEnv = ioEnv0 { ioResolveAsk = resolveAskWithGate gate (writeBChan eventChan) }
 
   skills <- discoverSkills (ioWorkspace ioEnv)
   sysPrompt <- buildTuiSystemPrompt (ioWorkspace ioEnv) mAppendPrompt
@@ -109,19 +192,20 @@ runTui ioEnv initialPrompt mMaxTurns mAppendPrompt = do
       app = App
         { appDraw         = drawUI
         , appChooseCursor = showFirstCursor
-        , appHandleEvent  = handleBrickEvent eventChan workerVar ioEnv sysPrompt
+        , appHandleEvent  = handleBrickEvent eventChan workerVar gate ioEnv sysPrompt
         , appStartEvent   = do
-            -- Dispatch actions produced by any initial prompt provided on CLI
             currentState <- get
             forM_ initialActions $ \case
               ActionQuit -> halt
               ActionCancelAgent -> pure ()
               ActionSetPermissionMode mode -> liftIO (setIOPermissionMode ioEnv mode)
+              ActionRespondPermission askId approved ->
+                liftIO (void (respondPermission gate askId approved))
               ActionRunAgent prompt -> do
-                triggerAgentRun eventChan workerVar ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) prompt (tsHistory currentState)
+                triggerAgentRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) prompt (tsHistory currentState)
                 vScrollToEnd (viewportScroll VpTranscript)
               ActionRunGoal condition -> do
-                triggerGoalRun eventChan workerVar ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) condition (tsHistory currentState)
+                triggerGoalRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) condition (tsHistory currentState)
                 vScrollToEnd (viewportScroll VpTranscript)
               ActionScrollTranscript delta ->
                 vScrollBy (viewportScroll VpTranscript) delta
@@ -140,7 +224,7 @@ runTui ioEnv initialPrompt mMaxTurns mAppendPrompt = do
   initialVty <- buildVty
   _ <- customMain initialVty buildVty (Just eventChan) app startingState
 
-  -- Cleanup any background worker on exit
+  cancelPermissionAsk gate
   mWorker <- atomically $ readTVar workerVar
   mapM_ cancel mWorker
 
@@ -273,6 +357,7 @@ runEnvForModel model ioEnv = ioEnv { ioModel = model }
 triggerAgentRun
   :: BChan AgentEvent
   -> TVar (Maybe (Async ()))
+  -> PermissionGate
   -> IOEnv
   -> Text         -- ^ model currently selected in the TUI
   -> Text
@@ -280,9 +365,10 @@ triggerAgentRun
   -> Text
   -> [DialogueItem]
   -> EventM Name TuiState ()
-triggerAgentRun eventChan workerVar ioEnv selectedModel sysPrompt mMaxTurns currentPrompt historyItems = do
+triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns currentPrompt historyItems = do
   st <- get
   liftIO $ do
+    cancelPermissionAsk gate
     mOldWorker <- atomically $ do
       w <- readTVar workerVar
       writeTVar workerVar Nothing
@@ -345,6 +431,7 @@ runGoalWorker algebra agentConfig condition historyItems emitEvent = do
 triggerGoalRun
   :: BChan AgentEvent
   -> TVar (Maybe (Async ()))
+  -> PermissionGate
   -> IOEnv
   -> Text         -- ^ model currently selected in the TUI
   -> Text
@@ -352,7 +439,8 @@ triggerGoalRun
   -> Text          -- ^ goal condition (also used as the first-turn directive)
   -> [DialogueItem]
   -> EventM Name TuiState ()
-triggerGoalRun eventChan workerVar ioEnv selectedModel sysPrompt mMaxTurns condition historyItems = liftIO $ do
+triggerGoalRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns condition historyItems = liftIO $ do
+  cancelPermissionAsk gate
   mOldWorker <- atomically $ do
     w <- readTVar workerVar
     writeTVar workerVar Nothing
@@ -370,11 +458,12 @@ triggerGoalRun eventChan workerVar ioEnv selectedModel sysPrompt mMaxTurns condi
 handleBrickEvent
   :: BChan AgentEvent
   -> TVar (Maybe (Async ()))
+  -> PermissionGate
   -> IOEnv
   -> Text
   -> BrickEvent Name AgentEvent
   -> EventM Name TuiState ()
-handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
+handleBrickEvent eventChan workerVar gate ioEnv sysPrompt = \case
   AppEvent agentEv -> do
     currentState <- get
     modify (handleAgentEvent agentEv)
@@ -388,21 +477,31 @@ handleBrickEvent eventChan workerVar ioEnv sysPrompt = \case
         let (nextState, actions) = updateTui (EvUserKey key) currentState
         put nextState
         forM_ actions $ \case
-          ActionQuit ->
+          ActionQuit -> do
+            liftIO $ do
+              cancelPermissionAsk gate
+              mWorker <- atomically $ do
+                w <- readTVar workerVar
+                writeTVar workerVar Nothing
+                pure w
+              mapM_ cancel mWorker
             halt
           ActionSetPermissionMode mode ->
             liftIO (setIOPermissionMode ioEnv mode)
+          ActionRespondPermission askId approved ->
+            liftIO (void (respondPermission gate askId approved))
           ActionCancelAgent -> liftIO $ do
+            cancelPermissionAsk gate
             mWorker <- atomically $ do
               w <- readTVar workerVar
               writeTVar workerVar Nothing
               pure w
             mapM_ cancel mWorker
           ActionRunAgent prompt -> do
-            triggerAgentRun eventChan workerVar ioEnv (tsModelName nextState) sysPrompt (tsMaxTurns nextState) prompt (tsHistory nextState)
+            triggerAgentRun eventChan workerVar gate ioEnv (tsModelName nextState) sysPrompt (tsMaxTurns nextState) prompt (tsHistory nextState)
             vScrollToEnd (viewportScroll VpTranscript)
           ActionRunGoal condition -> do
-            triggerGoalRun eventChan workerVar ioEnv (tsModelName nextState) sysPrompt (tsMaxTurns nextState) condition (tsHistory nextState)
+            triggerGoalRun eventChan workerVar gate ioEnv (tsModelName nextState) sysPrompt (tsMaxTurns nextState) condition (tsHistory nextState)
             vScrollToEnd (viewportScroll VpTranscript)
           ActionScrollTranscript delta ->
             vScrollBy (viewportScroll VpTranscript) delta

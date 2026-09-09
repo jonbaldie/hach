@@ -74,6 +74,7 @@ data IOEnv = IOEnv
   , ioVerbose          :: !Bool
   , ioPerms            :: !PermissionRuntime
   , ioEffortLevel      :: !(Maybe EffortLevel)
+  , ioResolveAsk       :: Text -> Text -> Text -> IO Bool
   }
 
 -- | Initialize a new 'IOEnv' with a TLS manager and open permission defaults.
@@ -98,6 +99,7 @@ newIOEnvWithPermissions perms apiKey model workspace verbose = do
     , ioVerbose          = verbose
     , ioPerms            = PermissionRuntime modeRef (iopRules perms) (iopHooks perms)
     , ioEffortLevel      = Nothing
+    , ioResolveAsk       = \_ _ _ -> pure False
     }
 
 -- | Switch the live permission mode; subsequent tool calls are checked
@@ -199,6 +201,9 @@ renderEventIO verbose = \case
 
   EvPermissionDenied tool reason ->
     putStrLn ("\n[Permission Denied] " <> T.unpack tool <> ": " <> T.unpack reason)
+
+  EvPermissionAsk _ tool _ reason ->
+    putStrLn ("\n[Permission Ask] " <> T.unpack tool <> ": " <> T.unpack reason)
 
   EvHookTriggered hook msg ->
     when verbose $ putStrLn ("\n[Hook " <> T.unpack hook <> "] " <> T.unpack msg)
@@ -306,12 +311,10 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
   , interpCheckPermission = \tool args -> do
       mode <- readIORef prtMode
       let argsVal = fromMaybe Aeson.Null (Aeson.decodeStrict (TE.encodeUtf8 args))
-      pure $ case evalPermission mode prtRules tool argsVal of
-        -- A headless harness has no channel to resolve an approval prompt,
-        -- so an unresolved ask denies execution.
-        PermAsk _  -> False
-        PermDeny _ -> False
-        PermAllow  -> True
+      case evalPermission mode prtRules tool argsVal of
+        PermAllow      -> pure True
+        PermDeny _     -> pure False
+        PermAsk reason -> ioResolveAsk tool args reason
 
   , interpRunHook = \ev payload -> do
       currentWs <- readIORef ioCurrentWorkspace

@@ -9,10 +9,18 @@ import Hach.Permissions (isProtectedPath)
 import Hach.Settings (Settings (..), defaultSettings, loadLayeredSettings)
 import Hach.Tools (ReplaceFileContentArgs (..), WriteFileArgs (..), executeCodingTool, executeReplaceFileContent, executeWriteFile)
 import Hach.Types
-import Hach.TUI.App (runEnvForModel)
+import Hach.TUI.App
+  ( awaitPermissionAsk
+  , cancelPermissionAsk
+  , newPermissionGate
+  , resolveAskWithGate
+  , respondPermission
+  , runEnvForModel
+  )
 import Hach.TUI.State (updateTui)
 import Hach.TUI.Types
-import Control.Exception (finally)
+import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar)
+import Control.Exception (SomeException, finally, try)
 import Control.Monad (when)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -88,6 +96,24 @@ spec = describe "Hach.Interpreter.IO (permission + hook enforcement)" $ do
         interpCheckPermission alg "read_file" "{\"path\":\"out.txt\"}"
           `shouldReturn` True
 
+      it "does not auto-deny default-mode write_file when the ask resolver approves (Issue #91)" $ do
+        env0 <- newIOEnv "k" "test-model" testDir False
+        let env = env0 { ioResolveAsk = \_ _ _ -> pure True }
+            alg = ioAlgebra env
+        interpCheckPermission alg "write_file" "{\"path\":\"hello.txt\",\"content\":\"hello\"}"
+          `shouldReturn` True
+
+      it "keeps headless unresolved asks denied" $ do
+        env <- newIOEnv "k" "test-model" testDir False
+        interpCheckPermission (ioAlgebra env) "write_file" "{\"path\":\"hello.txt\"}"
+          `shouldReturn` False
+
+      it "does not consult the ask resolver for explicit policy denies" $ do
+        env0 <- newIOEnv "k" "test-model" testDir False
+        let env = env0 { ioResolveAsk = \_ _ _ -> pure True }
+        interpCheckPermission (ioAlgebra env) "write_file" "{\"path\":\".git/config\"}"
+          `shouldReturn` False
+
     describe "interpRunHook" $ do
       it "runs configured PreToolUse command hooks and blocks on exit code 2" $ do
         let hookCmd = "printf '%s' '{\"permissionDecision\":{\"decision\":\"deny\",\"reason\":\"no writes\"}}'; exit 2"
@@ -135,6 +161,124 @@ spec = describe "Hach.Interpreter.IO (permission + hook enforcement)" $ do
           _ -> False)
         exists <- doesFileExist (testDir </> ".git" </> "pwned.txt")
         exists `shouldBe` False
+
+    describe "permission-to-TUI ask path (Issue #91)" $ do
+      let writeCall = ToolCall "c1" "write_file" "{\"path\":\"hello.txt\",\"content\":\"hello\"}"
+          runWriteLoop env = do
+            stepsRef <- newIORef
+              [ \_ _ -> Right (AssistantResponse Nothing [writeCall] Nothing)
+              , \_ _ -> Right (AssistantResponse (Just "done") [] Nothing)
+              ] :: IO (IORef [[Message] -> [ToolDef] -> Either Text AssistantResponse])
+            eventsRef <- newIORef [] :: IO (IORef [AgentEvent])
+            let alg = (ioAlgebra env)
+                  { interpPrompt = \msgs tools -> do
+                      steps <- readIORef stepsRef
+                      case steps of
+                        (step : rest) -> do
+                          writeIORef stepsRef rest
+                          pure (step msgs tools)
+                        [] -> pure (Right (AssistantResponse (Just "done") [] Nothing))
+                  , interpLog = \ev -> modifyIORef' eventsRef (ev :)
+                  }
+                cfg = AgentConfig
+                  { cfgModel        = "test-model"
+                  , cfgSystemPrompt = Nothing
+                  , cfgMaxTurns     = Nothing
+                  }
+            result <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write hello.txt"])
+            events <- readIORef eventsRef
+            pure (result, events)
+
+      it "executes the pending write once when the ask is approved" $ do
+        env0 <- newIOEnv "k" "test-model" testDir False
+        let env = env0 { ioResolveAsk = \_ _ _ -> pure True }
+        (_result, events) <- runWriteLoop env
+        doesFileExist (testDir </> "hello.txt") `shouldReturn` True
+        events `shouldNotContain` [EvPermissionDenied "write_file" "Permission denied by policy"]
+
+      it "leaves the write unapplied when the ask is denied" $ do
+        env0 <- newIOEnv "k" "test-model" testDir False
+        let env = env0 { ioResolveAsk = \_ _ _ -> pure False }
+        (_result, events) <- runWriteLoop env
+        doesFileExist (testDir </> "hello.txt") `shouldReturn` False
+        events `shouldContain` [EvPermissionDenied "write_file" "Permission denied by policy"]
+
+      it "pauses on PermAsk until the TUI gate answers, then approves" $ do
+        env0 <- newIOEnv "k" "test-model" testDir False
+        gate <- newPermissionGate
+        let env = env0 { ioResolveAsk = resolveAskWithGate gate (\_ -> pure ()) }
+        done <- newEmptyMVar
+        _ <- forkIO $ do
+          r <- try (runWriteLoop env) :: IO (Either SomeException ((AgentResult, [Message]), [AgentEvent]))
+          putMVar done r
+        mAsk <- awaitPermissionAsk gate 2000000
+        case mAsk of
+          Nothing -> expectationFailure "timed out waiting for permission ask"
+          Just (askId, tool, _args, reason) -> do
+            tool `shouldBe` "write_file"
+            reason `shouldBe` "Tool execution requires approval: write_file"
+            answered <- respondPermission gate askId True
+            answered `shouldBe` True
+        outcome <- takeMVar done
+        case outcome of
+          Left ex -> expectationFailure ("worker failed: " <> show ex)
+          Right _ -> doesFileExist (testDir </> "hello.txt") `shouldReturn` True
+
+      it "denies through the TUI gate without writing the file" $ do
+        env0 <- newIOEnv "k" "test-model" testDir False
+        gate <- newPermissionGate
+        let env = env0 { ioResolveAsk = resolveAskWithGate gate (\_ -> pure ()) }
+        done <- newEmptyMVar
+        _ <- forkIO $ do
+          r <- try (runWriteLoop env) :: IO (Either SomeException ((AgentResult, [Message]), [AgentEvent]))
+          putMVar done r
+        mAsk <- awaitPermissionAsk gate 2000000
+        case mAsk of
+          Nothing -> expectationFailure "timed out waiting for permission ask"
+          Just (askId, _, _, _) -> do
+            answered <- respondPermission gate askId False
+            answered `shouldBe` True
+        outcome <- takeMVar done
+        case outcome of
+          Left ex -> expectationFailure ("worker failed: " <> show ex)
+          Right (_, events) -> do
+            doesFileExist (testDir </> "hello.txt") `shouldReturn` False
+            events `shouldContain` [EvPermissionDenied "write_file" "Permission denied by policy"]
+
+      it "releases a waiting worker on cancel and ignores a stale approval" $ do
+        env0 <- newIOEnv "k" "test-model" testDir False
+        gate <- newPermissionGate
+        let env = env0 { ioResolveAsk = resolveAskWithGate gate (\_ -> pure ()) }
+        done <- newEmptyMVar
+        tid <- forkIO $ do
+          r <- try (runWriteLoop env) :: IO (Either SomeException ((AgentResult, [Message]), [AgentEvent]))
+          putMVar done r
+        mAsk <- awaitPermissionAsk gate 2000000
+        case mAsk of
+          Nothing -> expectationFailure "timed out waiting for permission ask"
+          Just (askId, _, _, _) -> do
+            cancelPermissionAsk gate
+            killThread tid
+            stale <- respondPermission gate askId True
+            stale `shouldBe` False
+        _ <- takeMVar done
+        doesFileExist (testDir </> "hello.txt") `shouldReturn` False
+        env2 <- newIOEnv "k" "test-model" testDir False
+        let envLater = env2 { ioResolveAsk = resolveAskWithGate gate (\_ -> pure ()) }
+        done2 <- newEmptyMVar
+        _ <- forkIO $ do
+          r <- try (runWriteLoop envLater) :: IO (Either SomeException ((AgentResult, [Message]), [AgentEvent]))
+          putMVar done2 r
+        mAsk2 <- awaitPermissionAsk gate 2000000
+        case mAsk2 of
+          Nothing -> expectationFailure "timed out waiting for second permission ask"
+          Just (askId2, _, _, _) -> do
+            answered <- respondPermission gate askId2 False
+            answered `shouldBe` True
+        outcome2 <- takeMVar done2
+        case outcome2 of
+          Left ex -> expectationFailure ("second worker failed: " <> show ex)
+          Right _ -> doesFileExist (testDir </> "hello.txt") `shouldReturn` False
 
     describe "executeWriteFile (tool layer)" $ do
       it "refuses to write into protected paths" $ do
