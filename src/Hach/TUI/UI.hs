@@ -32,6 +32,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Graphics.Vty as Vty
+import Lens.Micro ((^.))
 import Text.Printf (printf)
 import Graphics.Vty.UnicodeWidthTable.Install (TableInstallException, installUnicodeWidthTable)
 import Graphics.Vty.UnicodeWidthTable.Types (UnicodeWidthTable(..), WidthTableRange(..))
@@ -514,7 +515,49 @@ renderToolCard isSelected ToolCard{..} =
 -- Task Input Panel
 --------------------------------------------------------------------------------
 
+-- | Terminal columns occupied by a character. Combining marks are width 0.
+displayColWidth :: Char -> Int
+displayColWidth c = max 0 (Vty.safeWcwidth c)
+
+-- | Terminal columns occupied by a string.
+displayWidth :: Text -> Int
+displayWidth = T.foldl' (\n c -> n + displayColWidth c) 0
+
+-- | Wrap at display-column width, breaking mid-token when a word is longer
+-- than the line. Combining characters stay attached to the preceding mark;
+-- a character wider than the line sits on its own row rather than being split.
+wrapToDisplayWidth :: Int -> Text -> [Text]
+wrapToDisplayWidth width text
+  | width < 1 = [text]
+  | T.null text = [""]
+  | otherwise = go "" 0 text
+  where
+    go line lineW rest =
+      case T.uncons rest of
+        Nothing -> [line]
+        Just (c, cs) ->
+          let cw = displayColWidth c
+          in if cw == 0
+               then go (line `T.snoc` c) lineW cs
+               else if lineW + cw <= width
+                 then go (line `T.snoc` c) (lineW + cw) cs
+                 else if T.null line
+                   then T.singleton c : go "" 0 cs
+                   else line : go (T.singleton c) cw cs
+
+-- | Keep the input panel from crowding out the transcript: show at most this
+-- many wrapped rows, always including the line that holds the typing cursor.
+maxInputBodyLines :: Int
+maxInputBodyLines = 6
+
+promptPrefixText :: Text
+promptPrefixText = "❯ "
+
+promptPrefixCols :: Int
+promptPrefixCols = displayWidth promptPrefixText
+
 -- | Modern prompt input bar.
+-- Long prompts wrap on display columns so the typing position stays visible.
 -- Trailing slash-token completion (built-in commands and user-invocable
 -- skills) is shown as dim ghost text; Tab accepts.
 renderInputPanel :: TuiState -> Widget Name
@@ -523,27 +566,60 @@ renderInputPanel TuiState{..} =
       borderMod = if isFocused then withAttr activeBorderAttr else withAttr inactiveBorderAttr
       borderGlyph = if isFocused then unicodeBold else unicodeRounded
       promptLabel = if isFocused then " [ ❯ Prompt (Active) ] " else " ❯ Prompt "
-      prefix = withAttr userPromptAttr (txt "❯ ")
       body
         | T.null tsInputBuffer =
-            prefix <+> withAttr dimAttr (txt "Type a task prompt and press Enter...")
+            let placeholder =
+                  withAttr userPromptAttr (txt promptPrefixText)
+                    <+> withAttr dimAttr (txt "Type a task prompt and press Enter...")
+            in if isFocused
+                 then showCursor VpInput (Location (promptPrefixCols, 0)) placeholder
+                 else placeholder
         | otherwise =
-            case inputSlashCompletion tsSkills builtinCommands tsInputBuffer of
-              Just suffix ->
-                prefix <+> hBox
-                  [ withAttr userTextAttr (txt tsInputBuffer)
-                  , withAttr dimAttr (txt suffix)
-                  ]
-              Nothing ->
-                prefix <+> withAttr userTextAttr (txt tsInputBuffer)
-      cursor = if isFocused
-                 then showCursor VpInput (Location (T.length tsInputBuffer + 2, 0))
-                 else id
+            wrappedPromptBody isFocused tsInputBuffer
+              (inputSlashCompletion tsSkills builtinCommands tsInputBuffer)
   in borderMod $
      withBorderStyle borderGlyph $
      borderWithLabel (txt promptLabel) $
      padLeftRight 1 $
-     cursor (padRight Max body)
+     padRight Max body
+
+-- | Wrap the prompt, place the cursor at the end of the buffer, and keep the
+-- last wrapped rows when the prompt is taller than 'maxInputBodyLines'.
+wrappedPromptBody :: Bool -> Text -> Maybe Text -> Widget Name
+wrappedPromptBody focused buffer mSuffix =
+  Widget Greedy Fixed $ do
+    ctx <- getContext
+    let wrapW = max 1 (ctx ^. availWidthL - promptPrefixCols)
+        takeN = min maxInputBodyLines (max 1 (ctx ^. availHeightL))
+        bufLines = wrapToDisplayWidth wrapW buffer
+        dropped = max 0 (length bufLines - takeN)
+        shown =
+          case drop dropped bufLines of
+            [] -> [""]
+            ls -> ls
+        cursorRow = length shown - 1
+        lastLine =
+          case reverse shown of
+            (l:_) -> l
+            []    -> ""
+        cursorCol = promptPrefixCols + displayWidth lastLine
+        cursorLoc = Location (cursorCol, cursorRow)
+        indent = txt (T.replicate promptPrefixCols " ")
+        lineWidget i ln =
+          let lead
+                | dropped == 0 && i == 0 = withAttr userPromptAttr (txt promptPrefixText)
+                | otherwise = indent
+              ghost
+                | i == cursorRow
+                , Just suffix <- mSuffix
+                = withAttr dimAttr (txt suffix)
+                | otherwise = emptyWidget
+          in lead <+> withAttr userTextAttr (txt ln) <+> ghost
+        stacked = vBox (zipWith lineWidget [0..] shown)
+        placed
+          | focused = showCursor VpInput cursorLoc stacked
+          | otherwise = stacked
+    render placed
 
 --------------------------------------------------------------------------------
 -- Footer & Help

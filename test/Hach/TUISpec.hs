@@ -43,7 +43,8 @@ import Hach.Types
   )
 import qualified Brick.Main as M
 import Brick.Types (BrickEvent(..), Location(..))
-import Control.Monad (forM_)
+import Control.Monad (forM_, unless)
+import Data.Char (isSpace)
 import Data.IORef
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -134,6 +135,118 @@ spec = do
         let (s1, actions) = updateTui (EvUserKey KeyEnter) baseState
         tsStatus s1 `shouldBe` StatusIdle
         actions `shouldBe` []
+
+    describe "Long prompt visibility (Issue #89)" $ do
+      let tailMarker = "TAILXYZ"
+          headMarker = "HEADABC"
+          regionH = 30
+          longPrompt widthCopies =
+            headMarker <> T.replicate widthCopies "word1234 " <> tailMarker
+          screenFor cols st =
+            let region = (cols, regionH)
+                rows = renderTestRows st region
+            in (rows, T.unlines rows)
+          promptState prompt = baseState { tsInputBuffer = prompt, tsFocus = FocusInput }
+          packedInput rows =
+            T.filter (not . isSpace) $ T.concat
+              [ T.filter (/= '┃') r
+              | r <- rows
+              , T.any (== '┃') r
+              , T.all (`notElem` ("┏┗" :: String)) r
+              ]
+          dumpScreen :: Int -> T.Text -> [T.Text] -> T.Text -> String
+          dumpScreen cols prompt rows screen = unlines
+            [ "cols=" <> show cols
+            , "promptChars=" <> show (T.length prompt)
+            , "packedInput=" <> T.unpack (packedInput rows)
+            , "inputRows:"
+            , T.unpack (T.unlines [r | r <- rows, T.any (== '┃') r])
+            , "full screen:"
+            , T.unpack screen
+            ]
+          assertPromptVisible cols prompt extra = do
+            let st = promptState prompt
+                (rows, screen) = screenFor cols st
+                packed = packedInput rows
+                dump = dumpScreen cols prompt rows screen
+            unless (tailMarker `T.isInfixOf` packed) $
+              expectationFailure dump
+            unless (tailMarker `T.isSuffixOf` packed) $
+              expectationFailure $ "typing position is not at the visible end of the input\n" <> dump
+            extra packed dump
+
+      it "keeps a short prompt fully visible" $
+        assertPromptVisible 40 (longPrompt 0) $ \packed dump ->
+          unless (headMarker `T.isInfixOf` packed) $ expectationFailure dump
+
+      it "keeps the typing position visible at a narrow 40-col terminal" $
+        assertPromptVisible 40 (longPrompt 3) $ \packed dump ->
+          unless (headMarker `T.isInfixOf` packed) $ expectationFailure dump
+
+      it "keeps the typing position visible for an unbroken long token" $
+        assertPromptVisible 40 (T.replicate 60 "x" <> tailMarker) $ \_ _ -> pure ()
+
+      it "keeps the typing position visible at an ordinary 80-col terminal" $
+        assertPromptVisible 80 (longPrompt 8) $ \packed dump ->
+          unless (headMarker `T.isInfixOf` packed) $ expectationFailure dump
+
+      it "keeps the typing position visible when the prompt is several times the box width" $
+        assertPromptVisible 40 (longPrompt 20) $ \_ _ -> pure ()
+
+      it "keeps wide characters from pushing the cursor out of the input area" $
+        assertPromptVisible 40 (T.replicate 20 "你" <> tailMarker) $ \_ _ -> pure ()
+
+      it "keeps combining characters attached while wrapping" $
+        assertPromptVisible 40 (T.replicate 30 "e\x0301" <> tailMarker) $ \_ _ -> pure ()
+
+      it "submits the complete long message unchanged" $ do
+        let prompt = longPrompt 20
+            s1 = promptState prompt
+            (s2, actions) = updateTui (EvUserKey KeyEnter) s1
+        tsInputBuffer s2 `shouldBe` ""
+        actions `shouldBe` [ActionRunAgent prompt]
+
+      it "keeps the typing position visible after backspacing across a wrap boundary" $ do
+        let prompt = longPrompt 3
+            s1 = fst $ updateTui (EvUserKey KeyBackspace) (promptState prompt)
+        tsInputBuffer s1 `shouldBe` T.init prompt
+        let (rows, screen) = screenFor 40 s1
+            dump = dumpScreen 40 (tsInputBuffer s1) rows screen
+        unless ("TAILXY" `T.isInfixOf` packedInput rows) $
+          expectationFailure dump
+
+      it "restores the placeholder after clearing a long prompt" $ do
+        let s1 = fst $ updateTui (EvUserKey (KeyCtrl 'u')) (promptState (longPrompt 8))
+        tsInputBuffer s1 `shouldBe` ""
+        let (rows, screen) = screenFor 40 s1
+        any ("Type a task prompt" `T.isInfixOf`) rows `shouldBe` True
+        tailMarker `T.isInfixOf` screen `shouldBe` False
+
+      it "keeps a recalled long prompt visible" $ do
+        let prompt = longPrompt 8
+            s0 = baseState { tsPromptHistory = [prompt], tsInputBuffer = "draft", tsFocus = FocusInput }
+            s1 = fst $ updateTui (EvUserKey KeyUp) s0
+        tsInputBuffer s1 `shouldBe` prompt
+        let (rows, screen) = screenFor 40 s1
+            dump = dumpScreen 40 prompt rows screen
+        unless (tailMarker `T.isInfixOf` packedInput rows) $
+          expectationFailure dump
+
+      it "keeps the typing position visible after a resize from 80 to 40 columns" $ do
+        let prompt = longPrompt 8
+            st = promptState prompt
+            (rows80, screen80) = screenFor 80 st
+            (rows40, screen40) = screenFor 40 st
+        unless (tailMarker `T.isInfixOf` packedInput rows80) $
+          expectationFailure (dumpScreen 80 prompt rows80 screen80)
+        unless (tailMarker `T.isInfixOf` packedInput rows40) $
+          expectationFailure (dumpScreen 40 prompt rows40 screen40)
+
+      it "still shows slash-completion ghost text on a short prompt" $ do
+        let s1 = promptState "/cle"
+            (rows, screen) = screenFor 40 s1
+        unless ("/cle" `T.isInfixOf` screen && "ar" `T.isInfixOf` screen) $
+          expectationFailure (T.unpack (T.unlines rows))
 
     describe "Focus Navigation" $ do
       it "cycles focus with Tab between Input and Transcript" $ do
