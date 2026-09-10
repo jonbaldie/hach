@@ -156,15 +156,18 @@ pureAlgebra = AgentAlgebra
               case Map.lookup path (mockFiles env) of
                 Nothing -> pure $ ToolError ("File not found: " <> T.pack path)
                 Just currentText ->
-                  let count = T.count oldContent currentText
-                  in if count == 0
-                    then pure $ ToolError ("Target content not found in '" <> T.pack path <> "'.")
-                    else if count > 1
-                      then pure $ ToolError ("Target content found " <> T.pack (show count) <> " times in '" <> T.pack path <> "'; replacement requires a unique match.")
-                      else do
-                        let updated = T.replace oldContent newContent currentText
-                        modifyEnv $ \e -> e { mockFiles = Map.insert path updated (mockFiles e) }
-                        pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
+                  if T.null oldContent
+                    then pure $ ToolError "The 'old_content' parameter cannot be empty."
+                    else
+                      let count = countOccurrencesUpToTwo oldContent currentText
+                      in if count == 0
+                        then pure $ ToolError ("Target content not found in '" <> T.pack path <> "'.")
+                        else if count > 1
+                          then pure $ ToolError ("Target content found " <> T.pack (show count) <> " times in '" <> T.pack path <> "'; replacement requires a unique match.")
+                          else do
+                            let updated = T.replace oldContent newContent currentText
+                            modifyEnv $ \e -> e { mockFiles = Map.insert path updated (mockFiles e) }
+                            pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
 
         name | name `elem` ["find_files", "Glob", "glob"] ->
           case parseGlobArgs call of
