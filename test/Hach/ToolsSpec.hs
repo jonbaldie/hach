@@ -286,11 +286,20 @@ spec = do
 
       it "fails to replace text when target content occurs multiple times" $ do
         let targetFile = testSandbox </> "sample.txt"
-        _ <- executeWriteFile "." (WriteFileArgs targetFile "repeat repeat repeat")
+        _ <- executeWriteFile "." (WriteFileArgs targetFile "repeat repeat")
         res <- executeReplaceFileContent "." (ReplaceFileContentArgs targetFile "repeat" "single")
-        case res of
-          ToolError err -> err `shouldSatisfy` ("multiple" `T.isInfixOf`)
-          ToolSuccess _ -> expectationFailure "Expected error when target content occurs multiple times"
+        res `shouldBe` ToolError
+          ("Target content found multiple (2) times in '" <> T.pack targetFile <> "'; replacement requires a unique match.")
+
+      it "refuses overlapping target matches and leaves the file unchanged" $ do
+        let targetFile = "overlap.txt"
+        _ <- executeWriteFile testSandbox (WriteFileArgs targetFile "aaa")
+        let call = ToolCall "c_overlap" "Edit"
+              "{\"path\":\"overlap.txt\",\"old_content\":\"aa\",\"new_content\":\"X\"}"
+        res <- executeCodingTool testSandbox call
+        res `shouldBe` ToolError "Target content found multiple (2) times in 'overlap.txt'; replacement requires a unique match."
+        readRes <- executeReadFile testSandbox (ReadFileArgs targetFile)
+        readRes `shouldBe` ToolSuccess "aaa"
 
       it "returns ToolError and does not crash when old_content is empty" $ do
         let targetFile = testSandbox </> "sample.txt"

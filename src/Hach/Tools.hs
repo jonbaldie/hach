@@ -92,6 +92,9 @@ module Hach.Tools
     -- * Output Truncation
   , truncateToolOutput
 
+    -- * Match Counting
+  , countOccurrencesUpToTwo
+
     -- * Execution (IO)
   , executeCodingTool
   , executeReadFile
@@ -991,6 +994,21 @@ truncateToolOutput raw
 -- Tool Execution against Workspace (IO)
 --------------------------------------------------------------------------------
 
+-- | Count non-empty target occurrences by starting offset, stopping after
+-- two matches because the edit guard only needs to distinguish zero, one,
+-- and multiple matches.
+countOccurrencesUpToTwo :: Text -> Text -> Int
+countOccurrencesUpToTwo needle haystack
+  | T.null needle = 0
+  | otherwise = go 0 haystack
+  where
+    go count _ | count >= 2 = 2
+    go count remaining =
+      let (_, suffix) = T.breakOn needle remaining
+      in if T.null suffix
+        then count
+        else go (count + 1) (T.tail suffix)
+
 -- | Check a canonical target for protected components below the workspace root.
 -- The root is stripped first so a workspace whose own path contains a
 -- protected directory name can still be modified normally.
@@ -1206,7 +1224,7 @@ executeReplaceFileContent root (ReplaceFileContentArgs path oldContent newConten
                         Left ex -> pure $ ToolError ("Read error: " <> T.pack (show ex))
                         Right bytes -> do
                           let txt = TE.decodeUtf8With TE.lenientDecode bytes
-                              matches = T.count oldContent txt
+                              matches = countOccurrencesUpToTwo oldContent txt
                           if matches == 0
                             then pure $ ToolError ("Target content not found in '" <> T.pack path <> "'.")
                             else if matches > 1
