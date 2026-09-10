@@ -16,6 +16,7 @@ module Hach.Skills
   , skillInvocationCompletion
   , inputSlashCompletion
   , substituteArguments
+  , expandSkillContent
   , injectDynamicContext
   ) where
 
@@ -186,6 +187,15 @@ discoverSkills workspace = do
 substituteArguments :: Text -> Text -> Text
 substituteArguments args content = T.replace "$ARGUMENTS" args content
 
+-- | Expand trusted skill content before inserting caller-supplied arguments.
+--
+-- Dynamic context expansion can execute commands and read files, so caller
+-- text must be inserted only after that expansion has completed.
+expandSkillContent :: FilePath -> Maybe Text -> Text -> IO Text
+expandSkillContent root mArgs content = do
+  expanded <- injectDynamicContext root content
+  pure $ maybe expanded (`substituteArguments` expanded) mArgs
+
 -- | Inject dynamic context into skill content: !command lines and {{file:path}} placeholders.
 injectDynamicContext :: FilePath -> Text -> IO Text
 injectDynamicContext root raw = do
@@ -273,7 +283,8 @@ injectSkillsIntoPrompt skills prompt =
        else T.strip formattedSkills <> "\n\n" <> prompt
 
 -- | Slash-invocation counterpart to 'executeSkill': bind leftover prompt text
--- to $ARGUMENTS and expand !command / {{file:}} before splicing skills in.
+-- to $ARGUMENTS and expand trusted !command / {{file:}} content before
+-- splicing skills in.
 expandSlashInvokedPrompt :: FilePath -> SkillCatalog -> Text -> IO Text
 expandSlashInvokedPrompt root catalog rawInput = do
   let (cleaned, invoked) = parseSkillInvocations catalog rawInput
@@ -281,8 +292,7 @@ expandSlashInvokedPrompt root catalog rawInput = do
   pure (injectSkillsIntoPrompt expandedSkills cleaned)
   where
     expandOne args sk = do
-      let substituted = substituteArguments args (skillContent sk)
-      expanded <- injectDynamicContext root substituted
+      expanded <- expandSkillContent root (Just args) (skillContent sk)
       pure sk { skillContent = T.stripEnd expanded }
 
 -- | Compute the inline completion suffix for the slash-command currently being typed.
