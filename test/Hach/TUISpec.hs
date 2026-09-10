@@ -1701,8 +1701,20 @@ spec = do
         let (sMem, _) = updateTui (EvSubmit "/memory") baseState
         tsHistory sMem `shouldContain` [DiNotice "Project memory instructions active."]
 
-        let (sInit, _) = updateTui (EvSubmit "/init") baseState
-        tsHistory sInit `shouldContain` [DiNotice "Initialized CLAUDE.md guidelines template."]
+        let (sInit, initActions) = updateTui (EvSubmit "/init") baseState
+        tsHistory sInit `shouldBe` []
+        tsInputBuffer sInit `shouldBe` ""
+        tsPromptHistory sInit `shouldBe` ["/init"]
+        initActions `shouldBe` [ActionInitializeProject]
+
+        let initialized = applyProjectInitializationResult ProjectInitialized sInit
+        tsHistory initialized `shouldContain` [DiNotice "Initialized CLAUDE.md guidelines template."]
+
+        let existing = applyProjectInitializationResult ProjectAlreadyPresent sInit
+        tsHistory existing `shouldContain` [DiNotice "CLAUDE.md already exists; left it unchanged."]
+
+        let failed = applyProjectInitializationResult (ProjectInitializationFailed "Could not create CLAUDE.md: permission denied") sInit
+        tsHistory failed `shouldContain` [DiNotice "Error: Could not create CLAUDE.md: permission denied"]
 
       it "handles /permissions and /fewer-permission-prompts" $ do
         let (sPerm, _) = updateTui (EvSubmit "/permissions") baseState

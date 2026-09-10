@@ -4,6 +4,7 @@
 module Hach.Interpreter.IO
   ( IOEnv(..)
   , IOEnvPermissions(..)
+  , initializeProjectWorkspace
   , defaultIOEnvPermissions
   , newIOEnv
   , newIOEnvWithPermissions
@@ -28,8 +29,10 @@ import Hach.OpenRouter
 import Hach.Permissions (evalPermission)
 import qualified Hach.Sessions as Sessions
 import Hach.Tools
+import Hach.TUI.Types (ProjectInitializationResult(..))
 import Hach.Types
 import Control.Monad (when)
+import Control.Exception (bracket, displayException, try)
 import qualified Data.Aeson as Aeson
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Map.Strict (Map)
@@ -41,7 +44,60 @@ import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
 import Network.HTTP.Client (Manager, newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
+import System.Directory (doesDirectoryExist, doesFileExist)
 import System.FilePath ((</>))
+import System.IO (hClose)
+import System.Posix.IO (OpenFileFlags(..), OpenMode(WriteOnly), defaultFileFlags, fdToHandle, openFd)
+import System.IO.Error (isAlreadyExistsError)
+
+-- | Markdown starter instructions written by the TUI's @/init@ command.
+claudeInstructionsTemplate :: Text
+claudeInstructionsTemplate = T.unlines
+  [ "# Project Guidelines"
+  , ""
+  , "Add project-specific instructions for the coding agent here."
+  , ""
+  , "## Development"
+  , ""
+  , "- Describe how to build and test the project."
+  , "- Note conventions or constraints the agent should follow."
+  ]
+
+-- | Create the active project's 'CLAUDE.md' without replacing an existing file.
+-- The active workspace is read at action time so worktree switches are honoured.
+initializeProjectWorkspace :: IOEnv -> IO ProjectInitializationResult
+initializeProjectWorkspace env = do
+  workspace <- currentIOWorkspace env
+  let target = workspace </> "CLAUDE.md"
+  result <- try (initializeTarget target)
+  pure $ case (result :: Either IOError ProjectInitializationResult) of
+    Right outcome -> outcome
+    Left err -> ProjectInitializationFailed (formatFailure target err)
+  where
+    initializeTarget target = do
+      alreadyFile <- doesFileExist target
+      alreadyDirectory <- doesDirectoryExist target
+      if alreadyFile
+        then pure ProjectAlreadyPresent
+        else if alreadyDirectory
+          then pure (ProjectInitializationFailed
+            ("Could not create " <> T.pack target <> ": path is a directory."))
+          else do
+            createResult <- try (createExclusiveFile target)
+            pure $ case (createResult :: Either IOError ()) of
+              Right () -> ProjectInitialized
+              Left err
+                | isAlreadyExistsError err -> ProjectAlreadyPresent
+                | otherwise -> ProjectInitializationFailed (formatFailure target err)
+
+    formatFailure target err =
+      "Could not create " <> T.pack target <> ": " <> T.pack (displayException err)
+
+    createExclusiveFile target = do
+      bracket
+        (openFd target WriteOnly (defaultFileFlags { creat = Just 0o644, exclusive = True }) >>= fdToHandle)
+        hClose
+        (\handle -> TIO.hPutStr handle claudeInstructionsTemplate)
 
 -- | Static permission and hook configuration threaded from CLI flags and
 -- layered settings into the IO interpreter.
