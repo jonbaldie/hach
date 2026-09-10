@@ -27,6 +27,7 @@ import qualified Hach.GitSpec as GitSpec
 import qualified Hach.TasksSpec as TasksSpec
 import qualified Hach.NotificationsSpec as NotificationsSpec
 import qualified Hach.InterpreterIOSpec as InterpreterIOSpec
+import qualified Hach.CLISpec as CLISpec
 
 main :: IO ()
 main = hspec $ do
@@ -54,3 +55,4 @@ main = hspec $ do
   describe "Hach.Tasks" TasksSpec.spec
   describe "Hach.Notifications" NotificationsSpec.spec
   describe "Hach.Interpreter.IO" InterpreterIOSpec.spec
+  describe "Hach CLI" CLISpec.spec
