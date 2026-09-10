@@ -71,7 +71,8 @@ library
         microlens-mtl,
         async,
         stm,
-        time
+        time,
+        unix
 
 executable hach
     import:           common-options

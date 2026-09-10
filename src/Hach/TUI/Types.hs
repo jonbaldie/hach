@@ -33,6 +33,7 @@ module Hach.TUI.Types
     -- * Events and Actions
   , UserKey(..)
   , TuiEvent(..)
+  , ProjectInitializationResult(..)
   , TuiAction(..)
   , pattern ActionScrollHistory
 
@@ -233,9 +234,17 @@ data TuiEvent
   | EvSubmit !Text
   deriving (Show, Eq)
 
+-- | Result of attempting to create the project-level Claude instructions file.
+data ProjectInitializationResult
+  = ProjectInitialized
+  | ProjectAlreadyPresent
+  | ProjectInitializationFailed !Text
+  deriving (Show, Eq)
+
 -- | Actions requested by the reducer for the external environment to perform.
 data TuiAction
-  = ActionRunAgent !Text
+  = ActionInitializeProject
+  | ActionRunAgent !Text
   | ActionRunGoal !Text
   | ActionCancelAgent
   | ActionQuit
@@ -277,5 +286,5 @@ builtinCommands =
 pattern ActionScrollHistory :: Int -> TuiAction
 pattern ActionScrollHistory delta = ActionScrollTranscript delta
 
-{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionSetPermissionMode, ActionRespondPermission #-}
-{-# COMPLETE ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionSetPermissionMode, ActionRespondPermission #-}
+{-# COMPLETE ActionInitializeProject, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionSetPermissionMode, ActionRespondPermission #-}
+{-# COMPLETE ActionInitializeProject, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionSetPermissionMode, ActionRespondPermission #-}

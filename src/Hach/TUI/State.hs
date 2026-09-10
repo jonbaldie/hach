@@ -5,6 +5,7 @@ module Hach.TUI.State
   ( updateTui
   , handleUserKey
   , handleAgentEvent
+  , applyProjectInitializationResult
   , toggleToolExpanded
   , shouldAutoScroll
   , isTranscriptAppendingEvent
@@ -36,6 +37,22 @@ import Hach.Types
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Text.Printf (printf)
+
+-- | Apply the result of the IO-side project initialization action.
+applyProjectInitializationResult :: ProjectInitializationResult -> TuiState -> TuiState
+applyProjectInitializationResult result state =
+  let appendNotice notice = state { tsTranscript = tsTranscript state ++ [DiNotice notice] }
+  in case result of
+       ProjectInitialized ->
+         appendNotice "Initialized CLAUDE.md guidelines template."
+       ProjectAlreadyPresent ->
+         appendNotice "CLAUDE.md already exists; left it unchanged."
+       ProjectInitializationFailed err ->
+         let notice = "Error: " <> err
+         in (appendNotice notice)
+              { tsStatus = StatusError notice
+              , tsFocus = FocusInput
+              }
 
 -- | Pure state reducer for the TUI.
 -- Evaluates an incoming 'TuiEvent' against the current 'TuiState',
@@ -311,14 +328,14 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/init" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice "Initialized CLAUDE.md guidelines template."]
+          newTranscript = tsTranscript state
       in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
                  }
-         , []
+         , [ActionInitializeProject]
          )
   | trimmed == "/permissions" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]

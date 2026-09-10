@@ -164,6 +164,50 @@ initialTuiLaunch (Just p) st
   | T.null (T.strip p) = (st, [])
   | otherwise          = updateTui (EvSubmit p) st
 
+-- | Execute one side-effecting action requested by the pure reducer.
+runTuiAction
+  :: BChan AgentEvent
+  -> TVar (Maybe (Async ()))
+  -> PermissionGate
+  -> IOEnv
+  -> Text
+  -> TuiAction
+  -> EventM Name TuiState ()
+runTuiAction eventChan workerVar gate ioEnv sysPrompt = \case
+  ActionInitializeProject -> do
+    result <- liftIO (initializeProjectWorkspace ioEnv)
+    modify (applyProjectInitializationResult result)
+  ActionQuit -> do
+    liftIO $ do
+      cancelPermissionAsk gate
+      mWorker <- atomically $ do
+        w <- readTVar workerVar
+        writeTVar workerVar Nothing
+        pure w
+      mapM_ cancel mWorker
+    halt
+  ActionSetPermissionMode mode ->
+    liftIO (setIOPermissionMode ioEnv mode)
+  ActionRespondPermission askId approved ->
+    liftIO (void (respondPermission gate askId approved))
+  ActionCancelAgent -> liftIO $ do
+    cancelPermissionAsk gate
+    mWorker <- atomically $ do
+      w <- readTVar workerVar
+      writeTVar workerVar Nothing
+      pure w
+    mapM_ cancel mWorker
+  ActionRunAgent prompt -> do
+    currentState <- get
+    triggerAgentRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) prompt (tsHistory currentState)
+    vScrollToEnd (viewportScroll VpTranscript)
+  ActionRunGoal condition -> do
+    currentState <- get
+    triggerGoalRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) condition (tsHistory currentState)
+    vScrollToEnd (viewportScroll VpTranscript)
+  ActionScrollTranscript delta ->
+    vScrollBy (viewportScroll VpTranscript) delta
+
 -- | Build the active system prompt for the TUI given workspace and optional custom appended prompt.
 buildTuiSystemPrompt :: FilePath -> Maybe Text -> IO Text
 buildTuiSystemPrompt workspace mAppendPrompt = do
@@ -194,21 +238,7 @@ runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt = do
         , appChooseCursor = showFirstCursor
         , appHandleEvent  = handleBrickEvent eventChan workerVar gate ioEnv sysPrompt
         , appStartEvent   = do
-            currentState <- get
-            forM_ initialActions $ \case
-              ActionQuit -> halt
-              ActionCancelAgent -> pure ()
-              ActionSetPermissionMode mode -> liftIO (setIOPermissionMode ioEnv mode)
-              ActionRespondPermission askId approved ->
-                liftIO (void (respondPermission gate askId approved))
-              ActionRunAgent prompt -> do
-                triggerAgentRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) prompt (tsHistory currentState)
-                vScrollToEnd (viewportScroll VpTranscript)
-              ActionRunGoal condition -> do
-                triggerGoalRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) condition (tsHistory currentState)
-                vScrollToEnd (viewportScroll VpTranscript)
-              ActionScrollTranscript delta ->
-                vScrollBy (viewportScroll VpTranscript) delta
+            forM_ initialActions (runTuiAction eventChan workerVar gate ioEnv sysPrompt)
         , appAttrMap      = const tuiAttrMap
         }
 
@@ -476,34 +506,6 @@ handleBrickEvent eventChan workerVar gate ioEnv sysPrompt = \case
         currentState <- get
         let (nextState, actions) = updateTui (EvUserKey key) currentState
         put nextState
-        forM_ actions $ \case
-          ActionQuit -> do
-            liftIO $ do
-              cancelPermissionAsk gate
-              mWorker <- atomically $ do
-                w <- readTVar workerVar
-                writeTVar workerVar Nothing
-                pure w
-              mapM_ cancel mWorker
-            halt
-          ActionSetPermissionMode mode ->
-            liftIO (setIOPermissionMode ioEnv mode)
-          ActionRespondPermission askId approved ->
-            liftIO (void (respondPermission gate askId approved))
-          ActionCancelAgent -> liftIO $ do
-            cancelPermissionAsk gate
-            mWorker <- atomically $ do
-              w <- readTVar workerVar
-              writeTVar workerVar Nothing
-              pure w
-            mapM_ cancel mWorker
-          ActionRunAgent prompt -> do
-            triggerAgentRun eventChan workerVar gate ioEnv (tsModelName nextState) sysPrompt (tsMaxTurns nextState) prompt (tsHistory nextState)
-            vScrollToEnd (viewportScroll VpTranscript)
-          ActionRunGoal condition -> do
-            triggerGoalRun eventChan workerVar gate ioEnv (tsModelName nextState) sysPrompt (tsMaxTurns nextState) condition (tsHistory nextState)
-            vScrollToEnd (viewportScroll VpTranscript)
-          ActionScrollTranscript delta ->
-            vScrollBy (viewportScroll VpTranscript) delta
+        forM_ actions (runTuiAction eventChan workerVar gate ioEnv sysPrompt)
       Nothing ->
         pure ()
