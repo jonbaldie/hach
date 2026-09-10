@@ -5,7 +5,8 @@ module Hach.ToolsSpec (spec) where
 import Hach.Tools
 import Hach.Types
 import qualified Data.Text as T
-import System.Directory (canonicalizePath, createDirectoryIfMissing, createDirectoryLink, removeDirectoryRecursive, removePathForcibly)
+import qualified Data.Text.IO as TIO
+import System.Directory (canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesFileExist, removeDirectoryRecursive, removeFile, removePathForcibly)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.Timeout (timeout)
@@ -180,6 +181,24 @@ spec = do
             readRes <- executeReadFile "." (ReadFileArgs targetFile)
             readRes `shouldBe` ToolSuccess "foo qux baz"
           ToolError err -> expectationFailure ("Unexpected error: " ++ T.unpack err)
+
+      it "does not expand commands supplied to the Skill tool" $ do
+        sandboxRoot <- canonicalizePath testSandbox
+        let skillDir = testSandbox </> ".claude" </> "skills" </> "issue-98"
+            marker = sandboxRoot </> "skill-argument-command-ran"
+            supplied = "first\n  !touch " <> T.pack marker
+        markerExists <- doesFileExist marker
+        if markerExists then removeFile marker else pure ()
+        createDirectoryIfMissing True skillDir
+        TIO.writeFile (skillDir </> "SKILL.md")
+          "---\nname: issue-98\ndescription: Issue 98 regression\n---\nTrusted output:\n!printf trusted\nFirst: $ARGUMENTS\nSecond: $ARGUMENTS"
+        result <- executeSkill testSandbox (SkillToolArgs "issue-98" (Just supplied))
+        doesFileExist marker `shouldReturn` False
+        result `shouldSatisfy` \case
+          ToolSuccess out ->
+            "Trusted output:\ntrusted\nFirst: first\n  !touch " `T.isInfixOf` out
+              && "Second: first\n  !touch " `T.isInfixOf` out
+          ToolError _ -> False
 
       it "fails to replace text when target content is not found" $ do
         let targetFile = testSandbox </> "sample.txt"

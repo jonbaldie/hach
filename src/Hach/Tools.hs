@@ -122,7 +122,7 @@ module Hach.Tools
 import Hach.Git (createWorktree, isWorktreeDirectory)
 import Hach.Notifications (sendDesktopNotification)
 import Hach.Paths (resolveWorkspacePath)
-import Hach.Skills (discoverSkills, injectDynamicContext, skillContent, substituteArguments)
+import Hach.Skills (discoverSkills, expandSkillContent, skillContent)
 import Hach.Tasks
   ( Task(..)
   , TaskStore
@@ -1413,10 +1413,7 @@ executeSkill root (SkillToolArgs name mArgs) = do
   case Map.lookup name catalog of
     Nothing -> pure $ ToolError ("Skill not found: " <> name)
     Just sk -> do
-      let content = case mArgs of
-            Just args -> substituteArguments args (skillContent sk)
-            Nothing   -> skillContent sk
-      expanded <- injectDynamicContext root content
+      expanded <- expandSkillContent root mArgs (skillContent sk)
       pure $ ToolSuccess ("Skill '" <> name <> "' content:\n" <> expanded)
 
 globalBgRegistry :: BackgroundRegistry
@@ -1489,4 +1486,3 @@ executeAskUserQuestion :: AskUserQuestionArgs -> IO ToolResult
 executeAskUserQuestion (AskUserQuestionArgs q opts) = do
   let optsTxt = if null opts then "" else "\nOptions:\n" <> T.unlines (map (\o -> "- " <> o) opts)
   pure $ ToolSuccess ("Prompted user: " <> q <> optsTxt)
-

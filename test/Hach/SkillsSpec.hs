@@ -4,8 +4,9 @@ module Hach.SkillsSpec (spec) where
 
 import Hach.Skills
 import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
+import System.Directory (canonicalizePath, createDirectoryIfMissing, doesFileExist, removeDirectoryRecursive, removeFile)
 import System.FilePath ((</>))
 import Test.Hspec
 
@@ -196,6 +197,27 @@ spec = do
           injected <- expandSlashInvokedPrompt sandbox cat "/foo here"
           injected `shouldBe` "<skill name=\"foo\">\nOut:\nhello from shell\nEnd here.\n</skill>\n\nhere"
 
+        it "does not expand commands supplied through $ARGUMENTS" $ do
+          sandboxRoot <- canonicalizePath sandbox
+          let marker = sandboxRoot </> "argument-command-ran"
+              supplied = "first\n  !touch " <> T.pack marker
+              sk = mkSkill "foo" "d" "First: $ARGUMENTS\nSecond: $ARGUMENTS" "/p" SkillGlobal
+              cat = Map.singleton "foo" sk
+          markerExists <- doesFileExist marker
+          if markerExists then removeFile marker else pure ()
+          injected <- expandSlashInvokedPrompt sandbox cat ("/foo " <> supplied)
+          doesFileExist marker `shouldReturn` False
+          injected `shouldSatisfy` (T.isInfixOf ("First: first\n  !touch " <> T.pack marker))
+          injected `shouldSatisfy` (T.isInfixOf ("Second: first\n  !touch " <> T.pack marker))
+
+        it "does not expand file placeholders supplied through $ARGUMENTS" $ do
+          TIO.writeFile (sandbox </> "argument.txt") "argument file contents"
+          let sk = mkSkill "foo" "d" "Value: $ARGUMENTS" "/p" SkillGlobal
+              cat = Map.singleton "foo" sk
+          injected <- expandSlashInvokedPrompt sandbox cat "/foo {{file:argument.txt}}"
+          injected `shouldSatisfy` (T.isInfixOf "Value: {{file:argument.txt}}")
+          injected `shouldNotSatisfy` (T.isInfixOf "argument file contents")
+
         it "leaves prompts without slash skills unchanged" $ do
           let cat = Map.singleton "foo" (mkSkill "foo" "d" "body" "/p" SkillGlobal)
           injected <- expandSlashInvokedPrompt sandbox cat "plain prompt"
@@ -303,4 +325,3 @@ spec = do
           let raw = "Command output:\n!echo hello from shell\nEnd."
           res <- injectDynamicContext testDir raw
           res `shouldBe` "Command output:\nhello from shell\nEnd.\n"
-
