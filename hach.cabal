@@ -139,6 +139,9 @@ test-suite hach-test
         Hach.TasksSpec
         Hach.NotificationsSpec
         Hach.InterpreterIOSpec
+        Hach.CLISpec
+    build-tool-depends:
+        hach:hach
     build-depends:
         base >= 4.18 && < 5,
         hach,

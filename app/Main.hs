@@ -11,6 +11,7 @@ import Hach.Settings (Settings (..))
 import Hach.Tools
 import Hach.TUI.App (runTui)
 import Hach.Types
+import Control.Exception (tryJust)
 import Control.Monad (when)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -20,6 +21,7 @@ import Data.Version (showVersion)
 import qualified Paths_hach as Paths
 import System.Exit (exitFailure, exitSuccess, exitWith)
 import System.IO (stderr)
+import System.IO.Error (isEOFError)
 
 main :: IO ()
 main = do
@@ -84,7 +86,8 @@ main = do
         Nothing -> do
           when (not optPrint) $
             putStrLn "Enter your task/request:"
-          TIO.getLine
+          result <- tryJust (\err -> if isEOFError err then Just () else Nothing) TIO.getLine
+          pure (either (const T.empty) id result)
 
       when (T.null (T.strip taskPrompt)) $ do
         putStrLn "Empty task prompt provided. Exiting."
