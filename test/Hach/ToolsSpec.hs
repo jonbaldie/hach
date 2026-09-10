@@ -182,6 +182,82 @@ spec = do
             readRes `shouldBe` ToolSuccess "foo qux baz"
           ToolError err -> expectationFailure ("Unexpected error: " ++ T.unpack err)
 
+      it "refuses write_file through symlinks into protected directories" $ do
+        let protectedTargets =
+              [ (".git", ".safe-git-write-link")
+              , (".claude", ".safe-claude-write-link")
+              , (".agents", ".safe-agents-write-link")
+              , (".agent", ".safe-agent-write-link")
+              ]
+        mapM_ (\(protectedName, linkName) -> do
+          let protectedDir = testSandbox </> protectedName
+              protectedFile = protectedDir </> "config"
+              link = testSandbox </> linkName
+              rawPath = linkName <> "/config"
+          createDirectoryIfMissing True protectedDir
+          writeFile protectedFile "ORIGINAL"
+          removePathForcibly link
+          protectedDirCanon <- canonicalizePath protectedDir
+          createDirectoryLink protectedDirCanon link
+
+          let call = ToolCall "c_protected_write" "write_file"
+                ("{\"path\":\"" <> T.pack rawPath <> "\",\"content\":\"HIJACKED\"}")
+          res <- executeCodingTool testSandbox call
+          res `shouldBe` ToolError ("Protected path: write denied to " <> T.pack rawPath)
+          readFile protectedFile `shouldReturn` "ORIGINAL"
+          ) protectedTargets
+
+      it "refuses Edit through a symlink into a protected directory" $ do
+        let protectedFile = testSandbox </> ".git" </> "config"
+            link = testSandbox </> "safe-edit-link"
+        createDirectoryIfMissing True (testSandbox </> ".git")
+        writeFile protectedFile "ORIGINAL"
+        removePathForcibly link
+        protectedDir <- canonicalizePath (testSandbox </> ".git")
+        createDirectoryLink protectedDir link
+
+        let call = ToolCall "c_protected_edit" "Edit"
+              "{\"path\":\"safe-edit-link/config\",\"old_content\":\"ORIGINAL\",\"new_content\":\"HIJACKED\"}"
+        res <- executeCodingTool testSandbox call
+        res `shouldBe` ToolError "Protected path: edit denied to safe-edit-link/config"
+        readFile protectedFile `shouldReturn` "ORIGINAL"
+
+      it "refuses writes through chained symlinks and dot-dot segments" $ do
+        let protectedDir = testSandbox </> ".git"
+            protectedFile = protectedDir </> "config"
+            firstLink = testSandbox </> "safe-chain-one"
+            secondLink = testSandbox </> "safe-chain-two"
+            rawPath = "prefix/../safe-chain-one/config"
+        createDirectoryIfMissing True protectedDir
+        writeFile protectedFile "ORIGINAL"
+        removePathForcibly firstLink
+        removePathForcibly secondLink
+        protectedDirCanon <- canonicalizePath protectedDir
+        createDirectoryLink protectedDirCanon secondLink
+        createDirectoryLink "safe-chain-two" firstLink
+
+        let call = ToolCall "c_protected_chain" "write_file"
+              ("{\"path\":\"" <> T.pack rawPath <> "\",\"content\":\"HIJACKED\"}")
+        res <- executeCodingTool testSandbox call
+        res `shouldBe` ToolError ("Protected path: write denied to " <> T.pack rawPath)
+        readFile protectedFile `shouldReturn` "ORIGINAL"
+
+      it "preserves the workspace escape error for writes outside the root" $ do
+        let rawPath = "../hach-99-outside.txt"
+        res <- executeWriteFile testSandbox (WriteFileArgs rawPath "outside")
+        res `shouldBe` ToolError ("Access denied: path '" <> T.pack rawPath <> "' escapes the workspace root.")
+
+      it "allows ordinary writes when the workspace root is under a protected directory name" $ do
+        let workspace = testSandbox </> ".claude" </> "workspace"
+            targetFile = workspace </> "ordinary.txt"
+        createDirectoryIfMissing True workspace
+        relativeRes <- executeWriteFile workspace (WriteFileArgs "ordinary.txt" "safe")
+        relativeRes `shouldBe` ToolSuccess "Successfully wrote 4 characters to ordinary.txt"
+        absoluteTargetFile <- canonicalizePath targetFile
+        absoluteRes <- executeWriteFile workspace (WriteFileArgs absoluteTargetFile "safe-again")
+        absoluteRes `shouldBe` ToolSuccess ("Successfully wrote 10 characters to " <> T.pack absoluteTargetFile)
+        readFile targetFile `shouldReturn` "safe-again"
+
       it "does not expand commands supplied to the Skill tool" $ do
         sandboxRoot <- canonicalizePath testSandbox
         let skillDir = testSandbox </> ".claude" </> "skills" </> "issue-98"

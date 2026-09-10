@@ -171,6 +171,7 @@ import System.Directory
 import System.Exit (ExitCode(..))
 import System.FilePath
   ( (</>)
+  , isAbsolute
   , makeRelative
   , takeDirectory
   , takeFileName
@@ -990,6 +991,23 @@ truncateToolOutput raw
 -- Tool Execution against Workspace (IO)
 --------------------------------------------------------------------------------
 
+-- | Check a canonical target for protected components below the workspace root.
+-- The root is stripped first so a workspace whose own path contains a
+-- protected directory name can still be modified normally.
+isProtectedResolvedPath :: FilePath -> FilePath -> IO Bool
+isProtectedResolvedPath root fullPath = do
+  rootCanon <- canonicalizePath root
+  pure (isProtectedPath (makeRelative rootCanon fullPath))
+
+-- | Check the caller's spelling for protected components below the workspace
+-- root. Absolute spellings must be made relative first so the root itself is
+-- not treated as a protected target.
+isProtectedRawPath :: FilePath -> FilePath -> IO Bool
+isProtectedRawPath root rawPath = do
+  rootCanon <- canonicalizePath root
+  let pathBelowRoot = if isAbsolute rawPath then makeRelative rootCanon rawPath else rawPath
+  pure (isProtectedPath pathBelowRoot)
+
 -- | Execute any supported tool within the given workspace directory.
 executeCodingTool :: FilePath -> ToolCall -> IO ToolResult
 executeCodingTool root call = do
@@ -1141,51 +1159,64 @@ executeReadFile root (ReadFileArgs path) = do
               in pure $ ToolSuccess txt
 
 executeWriteFile :: FilePath -> WriteFileArgs -> IO ToolResult
-executeWriteFile root (WriteFileArgs path content)
-  | isProtectedPath path = pure $ ToolError ("Protected path: write denied to " <> T.pack path)
-  | otherwise = do
-  pathRes <- resolveWorkspacePath root path
-  case pathRes of
-    Left err -> pure $ ToolError (T.pack err)
-    Right fullPath -> do
-      res <- try $ do
-        createDirectoryIfMissing True (takeDirectory fullPath)
-        BS.writeFile fullPath (TE.encodeUtf8 content)
-      case res of
-        Left (ex :: SomeException) ->
-          pure $ ToolError ("Write error: " <> T.pack (show ex))
-        Right () ->
-          pure $ ToolSuccess ("Successfully wrote " <> T.pack (show (T.length content)) <> " characters to " <> T.pack path)
-
-executeReplaceFileContent :: FilePath -> ReplaceFileContentArgs -> IO ToolResult
-executeReplaceFileContent root (ReplaceFileContentArgs path oldContent newContent)
-  | T.null oldContent = pure $ ToolError "The 'old_content' parameter cannot be empty."
-  | isProtectedPath path = pure $ ToolError ("Protected path: edit denied to " <> T.pack path)
-  | otherwise = do
+executeWriteFile root (WriteFileArgs path content) = do
+  rawProtected <- isProtectedRawPath root path
+  if rawProtected
+    then pure $ ToolError ("Protected path: write denied to " <> T.pack path)
+    else do
       pathRes <- resolveWorkspacePath root path
       case pathRes of
         Left err -> pure $ ToolError (T.pack err)
         Right fullPath -> do
-          exists <- doesFileExist fullPath
-          if not exists
-            then pure $ ToolError ("File not found: " <> T.pack path)
+          protected <- isProtectedResolvedPath root fullPath
+          if protected
+            then pure $ ToolError ("Protected path: write denied to " <> T.pack path)
             else do
-              readRes <- try (BS.readFile fullPath) :: IO (Either SomeException BS.ByteString)
-              case readRes of
-                Left ex -> pure $ ToolError ("Read error: " <> T.pack (show ex))
-                Right bytes -> do
-                  let txt = TE.decodeUtf8With TE.lenientDecode bytes
-                      matches = T.count oldContent txt
-                  if matches == 0
-                    then pure $ ToolError ("Target content not found in '" <> T.pack path <> "'.")
-                    else if matches > 1
-                      then pure $ ToolError ("Target content found multiple (" <> T.pack (show matches) <> ") times in '" <> T.pack path <> "'; replacement requires a unique match.")
-                      else do
-                        let updated = T.replace oldContent newContent txt
-                        writeRes <- try (BS.writeFile fullPath (TE.encodeUtf8 updated)) :: IO (Either SomeException ())
-                        case writeRes of
-                          Left ex -> pure $ ToolError ("Write error: " <> T.pack (show ex))
-                          Right () -> pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
+              res <- try $ do
+                createDirectoryIfMissing True (takeDirectory fullPath)
+                BS.writeFile fullPath (TE.encodeUtf8 content)
+              case res of
+                Left (ex :: SomeException) ->
+                  pure $ ToolError ("Write error: " <> T.pack (show ex))
+                Right () ->
+                  pure $ ToolSuccess ("Successfully wrote " <> T.pack (show (T.length content)) <> " characters to " <> T.pack path)
+
+executeReplaceFileContent :: FilePath -> ReplaceFileContentArgs -> IO ToolResult
+executeReplaceFileContent root (ReplaceFileContentArgs path oldContent newContent)
+  | T.null oldContent = pure $ ToolError "The 'old_content' parameter cannot be empty."
+  | otherwise = do
+      rawProtected <- isProtectedRawPath root path
+      if rawProtected
+        then pure $ ToolError ("Protected path: edit denied to " <> T.pack path)
+        else do
+          pathRes <- resolveWorkspacePath root path
+          case pathRes of
+            Left err -> pure $ ToolError (T.pack err)
+            Right fullPath -> do
+              protected <- isProtectedResolvedPath root fullPath
+              if protected
+                then pure $ ToolError ("Protected path: edit denied to " <> T.pack path)
+                else do
+                  exists <- doesFileExist fullPath
+                  if not exists
+                    then pure $ ToolError ("File not found: " <> T.pack path)
+                    else do
+                      readRes <- try (BS.readFile fullPath) :: IO (Either SomeException BS.ByteString)
+                      case readRes of
+                        Left ex -> pure $ ToolError ("Read error: " <> T.pack (show ex))
+                        Right bytes -> do
+                          let txt = TE.decodeUtf8With TE.lenientDecode bytes
+                              matches = T.count oldContent txt
+                          if matches == 0
+                            then pure $ ToolError ("Target content not found in '" <> T.pack path <> "'.")
+                            else if matches > 1
+                              then pure $ ToolError ("Target content found multiple (" <> T.pack (show matches) <> ") times in '" <> T.pack path <> "'; replacement requires a unique match.")
+                              else do
+                                let updated = T.replace oldContent newContent txt
+                                writeRes <- try (BS.writeFile fullPath (TE.encodeUtf8 updated)) :: IO (Either SomeException ())
+                                case writeRes of
+                                  Left ex -> pure $ ToolError ("Write error: " <> T.pack (show ex))
+                                  Right () -> pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
 
 runWorkspaceShell :: FilePath -> Text -> Maybe Int -> IO (Either Text (ExitCode, String, String))
 runWorkspaceShell root cmd mTimeout = do
