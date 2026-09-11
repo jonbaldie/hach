@@ -34,7 +34,7 @@ docker build -t hach .
 Run interactively in your current directory:
 
 ```bash
-docker run -it --rm \
+docker run --cpus=2 --memory=2g -it --rm \
   -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
   -v "$(pwd)":/workspace \
   hach
@@ -43,7 +43,7 @@ docker run -it --rm \
 Or run headless:
 
 ```bash
-docker run --rm \
+docker run --cpus=2 --memory=2g --rm \
   -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
   -v "$(pwd)":/workspace \
   hach --no-tui "Run the test suite and fix any errors"
@@ -60,7 +60,7 @@ docker build -f dev.Dockerfile -t hach:dev .
 Start an interactive shell or run tests inside the container:
 
 ```bash
-docker run -it --rm -v "$(pwd)":/workspace hach:dev
+docker run --cpus=2 --memory=2g -it --rm -v "$(pwd)":/workspace hach:dev
 ```
 
 ## Quickstart
@@ -121,4 +121,16 @@ export OPENROUTER_MODEL="anthropic/claude-3.5-sonnet"
 
 ```text
 OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
+```
+
+## Development and testing
+
+Fleet shares an 8-core macOS host with other repositories. Run only one Hach test or fuzz campaign at a time. The standard test command is `cabal test hach:test:hach-test --test-show-details=always`.
+
+The `hach` and `hach-integration-test` executables use the threaded RTS and default to `-N`. Set `GHCRTS=-N2` when you run those executables locally to limit them to two capabilities. Do not export `GHCRTS=-N2` for `hach-test` unless that test suite is first built with `-threaded`; the current test binary rejects `-N2`.
+
+Limit local Hach containers to two CPUs and 2 GiB of memory. For example:
+
+```bash
+docker run --cpus=2 --memory=2g -it --rm -v "$(pwd)":/workspace hach:dev
 ```
