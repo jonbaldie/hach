@@ -14,6 +14,7 @@ module Hach.Interpreter.IO
   , currentIOWorktree
   , ioAlgebra
   , ioAlgebraWithLog
+  , renderEventIO
   , runIO
   , evaluatorSystemPrompt
   , parseGoalEvaluation
@@ -46,7 +47,7 @@ import Network.HTTP.Client (Manager, newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import System.Directory (doesDirectoryExist, doesFileExist)
 import System.FilePath ((</>))
-import System.IO (hClose)
+import System.IO (hClose, hPutStrLn, stderr)
 import System.Posix.IO (OpenFileFlags(..), OpenMode(WriteOnly), defaultFileFlags, fdToHandle, openFd)
 import System.IO.Error (isAlreadyExistsError)
 
@@ -176,6 +177,8 @@ currentIOWorktree :: IOEnv -> IO (Maybe FilePath)
 currentIOWorktree = readIORef . ioCurrentWorktree
 
 -- | Format and print events to the console for CLI observability.
+-- With @verbose@ off (@--print@ / @-p@) nothing reaches stdout: the caller
+-- prints the formatted result there.
 renderEventIO :: Bool -> AgentEvent -> IO ()
 renderEventIO verbose = \case
   EvTurnStart n ->
@@ -217,19 +220,20 @@ renderEventIO verbose = \case
   EvTurnComplete n ->
     when verbose $ putStrLn ("--- Completed Turn " <> show n <> " ---")
 
-  EvDone ans -> do
-    putStrLn "\n==================== Final Answer ===================="
-    TIO.putStrLn ans
-    putStrLn "======================================================"
+  EvDone ans ->
+    when verbose $ do
+      putStrLn "\n==================== Final Answer ===================="
+      TIO.putStrLn ans
+      putStrLn "======================================================"
 
-  EvError err -> do
-    putStrLn ("\n[Agent Error]: " <> T.unpack err)
+  EvError err ->
+    notice ("\n[Agent Error]: " <> T.unpack err)
 
   EvGoalSet cond ->
-    putStrLn ("\n[Goal] Set: " <> T.unpack cond)
+    notice ("\n[Goal] Set: " <> T.unpack cond)
 
   EvGoalEvaluated verdict reason ->
-    putStrLn ("\n[Goal] Evaluated: " <> show verdict <> " — " <> T.unpack reason)
+    notice ("\n[Goal] Evaluated: " <> show verdict <> " — " <> T.unpack reason)
 
   EvGoalEvaluationUsage TokenUsage{..} ->
     when verbose $
@@ -238,16 +242,16 @@ renderEventIO verbose = \case
                 <> show tuTotalTokens <> " total tokens")
 
   EvGoalAchieved cond ->
-    putStrLn ("\n[Goal] Achieved: " <> T.unpack cond)
+    notice ("\n[Goal] Achieved: " <> T.unpack cond)
 
   EvGoalFailed cond reason ->
-    putStrLn ("\n[Goal] Failed: " <> T.unpack cond <> " — " <> T.unpack reason)
+    notice ("\n[Goal] Failed: " <> T.unpack cond <> " — " <> T.unpack reason)
 
   EvGoalCleared cond ->
-    putStrLn ("\n[Goal] Cleared: " <> T.unpack cond)
+    notice ("\n[Goal] Cleared: " <> T.unpack cond)
 
   EvGoalBlocked cond ->
-    putStrLn ("\n[Goal] No progress detected. Goal still active: " <> T.unpack cond)
+    notice ("\n[Goal] No progress detected. Goal still active: " <> T.unpack cond)
 
   EvPartialResponse delta ->
     when verbose $ TIO.putStr delta
@@ -256,10 +260,10 @@ renderEventIO verbose = \case
     when verbose $ TIO.putStr delta
 
   EvPermissionDenied tool reason ->
-    putStrLn ("\n[Permission Denied] " <> T.unpack tool <> ": " <> T.unpack reason)
+    notice ("\n[Permission Denied] " <> T.unpack tool <> ": " <> T.unpack reason)
 
   EvPermissionAsk _ tool _ reason ->
-    putStrLn ("\n[Permission Ask] " <> T.unpack tool <> ": " <> T.unpack reason)
+    notice ("\n[Permission Ask] " <> T.unpack tool <> ": " <> T.unpack reason)
 
   EvHookTriggered hook msg ->
     when verbose $ putStrLn ("\n[Hook " <> T.unpack hook <> "] " <> T.unpack msg)
@@ -268,7 +272,11 @@ renderEventIO verbose = \case
     when verbose $ putStrLn ("\n[Session Saved] " <> T.unpack sid)
 
   EvNotificationSent msg ->
-    putStrLn ("\n[Notification] " <> T.unpack msg)
+    notice ("\n[Notification] " <> T.unpack msg)
+  where
+    -- Quiet runs ('--print' / '-p') reserve stdout for the final answer,
+    -- so notices move to stderr instead of disappearing.
+    notice = if verbose then putStrLn else hPutStrLn stderr
 
 -- | System prompt instructing the evaluator LLM to judge goal completion.
 evaluatorSystemPrompt :: Text
