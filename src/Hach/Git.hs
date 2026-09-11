@@ -22,7 +22,7 @@ import Data.List (isInfixOf)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import System.Directory (doesFileExist)
+import System.Directory (doesDirectoryExist, doesFileExist)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.Process (CreateProcess(cwd), proc, readCreateProcessWithExitCode)
@@ -195,7 +195,7 @@ isValidWorktreeName name =
      && not (any (\c -> c == '/' || c == '\\' || c == ':') s)
      && all (\c -> isAlphaNum c || c `elem` ['-', '_', '.']) s
 
--- | Create a git worktree for a branch or feature name.
+-- | Create or reuse a git worktree for a branch or feature name.
 createWorktree :: FilePath -> Text -> IO (Either Text FilePath)
 createWorktree root name
   | not (isValidWorktreeName name) =
@@ -203,10 +203,18 @@ createWorktree root name
   | otherwise = do
       let targetPath = worktreePath root name
           args = ["worktree", "add", "-b", T.unpack name, targetPath]
-      (code, out, err) <- runGit root args
-      if code == ExitSuccess
-        then pure (Right targetPath)
-        else pure (Left ("Failed to create worktree: " <> T.pack (if null err then out else err)))
+      targetExists <- doesDirectoryExist targetPath
+      if targetExists
+        then do
+          isWorktree <- isWorktreeDirectory targetPath
+          if isWorktree
+            then pure (Right targetPath)
+            else pure (Left ("Failed to create worktree: target path already exists and is not a git worktree: " <> T.pack targetPath))
+        else do
+          (code, out, err) <- runGit root args
+          if code == ExitSuccess
+            then pure (Right targetPath)
+            else pure (Left ("Failed to create worktree: " <> T.pack (if null err then out else err)))
 
 -- | Check if a directory is an active git worktree (has a .git file pointing to worktrees).
 isWorktreeDirectory :: FilePath -> IO Bool

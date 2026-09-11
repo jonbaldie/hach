@@ -7,7 +7,8 @@ import Hach.Types
 import Control.Monad (when)
 import qualified Data.Text as T
 import System.Directory
-  ( createDirectoryIfMissing
+  ( canonicalizePath
+  , createDirectoryIfMissing
   , doesDirectoryExist
   , doesFileExist
   , removeDirectoryRecursive
@@ -107,21 +108,39 @@ spec = describe "Hach.Git" $ do
 
   describe "isWorktreeDirectory" $ do
     it "returns False for non-worktree directory" $ do
-      isWorktreeDirectory "." `shouldReturn` False
+      let testDir = "dist-newstyle/test-not-worktree"
+      exists <- doesDirectoryExist testDir
+      when exists (removeDirectoryRecursive testDir)
+      createDirectoryIfMissing True testDir
+      isWorktreeDirectory testDir `shouldReturn` False
+      removeDirectoryRecursive testDir
 
   describe "createWorktree branch creation (-b)" $ do
-    it "fails to create worktree when branch already exists instead of force-resetting" $ do
+    it "reuses an existing worktree instead of force-resetting its branch" $ do
       let tempDir = "dist-newstyle/test-git-branch-exists"
       exists <- doesDirectoryExist tempDir
       when exists (removeDirectoryRecursive tempDir)
       createDirectoryIfMissing True tempDir
-      callProcess "git" ["-C", tempDir, "init"]
-      callProcess "git" ["-C", tempDir, "config", "user.name", "Test"]
-      callProcess "git" ["-C", tempDir, "config", "user.email", "test@test.com"]
-      callProcess "git" ["-C", tempDir, "commit", "--allow-empty", "-m", "init"]
-      r1 <- createWorktree tempDir "feature-dup"
+      canonicalTempDir <- canonicalizePath tempDir
+      callProcess "git" ["-C", canonicalTempDir, "init"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.name", "Test"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.email", "test@test.com"]
+      callProcess "git" ["-C", canonicalTempDir, "commit", "--allow-empty", "-m", "init"]
+      r1 <- createWorktree canonicalTempDir "feature-dup"
       r1 `shouldSatisfy` \case Right _ -> True; Left _ -> False
-      r2 <- createWorktree tempDir "feature-dup"
-      r2 `shouldSatisfy` \case Left _ -> True; Right _ -> False
+      r2 <- createWorktree canonicalTempDir "feature-dup"
+      r2 `shouldBe` r1
       removeDirectoryRecursive tempDir
 
+    it "rejects an existing non-worktree target directory" $ do
+      let tempDir = "dist-newstyle/test-git-target-exists"
+      exists <- doesDirectoryExist tempDir
+      when exists (removeDirectoryRecursive tempDir)
+      createDirectoryIfMissing True tempDir
+      canonicalTempDir <- canonicalizePath tempDir
+      let targetDir = worktreePath canonicalTempDir "feature-conflict"
+      createDirectoryIfMissing True targetDir
+      result <- createWorktree canonicalTempDir "feature-conflict"
+      result `shouldBe`
+        Left ("Failed to create worktree: target path already exists and is not a git worktree: " <> T.pack targetDir)
+      removeDirectoryRecursive tempDir
