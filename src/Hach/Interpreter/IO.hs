@@ -5,6 +5,7 @@ module Hach.Interpreter.IO
   ( IOEnv(..)
   , IOEnvPermissions(..)
   , initializeProjectWorkspace
+  , initializeWorkspaceInstructionsFile
   , defaultIOEnvPermissions
   , newIOEnv
   , newIOEnvWithPermissions
@@ -67,8 +68,14 @@ claudeInstructionsTemplate = T.unlines
 -- | Create the active project's 'CLAUDE.md' without replacing an existing file.
 -- The active workspace is read at action time so worktree switches are honoured.
 initializeProjectWorkspace :: IOEnv -> IO ProjectInitializationResult
-initializeProjectWorkspace env = do
-  workspace <- currentIOWorkspace env
+initializeProjectWorkspace env =
+  currentIOWorkspace env >>= initializeWorkspaceInstructionsFile
+
+-- | Create 'CLAUDE.md' in the given directory without replacing an existing
+-- file. Callable without an 'IOEnv' so the CLI's @--init@ flag can initialise
+-- a workspace before any LLM credentials are resolved (Issue #118).
+initializeWorkspaceInstructionsFile :: FilePath -> IO ProjectInitializationResult
+initializeWorkspaceInstructionsFile workspace = do
   let target = workspace </> "CLAUDE.md"
   result <- try (initializeTarget target)
   pure $ case (result :: Either IOError ProjectInitializationResult) of

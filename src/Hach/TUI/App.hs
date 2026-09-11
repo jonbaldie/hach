@@ -222,8 +222,9 @@ runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt = do
   gate <- newPermissionGate
   let ioEnv = ioEnv0 { ioResolveAsk = resolveAskWithGate gate (writeBChan eventChan) }
 
-  skills <- discoverSkills (ioWorkspace ioEnv)
-  sysPrompt <- buildTuiSystemPrompt (ioWorkspace ioEnv) mAppendPrompt
+  activeWorkspace <- currentIOWorkspace ioEnv
+  skills <- discoverSkills activeWorkspace
+  sysPrompt <- buildTuiSystemPrompt activeWorkspace mAppendPrompt
   initialMode <- currentIOPermissionMode ioEnv
 
   let baseState = (initialTuiState (ioModel ioEnv) mMaxTurns)
@@ -405,7 +406,8 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
       pure w
     mapM_ cancel mOldWorker
 
-    finalPrompt <- expandSlashInvokedPrompt (ioWorkspace ioEnv) (tsSkills st) currentPrompt
+    activeWorkspace <- currentIOWorkspace ioEnv
+    finalPrompt <- expandSlashInvokedPrompt activeWorkspace (tsSkills st) currentPrompt
 
     newWorker <- async $ do
       let runEnv = runEnvForModel selectedModel ioEnv
