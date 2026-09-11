@@ -33,15 +33,19 @@ import System.Directory
   ( createDirectoryIfMissing
   , doesDirectoryExist
   , doesFileExist
+  , getTemporaryDirectory
   , removeDirectoryRecursive
+  , removeFile
   )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.FilePath (takeDirectory, (</>))
+import System.IO (hClose, hFlush, openTempFile, readFile', stderr, stdout)
+import GHC.IO.Handle (hDuplicate, hDuplicateTo)
 import System.Process (callProcess)
 import Test.Hspec
 
 spec :: Spec
-spec = describe "Hach.Interpreter.IO (permission + hook enforcement)" $ do
+spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + hook enforcement)" $ do
   let testDir = "dist-newstyle/test-ioperms"
       planPerms = defaultIOEnvPermissions { iopInitialMode = ModePlan }
       bypassPerms = defaultIOEnvPermissions { iopInitialMode = ModeBypassPermissions }
@@ -496,3 +500,63 @@ reasoningEffort (Aeson.Object o) =
         _ -> Nothing
     _ -> Nothing
 reasoningEffort _ = Nothing
+
+-- | '--print' / '-p' runs the interpreter with verbose off; Main then writes
+-- the formatted result as the only stdout. Rendering must not add to it.
+renderEventQuietSpec :: Spec
+renderEventQuietSpec = describe "renderEventIO in quiet (--print) mode" $ do
+  let notices =
+        [ EvError "boom"
+        , EvGoalSet "cond"
+        , EvGoalEvaluated GoalNotYetMet "reason"
+        , EvGoalAchieved "cond"
+        , EvGoalFailed "cond" "reason"
+        , EvGoalCleared "cond"
+        , EvGoalBlocked "cond"
+        , EvPermissionDenied "bash" "denied"
+        , EvPermissionAsk 1 "bash" "{}" "ask"
+        , EvNotificationSent "note"
+        ]
+
+  it "writes nothing for EvDone, leaving the answer to formatPrintResult" $ do
+    (out, err) <- captureStdStreams (renderEventIO False (EvDone "4"))
+    out `shouldBe` ""
+    err `shouldBe` ""
+
+  it "keeps notices off stdout and reports them on stderr" $
+    mapM_ (\ev -> do
+      (out, err) <- captureStdStreams (renderEventIO False ev)
+      out `shouldBe` ""
+      err `shouldNotBe` "") notices
+
+  it "still prints the Final Answer banner when verbose" $ do
+    (out, _) <- captureStdStreams (renderEventIO True (EvDone "4"))
+    out `shouldContain` "Final Answer"
+    out `shouldContain` "4"
+
+captureStdStreams :: IO () -> IO (String, String)
+captureStdStreams action = do
+  tmp <- getTemporaryDirectory
+  (outPath, outH) <- openTempFile tmp "hach-stdout"
+  (errPath, errH) <- openTempFile tmp "hach-stderr"
+  hFlush stdout
+  hFlush stderr
+  savedOut <- hDuplicate stdout
+  savedErr <- hDuplicate stderr
+  (do hDuplicateTo outH stdout
+      hDuplicateTo errH stderr
+      action)
+    `finally` do
+      hFlush stdout
+      hFlush stderr
+      hDuplicateTo savedOut stdout
+      hDuplicateTo savedErr stderr
+      hClose savedOut
+      hClose savedErr
+      hClose outH
+      hClose errH
+  out <- readFile' outPath
+  err <- readFile' errPath
+  removeFile outPath
+  removeFile errPath
+  pure (out, err)

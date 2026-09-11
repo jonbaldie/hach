@@ -1,6 +1,10 @@
 module Hach.CLISpec (spec) where
 
 import Control.Exception (finally)
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy.Char8 as LBS
+import Data.Either (isRight)
+import Data.List (isPrefixOf)
 import System.Directory
   ( createDirectory
   , canonicalizePath
@@ -117,6 +121,40 @@ spec = describe "headless CLI prompt acquisition" $ do
       exitCode `shouldBe` ExitSuccess
       stdoutText `shouldBe` worktree <> "\n"
       stderrText `shouldBe` ""
+
+  describe "--print stdout contract (Issue #116)" $ do
+    -- An invalid key makes the agent fail on its first request, which drives
+    -- agent events through the real renderer without a live model.
+    let runPrint executable workspace args = do
+          environment <- getEnvironment
+          let testEnvironment =
+                ("OPENROUTER_API_KEY", "test")
+                  : filter ((/= "OPENROUTER_API_KEY") . fst) environment
+              command =
+                (proc executable (args <> ["--model", "test-model", "What is 2+2?"]))
+                  { cwd = Just workspace
+                  , env = Just testEnvironment
+                  }
+          readCreateProcessWithExitCode command ""
+
+    it "prints only the JSON result with --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (_, stdoutText, stderrText) <-
+          runPrint executable workspace ["-p", "--output-format", "json"]
+
+        (Aeson.eitherDecode (LBS.pack stdoutText) :: Either String Aeson.Value)
+          `shouldSatisfy` isRight
+        stderrText `shouldContain` "[Agent Error]"
+
+    it "prints only the formatted result in text mode" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (_, stdoutText, _) <- runPrint executable workspace ["--print"]
+
+        stdoutText `shouldNotContain` "[Agent Error]"
+        stdoutText `shouldNotContain` "Final Answer"
+        stdoutText `shouldSatisfy` (not . isPrefixOf "\n")
 
   describe "--init (Issue #118)" $ do
     let initEnvironment = do
