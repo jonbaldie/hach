@@ -291,6 +291,26 @@ spec = do
         Left err -> expectationFailure err
         Right opts -> startupIntent opts `shouldBe` IntentHeadless
 
+    it "maps --init to the init intent instead of the TUI (Issue #118)" $ do
+      case parseCliArgs ["--init"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentInit
+
+    it "maps --init to the init intent even alongside --no-tui" $ do
+      case parseCliArgs ["--init", "--no-tui"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentInit
+
+    it "prefers --version over --init" $ do
+      case parseCliArgs ["--init", "--version"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentVersion
+
+    it "prefers --exec over --init" $ do
+      case parseCliArgs ["--init", "--exec", "ls"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentExec "ls"
+
     it "starts the TUI by default" $ do
       startupIntent defaultCliOptions `shouldBe` IntentTui
 
