@@ -146,7 +146,8 @@ import Hach.Permissions (isProtectedPath, matchStarGlob)
 import Hach.Types
 import Control.Applicative ((<|>))
 import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, writeTVar)
-import Control.Exception (SomeException, try)
+import Control.Concurrent.Async (wait, withAsync)
+import Control.Exception (SomeException, onException, try)
 import Control.Monad (forM)
 import Data.Aeson
   ( FromJSON(..), (.:), (.:?), (.!=), object, (.=)
@@ -179,7 +180,9 @@ import System.FilePath
   , takeDirectory
   , takeFileName
   )
-import System.Process (CreateProcess(cwd), readCreateProcessWithExitCode, shell)
+import System.IO (hClose, hGetContents')
+import System.Posix.Signals (sigKILL, signalProcessGroup)
+import System.Process (CreateProcess(..), StdStream(CreatePipe), cleanupProcess, createProcess, getPid, shell, waitForProcess)
 import System.Timeout (timeout)
 
 --------------------------------------------------------------------------------
@@ -1236,16 +1239,51 @@ executeReplaceFileContent root (ReplaceFileContentArgs path oldContent newConten
                                   Left ex -> pure $ ToolError ("Write error: " <> T.pack (show ex))
                                   Right () -> pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
 
+-- | Run a shell command in the workspace, killing its whole process group
+-- (the shell plus anything it backgrounded) if it times out or is interrupted.
 runWorkspaceShell :: FilePath -> Text -> Maybe Int -> IO (Either Text (ExitCode, String, String))
 runWorkspaceShell root cmd mTimeout = do
   let secs = maybe 60 (max 1) mTimeout
-      sh = (shell (T.unpack cmd)) { cwd = Just root }
-  res <- try (timeout (secs * 1000000) (readCreateProcessWithExitCode sh "")) :: IO (Either SomeException (Maybe (ExitCode, String, String)))
+      sh = (shell (T.unpack cmd))
+        { cwd = Just root
+        , std_in = CreatePipe
+        , std_out = CreatePipe
+        , std_err = CreatePipe
+        , create_group = True
+        }
+  res <- try (runGroupWithTimeout (secs * 1000000) sh) :: IO (Either SomeException (Maybe (ExitCode, String, String)))
   case res of
     Left ex -> pure $ Left ("Process execution failed: " <> T.pack (show ex))
     Right Nothing ->
       pure $ Left ("Command timed out after " <> T.pack (show secs) <> " seconds: " <> cmd)
     Right (Just triple) -> pure $ Right triple
+
+runGroupWithTimeout :: Int -> CreateProcess -> IO (Maybe (ExitCode, String, String))
+runGroupWithTimeout micros cp = do
+  procs@(mIn, mOut, mErr, ph) <- createProcess cp
+  -- Capture the pid now: once the shell is reaped 'getPid' returns Nothing,
+  -- but its backgrounded children still live in the group it led.
+  mPid <- getPid ph
+  let killGroup = do
+        mapM_ (\pid -> try (signalProcessGroup sigKILL pid) :: IO (Either SomeException ())) mPid
+        cleanupProcess procs
+      collect = case (mIn, mOut, mErr) of
+        (Just hIn, Just hOut, Just hErr) -> do
+          hClose hIn
+          withAsync (hGetContents' hOut) $ \outA ->
+            withAsync (hGetContents' hErr) $ \errA -> do
+              -- Drain the pipes before waiting: 'waitForProcess' is a blocking
+              -- foreign call the timeout cannot always interrupt.
+              out <- wait outA
+              err <- wait errA
+              code <- waitForProcess ph
+              pure (code, out, err)
+        _ -> ioError (userError "runWorkspaceShell: process pipes were not created")
+  result <- timeout micros collect `onException` killGroup
+  case result of
+    Nothing -> killGroup
+    Just _ -> cleanupProcess procs
+  pure result
 
 executeRunCommand :: FilePath -> RunCommandArgs -> IO ToolResult
 executeRunCommand root (RunCommandArgs cmd mTimeout) = do

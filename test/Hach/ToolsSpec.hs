@@ -9,6 +9,8 @@ import qualified Data.Text.IO as TIO
 import System.Directory (canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesFileExist, removeDirectoryRecursive, removeFile, removePathForcibly)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
+import System.Process (readProcessWithExitCode)
+import Control.Concurrent (threadDelay)
 import System.Timeout (timeout)
 import Test.Hspec
 
@@ -468,6 +470,21 @@ spec = do
         case res of
           ToolError err   -> err `shouldSatisfy` ("Command timed out after 1 seconds" `T.isInfixOf`)
           ToolSuccess out -> expectationFailure ("Expected timeout error, but succeeded: " ++ T.unpack out)
+
+      it "terminates the shell and its background children when a command times out" $ do
+        root <- canonicalizePath testSandbox
+        let cmd = "echo $$ > shell.pid; sleep 30 & echo $! > child.pid; wait"
+        res <- executeRunCommand root (RunCommandArgs cmd (Just 1))
+        case res of
+          ToolError err   -> err `shouldSatisfy` ("Command timed out after 1 seconds" `T.isInfixOf`)
+          ToolSuccess out -> expectationFailure ("Expected timeout error, but succeeded: " ++ T.unpack out)
+        threadDelay 200000
+        let alive pidFile = do
+              pid <- T.unpack . T.strip <$> TIO.readFile (root </> pidFile)
+              (code, _, _) <- readProcessWithExitCode "kill" ["-0", pid] ""
+              pure (code == ExitSuccess)
+        alive "shell.pid" `shouldReturn` False
+        alive "child.pid" `shouldReturn` False
 
       it "executes Glob tool via executeCodingTool" $ do
         _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "sub" </> "foo.txt") "content")
