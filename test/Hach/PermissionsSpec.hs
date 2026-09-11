@@ -162,3 +162,34 @@ spec = describe "Hach.Permissions" $ do
       case evalPermission ModeDefault [rule] "run_command" args of
         PermDeny _ -> pure ()
         other      -> expectationFailure ("Expected PermDeny, got " <> show other)
+
+  describe "TaskCreate with a command (issue #110)" $ do
+    let cmdArgs = object ["name" .= ("t" :: String), "command" .= ("rm -rf /tmp/x" :: String)]
+        noCmdArgs = object ["name" .= ("t" :: String)]
+        blankCmdArgs = object ["name" .= ("t" :: String), "command" .= ("   " :: String)]
+        tools = ["TaskCreate", "task_create"]
+
+    it "asks for command approval in acceptEdits mode" $
+      mapM_ (\t -> evalPermission ModeAcceptEdits [] t cmdArgs
+                     `shouldBe` PermAsk ("Command execution requires approval: " <> t)) tools
+
+    it "asks for approval in auto mode" $
+      mapM_ (\t -> evalPermission ModeAuto [] t cmdArgs
+                     `shouldBe` PermAsk ("Auto mode requires approval for: " <> t)) tools
+
+    it "asks for approval in default mode" $
+      mapM_ (\t -> evalPermission ModeDefault [] t cmdArgs
+                     `shouldBe` PermAsk ("Tool execution requires approval: " <> t)) tools
+
+    it "is denied in plan mode with or without a command" $
+      mapM_ (\t -> mapM_ (\a -> evalPermission ModePlan [] t a
+                                  `shouldBe` PermDeny "Plan mode is read-only. Tool execution denied.")
+                         [cmdArgs, noCmdArgs, blankCmdArgs]) tools
+
+    it "is allowed in dontAsk and bypassPermissions modes" $
+      mapM_ (\t -> mapM_ (\m -> evalPermission m [] t cmdArgs `shouldBe` PermAllow)
+                         [ModeDontAsk, ModeBypassPermissions]) tools
+
+    it "stays a write tool without a non-blank command" $
+      mapM_ (\t -> mapM_ (\(m, a) -> evalPermission m [] t a `shouldBe` PermAllow)
+                         [ (m, a) | m <- [ModeAcceptEdits, ModeAuto], a <- [noCmdArgs, blankCmdArgs] ]) tools
