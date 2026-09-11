@@ -5,6 +5,7 @@ module Main (main) where
 
 import Hach.Core
 import Hach.Env
+import qualified Hach.Git as Git
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
 import Hach.Settings (Settings (..))
@@ -35,17 +36,24 @@ main = do
       exitFailure
     Right parsed -> pure parsed
 
-  case startupIntent opts of
+  let intent = startupIntent opts
+  case intent of
     IntentVersion -> do
       putStrLn ("hach " <> showVersion Paths.version)
       exitSuccess
+    _ -> pure ()
+
+  activeWorkspace <- resolveStartupWorkspace cwd optWorktree
+
+  case intent of
     IntentExec cmd -> do
-      (code, out, err) <- runExecCommand cwd cmd
+      (code, out, err) <- runExecCommand activeWorkspace cmd
       TIO.putStr out
       TIO.hPutStr stderr err
       exitWith code
     IntentTui -> pure ()
     IntentHeadless -> pure ()
+    IntentVersion -> pure ()
 
   envRes <- resolveEnvConfig optModel (Just ".env")
   EnvConfig{..} <- case envRes of
@@ -68,15 +76,19 @@ main = do
         }
   ioEnv0 <- newIOEnvWithPermissions perms envApiKey envModel cwd (headlessVerbose opts)
   let ioEnv = ioEnv0 { ioEffortLevel = effort }
+  case optWorktree of
+    Nothing -> pure ()
+    Just _  -> interpEnterWorktree (ioAlgebra ioEnv) activeWorkspace
 
-  case startupIntent opts of
+  case intent of
     IntentTui -> runTui ioEnv optPrompt optMaxTurns optAppendSystemPrompt
     _ -> do
+      currentWorkspace <- currentIOWorkspace ioEnv
       when (headlessEmitsBanners opts) $ do
         putStrLn "========================================================"
         putStrLn "  Haskell Agentic Coding Harness (hach)                 "
         putStrLn "========================================================"
-        putStrLn ("Workspace: " <> cwd)
+        putStrLn ("Workspace: " <> currentWorkspace)
         putStrLn ("Model:     " <> T.unpack envModel)
         putStrLn ("Permissions: " <> T.unpack (permissionModeName (iopInitialMode perms)))
         putStrLn "========================================================"
@@ -93,8 +105,8 @@ main = do
         putStrLn "Empty task prompt provided. Exiting."
         exitFailure
 
-      skills <- discoverSkills cwd
-      mGuidelines <- loadProjectInstructions cwd
+      skills <- discoverSkills currentWorkspace
+      mGuidelines <- loadProjectInstructions currentWorkspace
       let sysPrompt = buildSystemPromptWithAppend mGuidelines optAppendSystemPrompt
 
       let trimmedPrompt = T.strip taskPrompt
@@ -144,7 +156,7 @@ main = do
                       printGoalSummary goalState
 
         else do
-          finalPrompt <- expandSlashInvokedPrompt cwd skills trimmedPrompt
+          finalPrompt <- expandSlashInvokedPrompt currentWorkspace skills trimmedPrompt
           let agentConfig = AgentConfig
                 { cfgModel        = envModel
                 , cfgSystemPrompt = Just sysPrompt
@@ -169,6 +181,19 @@ main = do
                 putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
               AgentFailed err -> do
                 putStrLn ("\nAgent failed with error: " <> T.unpack err)
+
+-- | Resolve the workspace selected by the CLI before any task, command, or TUI
+-- work begins. The process remains rooted at the repository checkout so the
+-- interpreter can still create sibling worktrees and exit back to that root.
+resolveStartupWorkspace :: FilePath -> Maybe T.Text -> IO FilePath
+resolveStartupWorkspace cwd Nothing = pure cwd
+resolveStartupWorkspace cwd (Just name) = do
+  result <- Git.createWorktree cwd name
+  case result of
+    Left err -> do
+      putStrLn ("Worktree error: " <> T.unpack err)
+      exitFailure
+    Right workspace -> pure workspace
 
 -- | Print a summary of the goal state after a headless goal run.
 printGoalSummary :: GoalState -> IO ()

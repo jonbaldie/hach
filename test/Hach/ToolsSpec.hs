@@ -508,9 +508,9 @@ spec = do
         r2 `shouldBe` ToolSuccess "Exited plan mode. The agent is now in standard execution mode."
 
       it "returns ToolError for ExitWorktree and exit_worktree when not in a worktree" $ do
-        r1 <- executeCodingTool "." (ToolCall "w1" "ExitWorktree" "{}")
+        r1 <- executeCodingTool testSandbox (ToolCall "w1" "ExitWorktree" "{}")
         r1 `shouldBe` ToolError "Not currently inside a worktree."
-        r2 <- executeCodingTool "." (ToolCall "w2" "exit_worktree" "{}")
+        r2 <- executeCodingTool testSandbox (ToolCall "w2" "exit_worktree" "{}")
         r2 `shouldBe` ToolError "Not currently inside a worktree."
 
       it "executes ListAgents and list_agents" $ do
