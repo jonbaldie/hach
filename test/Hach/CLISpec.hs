@@ -5,6 +5,7 @@ import System.Directory
   ( createDirectory
   , canonicalizePath
   , doesDirectoryExist
+  , doesFileExist
   , getTemporaryDirectory
   , listDirectory
   , removeDirectoryRecursive
@@ -22,6 +23,7 @@ import System.Process
   , readProcess
   )
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import Test.Hspec
 
 spec :: Spec
@@ -115,6 +117,55 @@ spec = describe "headless CLI prompt acquisition" $ do
       exitCode `shouldBe` ExitSuccess
       stdoutText `shouldBe` worktree <> "\n"
       stderrText `shouldBe` ""
+
+  describe "--init (Issue #118)" $ do
+    let initEnvironment = do
+          environment <- getEnvironment
+          pure (filter ((/= "OPENROUTER_API_KEY") . fst) environment)
+        runInit executable workspace args = do
+          environment <- initEnvironment
+          let command =
+                (proc executable args)
+                  { cwd = Just workspace
+                  , env = Just environment
+                  }
+          readCreateProcessWithExitCode command ""
+
+    it "creates CLAUDE.md and exits cleanly without credentials" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, stderrText) <-
+          runInit executable workspace ["--init", "--no-tui"]
+
+        exitCode `shouldBe` ExitSuccess
+        stderrText `shouldBe` ""
+        stdoutText `shouldContain` "CLAUDE.md"
+        doesFileExist (workspace </> "CLAUDE.md") `shouldReturn` True
+        TIO.readFile (workspace </> "CLAUDE.md") >>= \content ->
+          T.strip content `shouldNotBe` ""
+
+    it "creates CLAUDE.md without --no-tui" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, _stdoutText, stderrText) <-
+          runInit executable workspace ["--init"]
+
+        exitCode `shouldBe` ExitSuccess
+        stderrText `shouldBe` ""
+        doesFileExist (workspace </> "CLAUDE.md") `shouldReturn` True
+
+    it "leaves an existing CLAUDE.md untouched" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        let existing = "# Keep this file\n"
+        writeFile (workspace </> "CLAUDE.md") existing
+        (exitCode, stdoutText, stderrText) <-
+          runInit executable workspace ["--init", "--no-tui"]
+
+        exitCode `shouldBe` ExitSuccess
+        stderrText `shouldBe` ""
+        stdoutText `shouldContain` "already exists"
+        readFile (workspace </> "CLAUDE.md") `shouldReturn` existing
 
 hachExecutable :: IO FilePath
 hachExecutable = do

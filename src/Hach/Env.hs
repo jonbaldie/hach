@@ -148,20 +148,24 @@ resolveEffortLevel settings =
     Just raw -> Just <$> parseEffortLevel raw
 
 -- | What the CLI should do after parsing. '--exec' is a real command to run,
--- not a prompt for the headless agent; '--version' outranks it.
+-- not a prompt for the headless agent; '--init' initialises the workspace
+-- guidelines file and exits; '--version' outranks both.
 data StartupIntent
   = IntentVersion
   | IntentExec !Text
+  | IntentInit
   | IntentTui
   | IntentHeadless
   deriving (Show, Eq)
 
 -- | Map parsed options onto a startup intent. '--exec' must not fall through
--- to the headless agent loop just because it also sets 'optNoTui'.
+-- to the headless agent loop just because it also sets 'optNoTui'. '--init'
+-- must not fall through to the TUI or headless loop (Issue #118).
 startupIntent :: CliOptions -> StartupIntent
 startupIntent CliOptions{..}
   | optVersion = IntentVersion
   | Just cmd <- optExec = IntentExec cmd
+  | optInit = IntentInit
   | optNoTui = IntentHeadless
   | otherwise = IntentTui
 

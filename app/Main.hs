@@ -11,6 +11,7 @@ import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
 import Hach.Settings (Settings (..))
 import Hach.Tools
 import Hach.TUI.App (runTui)
+import Hach.TUI.Types (ProjectInitializationResult(..))
 import Hach.Types
 import Control.Exception (tryJust)
 import Control.Monad (when)
@@ -51,8 +52,21 @@ main = do
       TIO.putStr out
       TIO.hPutStr stderr err
       exitWith code
+    IntentInit -> do
+      result <- initializeWorkspaceInstructionsFile activeWorkspace
+      case result of
+        ProjectInitialized -> do
+          putStrLn "Initialized CLAUDE.md guidelines template."
+          exitSuccess
+        ProjectAlreadyPresent -> do
+          putStrLn "CLAUDE.md already exists; left it unchanged."
+          exitSuccess
+        ProjectInitializationFailed err -> do
+          TIO.putStrLn ("Error: " <> err)
+          exitFailure
     IntentTui -> pure ()
     IntentHeadless -> pure ()
+    IntentInit -> pure ()
     IntentVersion -> pure ()
 
   envRes <- resolveEnvConfig optModel (Just ".env")
