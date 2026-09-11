@@ -173,13 +173,23 @@ evalPermission mode rules tool args
   | otherwise =
       let mPath = extractPathArg args
           normTool = T.toLower tool
-          isWriteTool = normTool `elem` writeTools
+          spawnsCommand = isTaskCreateWithCommand normTool args
+          isWriteTool = normTool `elem` writeTools && not spawnsCommand
+          isCommandTool = normTool `elem` commandTools || spawnsCommand
       in if isWriteTool && maybe False isProtectedPath mPath
            then PermDeny ("Protected path: access denied to " <> maybe "" T.pack mPath)
            else case listToMaybe (concatMap (\r -> maybe [] pure (matchRule r tool mPath)) rules) of
              Just decision -> decision
-             Nothing       -> evalModeDefault mode normTool isWriteTool
+             Nothing       -> evalModeDefault mode normTool isWriteTool isCommandTool
   where
+    -- TaskCreate with a non-blank command spawns a shell process, so it must
+    -- be gated like a command tool rather than auto-approved as a write.
+    isTaskCreateWithCommand t (Aeson.Object km)
+      | t `elem` ["taskcreate", "task_create"]
+      , Just (Aeson.String cmd) <- KM.lookup "command" km
+      = not (T.null (T.strip cmd))
+    isTaskCreateWithCommand _ _ = False
+
     readOnlyTools =
       [ "read_file"
       , "list_dir"
@@ -235,7 +245,7 @@ evalPermission mode rules tool args
       , "skill"
       ]
 
-    evalModeDefault m t isWrite = case m of
+    evalModeDefault m t isWrite isCommand = case m of
       ModeBypassPermissions -> PermAllow
       ModeDontAsk           -> PermAllow
       ModePlan ->
@@ -245,7 +255,7 @@ evalPermission mode rules tool args
       ModeAcceptEdits ->
         if t `elem` readOnlyTools || isWrite
           then PermAllow
-          else if t `elem` commandTools
+          else if isCommand
             then PermAsk ("Command execution requires approval: " <> tool)
             else PermAsk ("Tool execution requires approval: " <> tool)
       ModeAuto ->
