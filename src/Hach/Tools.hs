@@ -1469,9 +1469,14 @@ executeTodoWrite :: FilePath -> TodoWriteArgs -> IO ToolResult
 executeTodoWrite root (TodoWriteArgs tasks) = do
   let todoDir = root </> ".claude"
       todoFile = todoDir </> "todos.json"
-  createDirectoryIfMissing True todoDir
-  BS.writeFile todoFile (BSL.toStrict (Aeson.encode tasks))
-  pure $ ToolSuccess ("Saved " <> T.pack (show (length tasks)) <> " todo items to .claude/todos.json.")
+  result <- try $ do
+    createDirectoryIfMissing True todoDir
+    BS.writeFile todoFile (BSL.toStrict (Aeson.encode tasks))
+  case result of
+    Left (ex :: SomeException) ->
+      pure $ ToolError ("TodoWrite error: " <> T.pack (show ex))
+    Right () ->
+      pure $ ToolSuccess ("Saved " <> T.pack (show (length tasks)) <> " todo items to .claude/todos.json.")
 
 executePushNotification :: PushNotificationArgs -> IO ToolResult
 executePushNotification (PushNotificationArgs title msg) = do
