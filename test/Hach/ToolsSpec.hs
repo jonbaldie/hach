@@ -6,11 +6,12 @@ import Hach.Tools
 import Hach.Types
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import System.Directory (canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesFileExist, removeDirectoryRecursive, removeFile, removePathForcibly)
+import System.Directory (Permissions(..), canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesFileExist, getPermissions, removeDirectoryRecursive, removeFile, removePathForcibly, setPermissions)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.Process (readProcessWithExitCode)
 import Control.Concurrent (threadDelay)
+import Control.Exception (finally)
 import System.Timeout (timeout)
 import Test.Hspec
 
@@ -533,6 +534,31 @@ spec = do
       it "writes todos via TodoWrite" $ do
         r <- executeCodingTool testSandbox (ToolCall "tw" "TodoWrite" "{\"tasks\":[\"Step 1\",\"Step 2\"]}")
         r `shouldSatisfy` \case ToolSuccess out -> "2 todo items" `T.isInfixOf` out; _ -> False
+        TIO.readFile (testSandbox </> ".claude" </> "todos.json") `shouldReturn` "[\"Step 1\",\"Step 2\"]"
+
+      it "returns ToolError when TodoWrite cannot write the workspace" $ do
+        originalPermissions <- getPermissions testSandbox
+        let readOnlyPermissions = originalPermissions { writable = False }
+        setPermissions testSandbox readOnlyPermissions
+        (do
+          result <- executeCodingTool testSandbox (ToolCall "tw-read-only" "TodoWrite" "{\"tasks\":[]}")
+          result `shouldSatisfy` \case
+            ToolError err -> "TodoWrite error: " `T.isPrefixOf` err
+            ToolSuccess _ -> False
+          ) `finally` setPermissions testSandbox originalPermissions
+
+      it "returns ToolError when TodoWrite cannot write its todo file" $ do
+        let todoDir = testSandbox </> ".claude"
+        createDirectoryIfMissing True todoDir
+        originalPermissions <- getPermissions todoDir
+        let readOnlyPermissions = originalPermissions { writable = False }
+        setPermissions todoDir readOnlyPermissions
+        (do
+          result <- executeCodingTool testSandbox (ToolCall "tw-file-read-only" "TodoWrite" "{\"tasks\":[]}")
+          result `shouldSatisfy` \case
+            ToolError err -> "TodoWrite error: " `T.isPrefixOf` err
+            ToolSuccess _ -> False
+          ) `finally` setPermissions todoDir originalPermissions
 
       it "manages background tasks with consistent IDs and error handling (BUG-6)" $ do
         r1 <- executeCodingTool "." (ToolCall "t1" "TaskCreate" "{\"name\":\"compile-bg\",\"command\":\"sleep 0.1\"}")

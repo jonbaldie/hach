@@ -7,6 +7,8 @@ import Hach.Interpreter.IO (ioAlgebra, newIOEnv)
 import Hach.Permissions (isProtectedPath)
 import Hach.Sessions
 import Hach.Types
+import Control.Exception (SomeException, try)
+import Data.Text (Text)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, removeDirectoryRecursive)
 import System.FilePath ((</>))
 import Test.Hspec
@@ -41,6 +43,16 @@ spec = describe "Hach.Sessions" $ do
       case mLoaded of
         Just loadedInfo -> siId loadedInfo `shouldBe` "session-prot-1"
         Nothing -> expectationFailure "Expected session to load from .agents"
+
+    it "keeps the interpreter alive when session persistence fails" $ do
+      let blockedWorkspace = testDir </> "blocked-workspace"
+          sInfo = SessionInfo "session-unwritable-1" "2026-09-06T12:00:00Z" "model-a" 1 0.01
+      writeFile blockedWorkspace "blocked"
+      env <- newIOEnv "dummy-key" "test-model" blockedWorkspace False
+      result <- try (interpSaveSession (ioAlgebra env) sInfo) :: IO (Either SomeException Text)
+      case result of
+        Left ex -> expectationFailure ("Session persistence threw: " <> show ex)
+        Right sid -> sid `shouldBe` siId sInfo
 
 
     it "saves and reloads a session transcript faithfully" $ do

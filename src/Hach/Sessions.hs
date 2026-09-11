@@ -32,22 +32,28 @@ import System.Directory
   , listDirectory
   )
 import System.FilePath ((</>), (<.>))
+import System.IO (hPutStrLn, stderr)
 
 -- | Save session metadata and message transcript to JSONL under the given sessions directory.
 saveSession :: FilePath -> SessionInfo -> [Message] -> IO ()
 saveSession dir info msgs = do
-  createDirectoryIfMissing True dir
-  let sid = T.unpack (siId info)
-      metaFile = dir </> (sid <.> "meta.json")
-      jsonlFile = dir </> (sid <.> "jsonl")
+  result <- try $ do
+    createDirectoryIfMissing True dir
+    let sid = T.unpack (siId info)
+        metaFile = dir </> (sid <.> "meta.json")
+        jsonlFile = dir </> (sid <.> "jsonl")
 
-  -- Write metadata
-  BSL.writeFile metaFile (Aeson.encode info)
+    -- Write metadata
+    BSL.writeFile metaFile (Aeson.encode info)
 
-  -- Write JSONL messages
-  let encodedLines = [ BSL.toStrict (Aeson.encode m) | m <- msgs ]
-      joined = BS.intercalate "\n" encodedLines <> "\n"
-  BS.writeFile jsonlFile joined
+    -- Write JSONL messages
+    let encodedLines = [ BSL.toStrict (Aeson.encode m) | m <- msgs ]
+        joined = BS.intercalate "\n" encodedLines <> "\n"
+    BS.writeFile jsonlFile joined
+  case result of
+    Left (ex :: SomeException) ->
+      hPutStrLn stderr ("Session save error: " <> show ex)
+    Right () -> pure ()
 
 -- | Load session metadata and transcript messages from the sessions directory.
 loadSession :: FilePath -> Text -> IO (Maybe (SessionInfo, [Message]))
