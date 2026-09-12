@@ -45,7 +45,7 @@ module Hach.Core
   ) where
 
 import Hach.Types
-import Hach.Tools (resolveReadWorkspaceTool, resolvedReadCanonicalName)
+import Hach.Tools (resolveTool, resolvedToolCanonicalName)
 import Control.Monad (forM)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BSL
@@ -330,15 +330,15 @@ agentStep cfg tools turn currentHistory
                     let effectiveCall = case hrModifiedInput preHook of
                           Just newVal -> call { callArgsRaw = TE.decodeUtf8 (BSL.toStrict (Aeson.encode newVal)) }
                           Nothing     -> call
-                    case resolveReadWorkspaceTool effectiveCall of
+                    case resolveTool effectiveCall of
                       Just (Left err) -> do
                         let res = ToolError err
                         logEvent (EvToolResult (functionName effectiveCall) res)
                         pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) (toolResultToText res)
                       resolved -> do
-                        -- Read aliases are authorized under their registry canonical name.
+                        -- Registry aliases are authorized under their canonical name.
                         let permissionTool = case resolved of
-                              Just (Right tool) -> resolvedReadCanonicalName tool
+                              Just (Right tool) -> resolvedToolCanonicalName tool
                               Nothing           -> functionName effectiveCall
                         allowed <- checkPermission permissionTool (callArgsRaw effectiveCall)
                         if not allowed

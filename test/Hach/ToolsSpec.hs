@@ -171,6 +171,41 @@ spec = do
       executeCodingTool "." (ToolCall "bad" "Glob" "{}") `shouldReturn` ToolError "Failed to parse find_files args: Error in $: key \"pattern\" not found"
       executeCodingTool "." (ToolCall "unknown" "unknown_read" "{}") `shouldReturn` ToolError "Unknown tool function: unknown_read"
 
+  describe "interaction and task capability registry" $ do
+    it "resolves every requested capability family with canonical authority and target" $ do
+      let cases =
+            [ ("Agent", "{\"name\":\"explore\",\"prompt\":\"Inspect\"}", "Agent", AuthorityInteraction, Just "explore")
+            , ("push_notification", "{\"message\":\"Done\"}", "PushNotification", AuthorityInteraction, Just "Done")
+            , ("TaskCreate", "{\"name\":\"compile\"}", "TaskCreate", AuthorityWorkspaceWrite, Just "compile")
+            , ("task_get", "{\"task_id\":\"task-1\"}", "TaskGet", AuthorityRead, Just "task-1")
+            , ("enter_worktree", "{\"name\":\"feature\"}", "EnterWorktree", AuthorityCommand, Just "feature")
+            , ("ask_user_question", "{\"question\":\"Proceed?\"}", "AskUserQuestion", AuthorityInteraction, Just "Proceed?")
+            , ("end_conversation", "{}", "EndConversation", AuthorityInteraction, Nothing)
+            ]
+      mapM_ (\(name, args, canonical, authority, target) ->
+        case resolveInteractionTool (ToolCall "call" name args) of
+          Just (Right resolved) -> do
+            resolvedInteractionCanonicalName resolved `shouldBe` canonical
+            resolvedInteractionAuthority resolved `shouldBe` authority
+            resolvedInteractionTarget resolved `shouldBe` target
+          Just (Left err) -> expectationFailure (T.unpack err)
+          Nothing -> expectationFailure ("Did not resolve " <> T.unpack name)
+        ) cases
+
+    it "treats TaskCreate with a command as command authority" $ do
+      case resolveInteractionTool (ToolCall "call" "TaskCreate" "{\"name\":\"compile\",\"command\":\"cabal build\"}") of
+        Just (Right resolved) -> resolvedInteractionAuthority resolved `shouldBe` AuthorityCommand
+        _ -> expectationFailure "TaskCreate did not resolve"
+
+    it "rejects invalid and unknown registry calls before execution" $ do
+      case resolveInteractionTool (ToolCall "bad" "SendMessage" "{\"message\":\"missing recipient\"}") of
+        Just (Left _) -> pure ()
+        _ -> expectationFailure "Invalid SendMessage arguments resolved unexpectedly"
+      executeCodingTool "." (ToolCall "bad" "SendMessage" "{\"message\":\"missing recipient\"}") `shouldReturn`
+        ToolError "Failed to parse SendMessage args: Error in $: key \"agent_id\" not found"
+      executeCodingTool "." (ToolCall "unknown" "unregistered_interaction" "{}") `shouldReturn`
+        ToolError "Unknown tool function: unregistered_interaction"
+
   describe "truncateToolOutput" $ do
     it "leaves short output intact" $ do
       let out = "Line 1\nLine 2"

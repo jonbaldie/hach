@@ -64,14 +64,23 @@ module Hach.Tools
   , TaskStopArgs(..)
   , AskUserQuestionArgs(..)
 
-    -- * Read Workspace Capability Registry
+    -- * Capability Registry
   , ResolvedReadWorkspaceTool
   , resolveReadWorkspaceTool
   , resolvedReadCanonicalName
   , resolvedReadAuthority
-  , resolvedReadTarget
-  , executeResolvedReadWorkspaceTool
+   , resolvedReadTarget
+   , executeResolvedReadWorkspaceTool
   , readWorkspaceToolTarget
+   , ResolvedInteractionTool
+   , resolveInteractionTool
+   , resolvedInteractionCanonicalName
+   , resolvedInteractionAuthority
+   , resolvedInteractionTarget
+   , executeResolvedInteractionTool
+   , resolveTool
+   , resolvedToolCanonicalName
+   , resolvedToolAuthority
 
   , parseReadFileArgs
   , parseWriteFileArgs
@@ -1072,6 +1081,124 @@ readWorkspaceToolTarget name rawArgs = do
   resolved <- resolveReadWorkspaceTool (ToolCall "" name rawArgs)
   either (const Nothing) (Just . resolvedReadTarget) resolved
 
+-- | The registration point for interaction, notification, task, worktree, and
+-- conversation-control capabilities.  As with read tools, accepted names,
+-- validation, authority, targets, and execution are resolved in one place.
+data InteractionCapability
+  = AgentCapability | TodoWriteCapability | SkillCapability
+  | ListAgentsCapability | SendMessageCapability | AskUserQuestionCapability
+  | PushNotificationCapability
+  | MonitorCapability | TaskCreateCapability | TaskGetCapability | TaskListCapability | TaskUpdateCapability | TaskStopCapability
+  | EnterWorktreeCapability | ExitWorktreeCapability
+  | EnterPlanModeCapability | ExitPlanModeCapability | EndConversationCapability
+
+data ResolvedInteractionTool = ResolvedInteractionTool
+  { resolvedInteractionCapability :: !InteractionCapability
+  , resolvedInteractionCanonicalName :: !Text
+  , resolvedInteractionAuthority :: !ToolAuthority
+  , resolvedInteractionTarget :: !(Maybe Text)
+  }
+
+interactionRegistry :: [(InteractionCapability, Text, [Text], ToolAuthority, ToolDef)]
+interactionRegistry =
+  [ (AgentCapability, "Agent", ["Agent", "agent"], AuthorityInteraction, agentToolDef)
+  , (TodoWriteCapability, "TodoWrite", ["TodoWrite", "todo_write"], AuthorityWorkspaceWrite, todoWriteToolDef)
+  , (SkillCapability, "Skill", ["Skill", "skill"], AuthorityInteraction, skillToolDef)
+  , (ListAgentsCapability, "ListAgents", ["ListAgents", "list_agents"], AuthorityInteraction, listAgentsToolDef)
+  , (SendMessageCapability, "SendMessage", ["SendMessage", "send_message"], AuthorityInteraction, sendMessageToolDef)
+  , (AskUserQuestionCapability, "AskUserQuestion", ["AskUserQuestion", "ask_user_question"], AuthorityInteraction, askUserQuestionToolDef)
+  , (PushNotificationCapability, "PushNotification", ["PushNotification", "push_notification"], AuthorityInteraction, pushNotificationToolDef)
+  , (MonitorCapability, "Monitor", ["Monitor", "monitor"], AuthorityRead, monitorToolDef)
+  , (TaskCreateCapability, "TaskCreate", ["TaskCreate", "task_create"], AuthorityWorkspaceWrite, taskCreateToolDef)
+  , (TaskGetCapability, "TaskGet", ["TaskGet", "task_get"], AuthorityRead, taskGetToolDef)
+  , (TaskListCapability, "TaskList", ["TaskList", "task_list"], AuthorityRead, taskListToolDef)
+  , (TaskUpdateCapability, "TaskUpdate", ["TaskUpdate", "task_update"], AuthorityWorkspaceWrite, taskUpdateToolDef)
+  , (TaskStopCapability, "TaskStop", ["TaskStop", "task_stop"], AuthorityCommand, taskStopToolDef)
+  , (EnterWorktreeCapability, "EnterWorktree", ["EnterWorktree", "enter_worktree"], AuthorityCommand, enterWorktreeToolDef)
+  , (ExitWorktreeCapability, "ExitWorktree", ["ExitWorktree", "exit_worktree"], AuthorityCommand, exitWorktreeToolDef)
+  , (EnterPlanModeCapability, "EnterPlanMode", ["EnterPlanMode", "enter_plan_mode"], AuthorityInteraction, enterPlanModeToolDef)
+  , (ExitPlanModeCapability, "ExitPlanMode", ["ExitPlanMode", "exit_plan_mode"], AuthorityInteraction, exitPlanModeToolDef)
+  , (EndConversationCapability, "EndConversation", ["EndConversation", "end_conversation"], AuthorityInteraction, endConversationToolDef)
+  ]
+
+resolveInteractionTool :: ToolCall -> Maybe (Either Text ResolvedInteractionTool)
+resolveInteractionTool call = do
+  (capability, canonical, _, authority, _) <- find (\(_, _, names, _, _) -> functionName call `elem` names) interactionRegistry
+  pure $ resolve capability canonical authority
+  where
+    resolve capability canonical authority = case capability of
+      AgentCapability -> target (Just . agentArgName) parseAgentArgs
+      TodoWriteCapability -> target (const Nothing) parseTodoWriteArgs
+      SkillCapability -> target (Just . skillToolName) parseSkillToolArgs
+      ListAgentsCapability -> noArgs
+      SendMessageCapability -> target (Just . unAgentId . sendMsgRecipient) parseSendMessageArgs
+      AskUserQuestionCapability -> target (Just . askQuestionText) parseAskUserQuestionArgs
+      PushNotificationCapability -> target (Just . pushMessage) parsePushNotificationArgs
+      MonitorCapability -> target (Just . unTaskId . monitorTaskId) parseMonitorArgs
+      TaskCreateCapability -> do
+        args <- firstParse canonical (parseTaskCreateArgs call)
+        let taskAuthority = case taskCreateCommand args of
+              Just command | not (T.null (T.strip command)) -> AuthorityCommand
+              _ -> authority
+        pure (ResolvedInteractionTool capability canonical taskAuthority (Just (taskCreateName args)))
+      TaskGetCapability -> target (Just . unTaskId . taskGetId) parseTaskGetArgs
+      TaskListCapability -> noArgs
+      TaskUpdateCapability -> target (Just . unTaskId . taskUpdateId) parseTaskUpdateArgs
+      TaskStopCapability -> target (Just . unTaskId . taskStopId) parseTaskStopArgs
+      EnterWorktreeCapability -> target (Just . worktreeName) parseEnterWorktreeArgs
+      ExitWorktreeCapability -> noArgs
+      EnterPlanModeCapability -> noArgs
+      ExitPlanModeCapability -> noArgs
+      EndConversationCapability -> noArgs
+      where
+        resolved targetValue = ResolvedInteractionTool capability canonical authority targetValue
+        target :: (a -> Maybe Text) -> (ToolCall -> Either String a) -> Either Text ResolvedInteractionTool
+        target get parser = fmap (resolved . get) (firstParse canonical (parser call))
+        noArgs = case parseCallArgs call of
+          Right (Aeson.Object _) -> Right (resolved Nothing)
+          Right _ -> Left ("Failed to parse " <> canonical <> " args: expected an object")
+          Left err -> Left ("Failed to parse " <> canonical <> " args: " <> T.pack err)
+    firstParse name = either (\err -> Left ("Failed to parse " <> name <> " args: " <> T.pack err)) Right
+
+executeResolvedInteractionTool :: FilePath -> ToolCall -> ResolvedInteractionTool -> IO ToolResult
+executeResolvedInteractionTool root call ResolvedInteractionTool{..} =
+  case resolvedInteractionCapability of
+    AgentCapability -> run parseAgentArgs (\args -> pure (ToolSuccess ("Spawned subagent '" <> agentArgName args <> "' with prompt: " <> agentArgPrompt args)))
+    TodoWriteCapability -> run parseTodoWriteArgs (executeTodoWrite root)
+    SkillCapability -> run parseSkillToolArgs (executeSkill root)
+    ListAgentsCapability -> pure (ToolSuccess "Available subagents: explore, plan.")
+    SendMessageCapability -> run parseSendMessageArgs (\args -> pure (ToolSuccess ("Message sent to agent " <> unAgentId (sendMsgRecipient args) <> ": " <> sendMsgContent args)))
+    AskUserQuestionCapability -> run parseAskUserQuestionArgs executeAskUserQuestion
+    PushNotificationCapability -> run parsePushNotificationArgs executePushNotification
+    MonitorCapability -> run parseMonitorArgs executeMonitor
+    TaskCreateCapability -> run parseTaskCreateArgs (executeTaskCreate root)
+    TaskGetCapability -> run parseTaskGetArgs executeTaskGet
+    TaskListCapability -> executeTaskList
+    TaskUpdateCapability -> run parseTaskUpdateArgs executeTaskUpdate
+    TaskStopCapability -> run parseTaskStopArgs executeTaskStop
+    EnterWorktreeCapability -> run parseEnterWorktreeArgs (executeEnterWorktree root)
+    ExitWorktreeCapability -> executeExitWorktree root
+    EnterPlanModeCapability -> pure (ToolSuccess "Entered plan mode. The agent is now in read-only planning mode.")
+    ExitPlanModeCapability -> pure (ToolSuccess "Exited plan mode. The agent is now in standard execution mode.")
+    EndConversationCapability -> pure (ToolSuccess "Conversation completed by agent.")
+  where
+    run :: (ToolCall -> Either String a) -> (a -> IO ToolResult) -> IO ToolResult
+    run parser action = case parser call of
+      Left err -> pure (ToolError (T.pack err))
+      Right args -> action args
+
+-- | Resolve every capability currently backed by the registry.
+resolveTool :: ToolCall -> Maybe (Either Text (Either ResolvedReadWorkspaceTool ResolvedInteractionTool))
+resolveTool call = case resolveReadWorkspaceTool call of
+  Just resolved -> Just (fmap Left resolved)
+  Nothing -> fmap (fmap Right) (resolveInteractionTool call)
+
+resolvedToolCanonicalName :: Either ResolvedReadWorkspaceTool ResolvedInteractionTool -> Text
+resolvedToolCanonicalName = either resolvedReadCanonicalName resolvedInteractionCanonicalName
+
+resolvedToolAuthority :: Either ResolvedReadWorkspaceTool ResolvedInteractionTool -> ToolAuthority
+resolvedToolAuthority = either resolvedReadAuthority resolvedInteractionAuthority
+
 --------------------------------------------------------------------------------
 -- Output Truncation
 --------------------------------------------------------------------------------
@@ -1131,9 +1258,10 @@ isProtectedRawPath root rawPath = do
 
 -- | Execute any supported tool within the given workspace directory.
 executeCodingTool :: FilePath -> ToolCall -> IO ToolResult
-executeCodingTool root call = fmap truncateResult $ case resolveReadWorkspaceTool call of
+executeCodingTool root call = fmap truncateResult $ case resolveTool call of
   Just (Left err) -> pure (ToolError err)
-  Just (Right resolved) -> executeResolvedReadWorkspaceTool root call resolved
+  Just (Right (Left resolved)) -> executeResolvedReadWorkspaceTool root call resolved
+  Just (Right (Right resolved)) -> executeResolvedInteractionTool root call resolved
   Nothing -> case functionName call of
 
     "write_file" ->
@@ -1160,84 +1288,6 @@ executeCodingTool root call = fmap truncateResult $ case resolveReadWorkspaceToo
       case parseWebSearchArgs call of
         Left err   -> pure $ ToolError ("Failed to parse WebSearch args: " <> T.pack err)
         Right args -> executeWebSearch args
-
-    name | name `elem` ["Agent", "agent"] ->
-      case parseAgentArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse Agent args: " <> T.pack err)
-        Right args -> pure $ ToolSuccess ("Spawned subagent '" <> agentArgName args <> "' with prompt: " <> agentArgPrompt args)
-
-    name | name `elem` ["TodoWrite", "todo_write"] ->
-      case parseTodoWriteArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse TodoWrite args: " <> T.pack err)
-        Right args -> executeTodoWrite root args
-
-    name | name `elem` ["Skill", "skill"] ->
-      case parseSkillToolArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse Skill args: " <> T.pack err)
-        Right args -> executeSkill root args
-
-    name | name `elem` ["EnterPlanMode", "enter_plan_mode"] ->
-      pure $ ToolSuccess "Entered plan mode. The agent is now in read-only planning mode."
-
-    name | name `elem` ["ExitPlanMode", "exit_plan_mode"] ->
-      pure $ ToolSuccess "Exited plan mode. The agent is now in standard execution mode."
-
-    name | name `elem` ["EnterWorktree", "enter_worktree"] ->
-      case parseEnterWorktreeArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse EnterWorktree args: " <> T.pack err)
-        Right args -> executeEnterWorktree root args
-
-    name | name `elem` ["ExitWorktree", "exit_worktree"] ->
-      executeExitWorktree root
-
-    name | name `elem` ["ListAgents", "list_agents"] ->
-      pure $ ToolSuccess "Available subagents: explore, plan."
-
-    name | name `elem` ["SendMessage", "send_message"] ->
-      case parseSendMessageArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse SendMessage args: " <> T.pack err)
-        Right args -> pure $ ToolSuccess ("Message sent to agent " <> unAgentId (sendMsgRecipient args) <> ": " <> sendMsgContent args)
-
-    name | name `elem` ["PushNotification", "push_notification"] ->
-      case parsePushNotificationArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse PushNotification args: " <> T.pack err)
-        Right args -> executePushNotification args
-
-    name | name `elem` ["Monitor", "monitor"] ->
-      case parseMonitorArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse Monitor args: " <> T.pack err)
-        Right args -> executeMonitor args
-
-    name | name `elem` ["TaskCreate", "task_create"] ->
-      case parseTaskCreateArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse TaskCreate args: " <> T.pack err)
-        Right args -> executeTaskCreate root args
-
-    name | name `elem` ["TaskGet", "task_get"] ->
-      case parseTaskGetArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse TaskGet args: " <> T.pack err)
-        Right args -> executeTaskGet args
-
-    name | name `elem` ["TaskList", "task_list"] ->
-      executeTaskList
-
-    name | name `elem` ["TaskUpdate", "task_update"] ->
-      case parseTaskUpdateArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse TaskUpdate args: " <> T.pack err)
-        Right args -> executeTaskUpdate args
-
-    name | name `elem` ["TaskStop", "task_stop"] ->
-      case parseTaskStopArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse TaskStop args: " <> T.pack err)
-        Right args -> executeTaskStop args
-
-    name | name `elem` ["AskUserQuestion", "ask_user_question"] ->
-      case parseAskUserQuestionArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse AskUserQuestion args: " <> T.pack err)
-        Right args -> executeAskUserQuestion args
-
-    name | name `elem` ["EndConversation", "end_conversation"] ->
-      pure $ ToolSuccess "Conversation completed by agent."
 
     unknown ->
       pure $ ToolError ("Unknown tool function: " <> unknown)
