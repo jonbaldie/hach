@@ -82,6 +82,31 @@ spec = describe "headless CLI prompt acquisition" $ do
       secondError `shouldBe` ""
       secondOutput `shouldContain` ("Workspace: " <> worktree)
 
+  it "attaches to an existing branch when requested via -w before startup" $ do
+    executable <- hachExecutable
+    withTemporaryGitWorkspace $ \workspace -> do
+      let worktree = workspace </> ".agents" </> "worktrees" </> "feat-existing"
+          runCli worktreeArgs = do
+            environment <- getEnvironment
+            let testEnvironment =
+                  ("OPENROUTER_API_KEY", "test")
+                    : ("OPENROUTER_MODEL", "test-model")
+                    : filter ((/= "OPENROUTER_API_KEY") . fst)
+                        (filter ((/= "OPENROUTER_MODEL") . fst) environment)
+                command =
+                  (proc executable worktreeArgs)
+                    { cwd = Just workspace
+                    , env = Just testEnvironment
+                    }
+            readCreateProcessWithExitCode command ""
+
+      callProcess "git" ["-C", workspace, "branch", "feat-existing"]
+      (exitCode, output, err) <- runCli ["--no-tui", "-w", "feat-existing"]
+      exitCode `shouldBe` ExitFailure 1
+      err `shouldBe` ""
+      output `shouldContain` ("Workspace: " <> worktree)
+      doesDirectoryExist worktree `shouldReturn` True
+
   it "reports invalid worktree names before loading configuration" $ do
     executable <- hachExecutable
     withTemporaryWorkspace $ \workspace -> do
