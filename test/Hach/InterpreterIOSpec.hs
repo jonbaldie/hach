@@ -486,6 +486,34 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
           ToolError _ -> False
         doesFileExist (testDir </> "root-only.txt") `shouldReturn` True
 
+      it "switches and restores the IO workspace for every registered worktree alias" $ do
+        callProcess "git" ["-C", testDir, "init"]
+        callProcess "git" ["-C", testDir, "config", "user.name", "Test"]
+        callProcess "git" ["-C", testDir, "config", "user.email", "test@test.com"]
+        callProcess "git" ["-C", testDir, "commit", "--allow-empty", "-m", "init"]
+        let aliases =
+              [ ("EnterWorktree", "ExitWorktree")
+              , ("enter_worktree", "exit_worktree")
+              , ("enterworktree", "exitworktree")
+              ]
+        mapM_ (\(enterName, exitName) -> do
+          env <- newIOEnv "k" "test-model" testDir False
+          let alg = ioAlgebra env
+              branch = "alias-" <> T.unpack enterName
+              wtPath = testDir </> ".agents" </> "worktrees" </> branch
+          enterRes <- interpTool alg (ToolCall "enter" enterName ("{\"name\":\"" <> T.pack branch <> "\"}"))
+          enterRes `shouldSatisfy` \case ToolSuccess _ -> True; ToolError _ -> False
+          currentIOWorkspace env `shouldReturn` wtPath
+          currentIOWorktree env `shouldReturn` Just wtPath
+          _ <- interpTool alg (ToolCall "write" "write_file" "{\"path\":\"alias-only.txt\",\"content\":\"isolated\"}")
+          doesFileExist (wtPath </> "alias-only.txt") `shouldReturn` True
+          doesFileExist (testDir </> "alias-only.txt") `shouldReturn` False
+          exitRes <- interpTool alg (ToolCall "exit" exitName "{}")
+          exitRes `shouldSatisfy` \case ToolSuccess _ -> True; ToolError _ -> False
+          currentIOWorkspace env `shouldReturn` testDir
+          currentIOWorktree env `shouldReturn` Nothing)
+          aliases
+
       it "switches workspace via interpEnterWorktree and restores via interpExitWorktree" $ do
         let wtDir = testDir </> "custom-wt"
         createDirectoryIfMissing True wtDir
