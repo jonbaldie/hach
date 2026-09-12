@@ -18,7 +18,7 @@ module Hach.TUI.UI
 
 import Hach.Skills (inputSlashCompletion)
 import Hach.TUI.Types
-import Hach.Tools (readWorkspaceToolTarget)
+import Hach.Tools (readWorkspaceToolTarget, writeWorkspaceToolTarget)
 import Hach.Types (SessionTokenUsage(..), ToolResult(..), modelContextLimit)
 import Brick
 import Brick.Widgets.Border
@@ -392,7 +392,9 @@ formatToolTarget :: Text -> Text -> Text
 formatToolTarget name rawArgs =
   case readWorkspaceToolTarget name rawArgs of
     Just target -> target
-    Nothing -> formatLegacyToolTarget name rawArgs
+    Nothing -> case writeWorkspaceToolTarget name rawArgs of
+      Just target -> target
+      Nothing -> formatLegacyToolTarget name rawArgs
 
 formatLegacyToolTarget :: Text -> Text -> Text
 formatLegacyToolTarget name rawArgs =

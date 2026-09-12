@@ -5,6 +5,7 @@ module Hach.Tools
   ( -- * Tool Definitions
     allToolDefs
   , readWorkspaceToolDefs
+  , writeWorkspaceToolDefs
   , readFileToolDef
   , writeFileToolDef
   , replaceFileContentToolDef
@@ -72,6 +73,15 @@ module Hach.Tools
   , resolvedReadTarget
   , executeResolvedReadWorkspaceTool
   , readWorkspaceToolTarget
+
+    -- * Workspace Write Capability Registry
+  , ResolvedWriteWorkspaceTool
+  , resolveWriteWorkspaceTool
+  , resolvedWriteCanonicalName
+  , resolvedWriteAuthority
+  , resolvedWriteTarget
+  , executeResolvedWriteWorkspaceTool
+  , writeWorkspaceToolTarget
 
   , parseReadFileArgs
   , parseWriteFileArgs
@@ -220,7 +230,10 @@ readFileToolModel = ToolDef
   }
 
 writeFileToolDef :: ToolDef
-writeFileToolDef = ToolDef
+writeFileToolDef = writeWorkspaceToolDef "write_file"
+
+writeFileToolModel :: ToolDef
+writeFileToolModel = ToolDef
   { toolName = "write_file"
   , toolDescription = "Write or overwrite a file in the workspace with UTF-8 text content."
   , toolParameters = object
@@ -240,7 +253,10 @@ writeFileToolDef = ToolDef
   }
 
 replaceFileContentToolDef :: ToolDef
-replaceFileContentToolDef = ToolDef
+replaceFileContentToolDef = writeWorkspaceToolDef "replace_file_content"
+
+replaceFileContentToolModel :: ToolDef
+replaceFileContentToolModel = ToolDef
   { toolName = "replace_file_content"
   , toolDescription = "Replace a unique contiguous block of text in a file with new content. Fails if the target content does not match uniquely."
   , toolParameters = object
@@ -352,7 +368,10 @@ grepSearchToolModel = ToolDef
   }
 
 editToolDef :: ToolDef
-editToolDef = ToolDef
+editToolDef = writeWorkspaceToolDef "Edit"
+
+editToolModel :: ToolDef
+editToolModel = ToolDef
   { toolName = "Edit"
   , toolDescription = "Replace a unique contiguous block of text in a file with new content."
   , toolParameters = object
@@ -644,13 +663,11 @@ endConversationToolDef = ToolDef
 allToolDefs :: [ToolDef]
 allToolDefs =
   [ readFileToolDef
-  , writeFileToolDef
-  , replaceFileContentToolDef
-  , runCommandToolDef
+  ] ++ writeWorkspaceToolDefs ++
+  [ runCommandToolDef
   , listDirToolDef
   , findFilesToolDef
   , grepSearchToolDef
-  , editToolDef
   , bashToolDef
   , globToolDef
   , grepToolDef
@@ -1073,6 +1090,71 @@ readWorkspaceToolTarget name rawArgs = do
   either (const Nothing) (Just . resolvedReadTarget) resolved
 
 --------------------------------------------------------------------------------
+-- Workspace Write Capability Registry
+--------------------------------------------------------------------------------
+
+data WriteWorkspaceCapability
+  = WriteFileCapability
+  | ReplaceFileContentCapability
+
+data ResolvedWriteWorkspaceTool = ResolvedWriteWorkspaceTool
+  { resolvedWriteCapability :: !WriteWorkspaceCapability
+  , resolvedWriteCanonicalName :: !Text
+  , resolvedWriteAuthority :: !ToolAuthority
+  , resolvedWriteTarget :: !Text
+  }
+
+-- | The registration point for every workspace-writing capability. Model
+-- definitions, accepted names, validation, target text, and execution resolve
+-- through this table while the existing executors retain path protection.
+writeWorkspaceRegistry :: [(WriteWorkspaceCapability, Text, [Text], [ToolDef])]
+writeWorkspaceRegistry =
+  [ (WriteFileCapability, "write_file", ["write_file"], [writeFileToolModel])
+  , (ReplaceFileContentCapability, "replace_file_content", ["replace_file_content", "Edit", "edit"], [replaceFileContentToolModel, editToolModel])
+  ]
+
+writeWorkspaceToolDefs :: [ToolDef]
+writeWorkspaceToolDefs = concat [ models | (_, _, _, models) <- writeWorkspaceRegistry ]
+
+writeWorkspaceToolDef :: Text -> ToolDef
+writeWorkspaceToolDef name = case findToolDef name of
+  Just model -> model
+  Nothing -> error "missing workspace write tool registration"
+  where
+    findToolDef target = do
+      (_, _, _, models) <- find (\(_, _, names, _) -> target `elem` names) writeWorkspaceRegistry
+      find (\model -> toolName model == target) models
+
+resolveWriteWorkspaceTool :: ToolCall -> Maybe (Either Text ResolvedWriteWorkspaceTool)
+resolveWriteWorkspaceTool call = do
+  (capability, canonical, _, _) <- findCapability (functionName call)
+  pure $ case capability of
+    WriteFileCapability -> do
+      args <- firstParse canonical (parseWriteFileArgs call)
+      pure (ResolvedWriteWorkspaceTool capability canonical AuthorityWorkspaceWrite (T.pack (writeFilePath args)))
+    ReplaceFileContentCapability -> do
+      args <- firstParse canonical (parseEditArgs call)
+      pure (ResolvedWriteWorkspaceTool capability canonical AuthorityWorkspaceWrite (T.pack (editPath args)))
+  where
+    findCapability name = find (\(_, _, names, _) -> name `elem` names) writeWorkspaceRegistry
+    firstParse canonical = either (\err -> Left ("Failed to parse " <> canonical <> " args: " <> T.pack err)) Right
+
+executeResolvedWriteWorkspaceTool :: FilePath -> ToolCall -> ResolvedWriteWorkspaceTool -> IO ToolResult
+executeResolvedWriteWorkspaceTool root call ResolvedWriteWorkspaceTool{..} =
+  case resolvedWriteCapability of
+    WriteFileCapability -> case parseWriteFileArgs call of
+      Left err -> pure (ToolError (T.pack err))
+      Right args -> executeWriteFile root args
+    ReplaceFileContentCapability -> case parseEditArgs call of
+      Left err -> pure (ToolError (T.pack err))
+      Right args -> executeReplaceFileContent root (ReplaceFileContentArgs (editPath args) (editOldContent args) (editNewContent args))
+
+writeWorkspaceToolTarget :: Text -> Text -> Maybe Text
+writeWorkspaceToolTarget name rawArgs = do
+  resolved <- resolveWriteWorkspaceTool (ToolCall "" name rawArgs)
+  either (const Nothing) (Just . resolvedWriteTarget) resolved
+
+--------------------------------------------------------------------------------
 -- Output Truncation
 --------------------------------------------------------------------------------
 
@@ -1131,20 +1213,12 @@ isProtectedRawPath root rawPath = do
 
 -- | Execute any supported tool within the given workspace directory.
 executeCodingTool :: FilePath -> ToolCall -> IO ToolResult
-executeCodingTool root call = fmap truncateResult $ case resolveReadWorkspaceTool call of
-  Just (Left err) -> pure (ToolError err)
-  Just (Right resolved) -> executeResolvedReadWorkspaceTool root call resolved
-  Nothing -> case functionName call of
-
-    "write_file" ->
-      case parseWriteFileArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse write_file args: " <> T.pack err)
-        Right args -> executeWriteFile root args
-
-    name | name `elem` ["replace_file_content", "Edit", "edit"] ->
-      case parseEditArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse Edit args: " <> T.pack err)
-        Right args -> executeReplaceFileContent root (ReplaceFileContentArgs (editPath args) (editOldContent args) (editNewContent args))
+executeCodingTool root call
+  | Just (Left err) <- resolveReadWorkspaceTool call = run (pure (ToolError err))
+  | Just (Right resolved) <- resolveReadWorkspaceTool call = run (executeResolvedReadWorkspaceTool root call resolved)
+  | Just (Left err) <- resolveWriteWorkspaceTool call = run (pure (ToolError err))
+  | Just (Right resolved) <- resolveWriteWorkspaceTool call = run (executeResolvedWriteWorkspaceTool root call resolved)
+  | otherwise = run $ case functionName call of
 
     name | name `elem` ["run_command", "Bash", "bash"] ->
       case parseBashArgs call of
@@ -1242,6 +1316,7 @@ executeCodingTool root call = fmap truncateResult $ case resolveReadWorkspaceToo
     unknown ->
       pure $ ToolError ("Unknown tool function: " <> unknown)
   where
+    run = fmap truncateResult
     truncateResult = \case
       ToolSuccess out -> ToolSuccess (truncateToolOutput out)
       err             -> err

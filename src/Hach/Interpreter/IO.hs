@@ -389,10 +389,14 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
 
   , interpCheckPermission = \tool args -> do
       mode <- readIORef prtMode
-      let argsVal = fromMaybe Aeson.Null (Aeson.decodeStrict (TE.encodeUtf8 args))
-          capability = resolveReadWorkspaceTool (ToolCall "" tool args)
-          decision = case capability of
-            Just (Right resolved) -> evalPermissionForAuthority mode prtRules (resolvedReadCanonicalName resolved) argsVal (resolvedReadAuthority resolved)
+      let
+        argsVal = fromMaybe Aeson.Null (Aeson.decodeStrict (TE.encodeUtf8 args))
+        readCapability = resolveReadWorkspaceTool (ToolCall "" tool args)
+        writeCapability = resolveWriteWorkspaceTool (ToolCall "" tool args)
+        decision = case readCapability of
+          Just (Right resolved) -> evalPermissionForAuthority mode prtRules (resolvedReadCanonicalName resolved) argsVal (resolvedReadAuthority resolved)
+          _ -> case writeCapability of
+            Just (Right resolved) -> evalPermissionForAuthority mode prtRules (resolvedWriteCanonicalName resolved) argsVal (resolvedWriteAuthority resolved)
             _ -> evalPermission mode prtRules tool argsVal
       case decision of
         PermAllow      -> pure True

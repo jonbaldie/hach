@@ -171,6 +171,34 @@ spec = do
       executeCodingTool "." (ToolCall "bad" "Glob" "{}") `shouldReturn` ToolError "Failed to parse find_files args: Error in $: key \"pattern\" not found"
       executeCodingTool "." (ToolCall "unknown" "unknown_read" "{}") `shouldReturn` ToolError "Unknown tool function: unknown_read"
 
+  describe "workspace write capability registry" $ do
+    it "resolves every accepted name to its canonical authority and Tool Card target" $ do
+      let cases =
+            [ ("write_file", "{\"path\":\"TODO.md\",\"content\":\"task\"}", "write_file", "TODO.md")
+            , ("replace_file_content", "{\"path\":\"src/Main.hs\",\"old_content\":\"old\",\"new_content\":\"new\"}", "replace_file_content", "src/Main.hs")
+            , ("Edit", "{\"path\":\"src/Main.hs\",\"old_content\":\"old\",\"new_content\":\"new\"}", "replace_file_content", "src/Main.hs")
+            , ("edit", "{\"path\":\"app/Main.hs\",\"old_content\":\"old\",\"new_content\":\"new\"}", "replace_file_content", "app/Main.hs")
+            ]
+          showResult = \case
+            Nothing -> "unknown name"
+            Just (Left err) -> T.unpack err
+            Just (Right _) -> "resolved unexpectedly"
+      mapM_ (\(name, args, canonical, target) ->
+        case resolveWriteWorkspaceTool (ToolCall "call" name args) of
+          Just (Right resolved) -> do
+            resolvedWriteCanonicalName resolved `shouldBe` canonical
+            resolvedWriteAuthority resolved `shouldBe` AuthorityWorkspaceWrite
+            resolvedWriteTarget resolved `shouldBe` target
+            writeWorkspaceToolTarget name args `shouldBe` Just target
+          other -> expectationFailure ("Did not resolve " <> T.unpack name <> ": " <> showResult other)
+        ) cases
+
+    it "rejects invalid write arguments before execution" $ do
+      case resolveWriteWorkspaceTool (ToolCall "bad" "Edit" "{}") of
+        Just (Left _) -> pure ()
+        _ -> expectationFailure "Invalid Edit arguments resolved unexpectedly"
+      executeCodingTool "." (ToolCall "bad" "Edit" "{}") `shouldReturn` ToolError "Failed to parse replace_file_content args: Error in $: key \"path\" not found"
+
   describe "truncateToolOutput" $ do
     it "leaves short output intact" $ do
       let out = "Line 1\nLine 2"
