@@ -74,6 +74,48 @@ spec = do
       -- Verify events contain tool execution
       mockEvents endEnv `shouldContain` [EvToolCall "read_file" "{\"path\":\"hello.txt\"}"]
 
+    it "authorizes a read alias under its registry canonical name" $ do
+      let call = ToolCall "glob-call" "Glob" "{\"pattern\":\"*.hs\"}"
+          step1 _ _ = Right (AssistantResponse Nothing [call] Nothing)
+          step2 _ _ = Right (AssistantResponse (Just "done") [] Nothing)
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockFiles = Map.fromList [("src/Main.hs", "module Main where")]
+            , mockPermissions = \tool _ -> tool == "find_files"
+            }
+          ((result, finalHistory), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Find Haskell files"])
+      result `shouldBe` AgentCompleted "done"
+      finalHistory `shouldSatisfy` \history ->
+        any (\case ToolMsg "glob-call" "Glob" output -> "src/Main.hs" `T.isInfixOf` output; _ -> False) history
+
+    it "authorizes interaction aliases under their registry canonical name" $ do
+      let call = ToolCall "message-call" "send_message" "{\"agent_id\":\"agent-1\",\"message\":\"hello\"}"
+          step1 _ _ = Right (AssistantResponse Nothing [call] Nothing)
+          step2 _ _ = Right (AssistantResponse (Just "done") [] Nothing)
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockPermissions = \tool _ -> tool /= "SendMessage"
+            }
+          ((result, finalHistory), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Message the agent"])
+      result `shouldBe` AgentCompleted "done"
+      finalHistory `shouldSatisfy` \history ->
+        any (\case ToolMsg "message-call" "send_message" output -> "denied" `T.isInfixOf` output; _ -> False) history
+
+    it "rejects unknown and unresolved calls before permissions and execution" $ do
+      let unknown = ToolCall "unknown" "not_registered" "{}"
+          unresolved = ToolCall "unresolved" "Bash" "{}"
+          step1 _ _ = Right (AssistantResponse Nothing [unknown, unresolved] Nothing)
+          step2 _ _ = Right (AssistantResponse (Just "done") [] Nothing)
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockPermissions = \_ _ -> error "permissions must not run for rejected calls"
+            }
+          ((result, history), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Call tools"])
+      result `shouldBe` AgentCompleted "done"
+      history `shouldSatisfy` \messages ->
+        any (\case ToolMsg "unknown" "not_registered" output -> output == "Error: Unknown tool function: not_registered"; _ -> False) messages
+          && any (\case ToolMsg "unresolved" "Bash" output -> "Failed to parse run_command args" `T.isInfixOf` output; _ -> False) messages
+
     it "supports writing files purely" $ do
       let writeCall = ToolCall
             { callId = "call_write"
@@ -538,6 +580,19 @@ spec = do
       Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Nothing
       mockEvents endEnv `shouldContain` [EvPermissionDenied "write_file" "Permission denied by policy"]
 
+    it "authorizes Edit through its canonical workspace-write capability" $ do
+      let toolCall = ToolCall "c1" "Edit" "{\"path\":\"foo.txt\",\"old_content\":\"old\",\"new_content\":\"new\"}"
+          step1 _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
+          step2 _ _ = Right $ AssistantResponse (Just "done") [] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockFiles = Map.singleton "foo.txt" "old"
+            , mockPermissions = \tool _ -> tool == "replace_file_content"
+            }
+          ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Edit foo"])
+      result `shouldBe` AgentCompleted "done"
+      Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Just "new"
+
     it "executes exposed tool aliases (Bash, Edit, Glob, Grep, ListDir) in pureAlgebra" $ do
       let prog = do
             rBash <- executeTool (ToolCall "c1" "Bash" "{\"command\":\"ls\"}")
@@ -584,5 +639,3 @@ spec = do
       result `shouldBe` AgentCompleted "done"
       Map.lookup "sanitized.txt" (mockFiles endEnv) `shouldBe` Just "safe"
       Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Nothing
-
-

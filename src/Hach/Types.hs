@@ -45,6 +45,7 @@ module Hach.Types
 
     -- * Permissions
   , PermissionMode(..)
+  , ToolAuthority(..)
   , permissionModeName
   , PermissionDecision(..)
   , RuleAction(..)
@@ -739,6 +740,14 @@ data HookEvent
   | HookNotification
   | HookPreCompact
   deriving (Show, Eq, Ord, Enum, Bounded, Generic)
+
+-- | Authority required by a resolved tool capability.
+data ToolAuthority
+  = AuthorityRead
+  | AuthorityWorkspaceWrite
+  | AuthorityCommand
+  | AuthorityInteraction
+  deriving (Show, Eq)
 
 instance ToJSON HookEvent where
   toJSON = \case

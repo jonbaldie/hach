@@ -107,6 +107,14 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         interpCheckPermission alg "read_file" "{\"path\":\"out.txt\"}"
           `shouldReturn` True
 
+      it "authorizes Edit aliases as workspace writes" $ do
+        env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
+        let alg = ioAlgebra env
+            args = "{\"path\":\"out.txt\",\"old_content\":\"old\",\"new_content\":\"new\"}"
+        interpCheckPermission alg "Edit" args `shouldReturn` False
+        setIOPermissionMode env ModeAcceptEdits
+        interpCheckPermission alg "edit" args `shouldReturn` True
+
       it "denies writes to protected paths in default mode" $ do
         isProtectedPath ".git/config" `shouldBe` True
         env <- newIOEnv "k" "test-model" testDir False
@@ -174,6 +182,29 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         res `shouldBe` defaultHookResult
 
     describe "agentLoop through ioAlgebra" $ do
+      let runSkillLoop env = do
+            let skillCall = ToolCall "c1" "Skill" "{\"name\":\"plan-command-guard\"}"
+            stepsRef <- newIORef
+              [ \_ _ -> Right (AssistantResponse Nothing [skillCall] Nothing)
+              , \_ _ -> Right (AssistantResponse (Just "done") [] Nothing)
+              ] :: IO (IORef [[Message] -> [ToolDef] -> Either Text AssistantResponse])
+            eventsRef <- newIORef [] :: IO (IORef [AgentEvent])
+            let alg = (ioAlgebra env)
+                  { interpPrompt = \_ _ -> do
+                      steps <- readIORef stepsRef
+                      case steps of
+                        step : rest -> writeIORef stepsRef rest >> pure (step [] [])
+                        [] -> pure (Right (AssistantResponse (Just "done") [] Nothing))
+                  , interpLog = \ev -> modifyIORef' eventsRef (ev :)
+                  }
+                cfg = AgentConfig
+                  { cfgModel = "test-model"
+                  , cfgSystemPrompt = Nothing
+                  , cfgMaxTurns = Nothing
+                  }
+            _ <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "run the skill"])
+            readIORef eventsRef
+
       it "blocks a write_file tool call into a protected path end to end" $ do
         env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
         eventsRef <- newIORef [] :: IO (IORef [AgentEvent])
@@ -203,6 +234,27 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
           _ -> False)
         exists <- doesFileExist (testDir </> ".git" </> "pwned.txt")
         exists `shouldBe` False
+
+      it "rejects a skill before its dynamic command expands in plan mode" $ do
+        let skillDir = testDir </> ".claude" </> "skills" </> "plan-command-guard"
+            marker = testDir </> "dynamic-command-ran"
+        createDirectoryIfMissing True skillDir
+        TIO.writeFile (skillDir </> "SKILL.md") "---\nname: plan-command-guard\n---\n!touch dynamic-command-ran\n"
+        env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
+        events <- runSkillLoop env
+        doesFileExist marker `shouldReturn` False
+        events `shouldContain` [EvPermissionDenied "Skill" "Permission denied by policy"]
+
+      it "expands a skill command after normal command approval" $ do
+        let skillDir = testDir </> ".claude" </> "skills" </> "plan-command-guard"
+            marker = testDir </> "dynamic-command-ran"
+        createDirectoryIfMissing True skillDir
+        TIO.writeFile (skillDir </> "SKILL.md") "---\nname: plan-command-guard\n---\n!touch dynamic-command-ran\n"
+        env0 <- newIOEnv "k" "test-model" testDir False
+        let env = env0 { ioResolveAsk = \tool _ _ -> pure (tool == "Skill") }
+        events <- runSkillLoop env
+        doesFileExist marker `shouldReturn` True
+        events `shouldNotContain` [EvPermissionDenied "Skill" "Permission denied by policy"]
 
     describe "permission-to-TUI ask path (Issue #91)" $ do
       let writeCall = ToolCall "c1" "write_file" "{\"path\":\"hello.txt\",\"content\":\"hello\"}"
@@ -433,6 +485,34 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
           ToolSuccess _ -> True
           ToolError _ -> False
         doesFileExist (testDir </> "root-only.txt") `shouldReturn` True
+
+      it "switches and restores the IO workspace for every registered worktree alias" $ do
+        callProcess "git" ["-C", testDir, "init"]
+        callProcess "git" ["-C", testDir, "config", "user.name", "Test"]
+        callProcess "git" ["-C", testDir, "config", "user.email", "test@test.com"]
+        callProcess "git" ["-C", testDir, "commit", "--allow-empty", "-m", "init"]
+        let aliases =
+              [ ("EnterWorktree", "ExitWorktree", "alias-pascal")
+              , ("enter_worktree", "exit_worktree", "alias-snake")
+              , ("enterworktree", "exitworktree", "alias-lower")
+              ]
+        -- Fixture paths must stay distinct on case-insensitive filesystems.
+        mapM_ (\(enterName, exitName, branch) -> do
+          env <- newIOEnv "k" "test-model" testDir False
+          let alg = ioAlgebra env
+              wtPath = testDir </> ".agents" </> "worktrees" </> branch
+          enterRes <- interpTool alg (ToolCall "enter" enterName ("{\"name\":\"" <> T.pack branch <> "\"}"))
+          enterRes `shouldSatisfy` \case ToolSuccess _ -> True; ToolError _ -> False
+          currentIOWorkspace env `shouldReturn` wtPath
+          currentIOWorktree env `shouldReturn` Just wtPath
+          _ <- interpTool alg (ToolCall "write" "write_file" "{\"path\":\"alias-only.txt\",\"content\":\"isolated\"}")
+          doesFileExist (wtPath </> "alias-only.txt") `shouldReturn` True
+          doesFileExist (testDir </> "alias-only.txt") `shouldReturn` False
+          exitRes <- interpTool alg (ToolCall "exit" exitName "{}")
+          exitRes `shouldSatisfy` \case ToolSuccess _ -> True; ToolError _ -> False
+          currentIOWorkspace env `shouldReturn` testDir
+          currentIOWorktree env `shouldReturn` Nothing)
+          aliases
 
       it "switches workspace via interpEnterWorktree and restores via interpExitWorktree" $ do
         let wtDir = testDir </> "custom-wt"

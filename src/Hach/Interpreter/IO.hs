@@ -28,7 +28,7 @@ import Hach.Hooks (executeHooks)
 import Hach.Memory (loadHierarchicalMemory, resolveMemoryImports)
 import Hach.Notifications (sendDesktopNotification)
 import Hach.OpenRouter
-import Hach.Permissions (evalPermission)
+import Hach.Permissions (evalPermission, evalPermissionForAuthority)
 import qualified Hach.Sessions as Sessions
 import Hach.Tools
 import Hach.TUI.Types (ProjectInitializationResult(..))
@@ -338,8 +338,8 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
       sendChatCompletion ioManager ioApiKey req
 
   , interpTool = \call -> do
-      case functionName call of
-        name | name `elem` ["EnterWorktree", "enter_worktree"] ->
+      case resolveToolIdentity (functionName call) of
+        Just ("EnterWorktree", _) ->
           case parseEnterWorktreeArgs call of
             Left err   -> pure $ ToolError ("Failed to parse EnterWorktree args: " <> T.pack err)
             Right (EnterWorktreeArgs wtName) -> do
@@ -350,7 +350,7 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
                   writeIORef ioCurrentWorkspace wtPath
                   writeIORef ioCurrentWorktree (Just wtPath)
                   pure $ ToolSuccess ("Created and entered worktree: " <> T.pack wtPath)
-        name | name `elem` ["ExitWorktree", "exit_worktree"] -> do
+        Just ("ExitWorktree", _) -> do
           mWt <- readIORef ioCurrentWorktree
           case mWt of
             Nothing -> pure $ ToolError "Not currently inside a worktree."
@@ -358,17 +358,18 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
               writeIORef ioCurrentWorkspace ioWorkspace
               writeIORef ioCurrentWorktree Nothing
               pure $ ToolSuccess "Exited worktree and restored workspace root."
-        name | name `elem` ["EnterPlanMode", "enter_plan_mode"] -> do
-          setIOPermissionMode env ModePlan
-          currentWs <- readIORef ioCurrentWorkspace
-          executeCodingTool currentWs call
-        name | name `elem` ["ExitPlanMode", "exit_plan_mode"] -> do
-          setIOPermissionMode env ModeDefault
-          currentWs <- readIORef ioCurrentWorkspace
-          executeCodingTool currentWs call
-        _ -> do
-          currentWs <- readIORef ioCurrentWorkspace
-          executeCodingTool currentWs call
+        _ -> case functionName call of
+          name | name `elem` ["EnterPlanMode", "enter_plan_mode"] -> do
+            setIOPermissionMode env ModePlan
+            currentWs <- readIORef ioCurrentWorkspace
+            executeCodingTool currentWs call
+          name | name `elem` ["ExitPlanMode", "exit_plan_mode"] -> do
+            setIOPermissionMode env ModeDefault
+            currentWs <- readIORef ioCurrentWorkspace
+            executeCodingTool currentWs call
+          _ -> do
+            currentWs <- readIORef ioCurrentWorkspace
+            executeCodingTool currentWs call
 
   , interpLog = logger
 
@@ -390,7 +391,11 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
   , interpCheckPermission = \tool args -> do
       mode <- readIORef prtMode
       let argsVal = fromMaybe Aeson.Null (Aeson.decodeStrict (TE.encodeUtf8 args))
-      case evalPermission mode prtRules tool argsVal of
+          capability = resolveTool (ToolCall "" tool args)
+          decision = case capability of
+            Just (Right resolved) -> evalPermissionForAuthority mode prtRules (resolvedToolCanonicalName resolved) argsVal (resolvedToolAuthority resolved)
+            _ -> evalPermission mode prtRules tool argsVal
+      case decision of
         PermAllow      -> pure True
         PermDeny _     -> pure False
         PermAsk reason -> ioResolveAsk tool args reason

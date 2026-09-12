@@ -3,6 +3,7 @@
 module Hach.PermissionsSpec (spec) where
 
 import Hach.Permissions
+import Hach.Tools
 import Hach.Types
 import Data.Aeson (object, (.=))
 import Test.Hspec
@@ -23,9 +24,12 @@ spec = describe "Hach.Permissions" $ do
         PermAsk _ -> pure ()
         other     -> expectationFailure ("Expected PermAsk, got " <> show other)
 
-    it "asks for command execution" $ do
+    it "asks for command execution, including skills whose expansion can run commands" $ do
       let args = object ["command" .= ("cargo test" :: String)]
       case evalPermission ModeDefault [] "run_command" args of
+        PermAsk _ -> pure ()
+        other     -> expectationFailure ("Expected PermAsk, got " <> show other)
+      case evalPermission ModeDefault [] "Skill" (object ["name" .= ("deploy" :: String)]) of
         PermAsk _ -> pure ()
         other     -> expectationFailure ("Expected PermAsk, got " <> show other)
 
@@ -77,6 +81,9 @@ spec = describe "Hach.Permissions" $ do
       case evalPermission ModePlan [] "run_command" cmdArgs of
         PermDeny _ -> pure ()
         other      -> expectationFailure ("Expected PermDeny, got " <> show other)
+      case evalPermission ModePlan [] "Skill" (object ["name" .= ("deploy" :: String)]) of
+        PermDeny _ -> pure ()
+        other      -> expectationFailure ("Expected PermDeny, got " <> show other)
 
     it "allows ExitPlanMode, AskUserQuestion, EndConversation, and Monitor" $ do
       let args = object []
@@ -86,8 +93,6 @@ spec = describe "Hach.Permissions" $ do
       evalPermission ModePlan [] "ask_user_question" args `shouldBe` PermAllow
       evalPermission ModePlan [] "EndConversation" args `shouldBe` PermAllow
       evalPermission ModePlan [] "end_conversation" args `shouldBe` PermAllow
-      evalPermission ModePlan [] "Skill" args `shouldBe` PermAllow
-      evalPermission ModePlan [] "skill" args `shouldBe` PermAllow
       evalPermission ModePlan [] "EnterPlanMode" args `shouldBe` PermAllow
       evalPermission ModePlan [] "enter_plan_mode" args `shouldBe` PermAllow
       evalPermission ModePlan [] "Monitor" args `shouldBe` PermAllow
@@ -165,6 +170,27 @@ spec = describe "Hach.Permissions" $ do
         PermDeny _ -> pure ()
         other      -> expectationFailure ("Expected PermDeny, got " <> show other)
 
+  describe "registry-backed command and web authorization" $ do
+    it "uses the canonical command name for every command alias" $ do
+      let args = object ["command" .= ("cabal test" :: String)]
+          rule = PermissionRule RuleDeny (Just "run_command") Nothing
+          calls = [ToolCall "call" name "{\"command\":\"cabal test\"}" | name <- ["run_command", "Bash", "bash"]]
+      mapM_ (\call -> case resolveTool call of
+        Just (Right resolved) ->
+          evalPermissionForAuthority ModeDefault [rule] (resolvedToolCanonicalName resolved) args (resolvedToolAuthority resolved)
+            `shouldBe` PermDeny "Denied by permission rule for run_command"
+        _ -> expectationFailure "Command alias did not resolve") calls
+
+    it "classifies every web alias as read authority" $ do
+      let calls =
+            [ ToolCall "fetch" name "{\"url\":\"https://example.com\"}" | name <- ["WebFetch", "web_fetch", "webfetch"] ]
+            <> [ ToolCall "search" name "{\"query\":\"Haskell\"}" | name <- ["WebSearch", "web_search", "websearch"] ]
+      mapM_ (\call -> case resolveTool call of
+        Just (Right resolved) ->
+          evalPermissionForAuthority ModePlan [] (resolvedToolCanonicalName resolved) (object []) (resolvedToolAuthority resolved)
+            `shouldBe` PermAllow
+        _ -> expectationFailure "Web alias did not resolve") calls
+
   describe "TaskCreate with a command (issue #110)" $ do
     let cmdArgs = object ["name" .= ("t" :: String), "command" .= ("rm -rf /tmp/x" :: String)]
         noCmdArgs = object ["name" .= ("t" :: String)]
@@ -201,12 +227,11 @@ spec = describe "Hach.Permissions" $ do
         tools =
           [ "AskUserQuestion", "ask_user_question"
           , "EndConversation", "end_conversation"
-          , "Skill", "skill"
           , "EnterPlanMode", "enter_plan_mode"
           , "ExitPlanMode", "exit_plan_mode"
           , "Monitor", "monitor"
           ]
         modes = [ModeAcceptEdits, ModeDefault, ModePlan]
 
-    it "allows AskUserQuestion, EndConversation, Skill, EnterPlanMode, ExitPlanMode, and Monitor without asking" $
+    it "allows AskUserQuestion, EndConversation, EnterPlanMode, ExitPlanMode, and Monitor without asking" $
       mapM_ (\t -> mapM_ (\m -> evalPermission m [] t args `shouldBe` PermAllow) modes) tools
