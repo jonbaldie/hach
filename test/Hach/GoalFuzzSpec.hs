@@ -250,8 +250,9 @@ spec = modifyMaxSuccess (const 1000) $ do
         let lower = T.toLower err
             intendedUnrec = any (`T.isInfixOf` lower)
               [ "401", "unauthorized", "authentication", "api key"
-              , "402", "payment", "credit", "balance", "quota", "billing"
-              , "context", "overflow", "too long", "maximum context", "token limit"
+              , "402", "payment", "credit", "balance", "quota exceeded", "quota exhausted", "billing"
+              , "context length", "context window", "context overflow"
+              , "maximum context length", "prompt is too long", "token limit"
               , "404", "model not found", "model unavailable", "model does not exist", "unknown model"
               ]
         in intendedUnrec ==> classifyError err == GoalErrUnrecoverable

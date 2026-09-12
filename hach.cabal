@@ -141,6 +141,7 @@ test-suite hach-test
         Hach.NotificationsSpec
         Hach.InterpreterIOSpec
         Hach.CLISpec
+        Hach.TypesSpec
     build-tool-depends:
         hach:hach
     build-depends:
