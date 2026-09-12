@@ -199,6 +199,39 @@ spec = do
         _ -> expectationFailure "Invalid Edit arguments resolved unexpectedly"
       executeCodingTool "." (ToolCall "bad" "Edit" "{}") `shouldReturn` ToolError "Failed to parse replace_file_content args: Error in $: key \"path\" not found"
 
+  describe "command and web capability registry" $ do
+    it "resolves every accepted name to its canonical model, authority, and target" $ do
+      let cases =
+            [ ("run_command", "{\"command\":\"cabal test\",\"timeout\":60}", "run_command", AuthorityCommand, "cabal test")
+            , ("Bash", "{\"command\":\"make check\"}", "run_command", AuthorityCommand, "make check")
+            , ("bash", "{\"command\":\"stack test\"}", "run_command", AuthorityCommand, "stack test")
+            , ("WebFetch", "{\"url\":\"https://example.com\"}", "WebFetch", AuthorityRead, "https://example.com")
+            , ("web_fetch", "{\"url\":\"https://example.org\"}", "WebFetch", AuthorityRead, "https://example.org")
+            , ("webfetch", "{\"url\":\"https://example.net\"}", "WebFetch", AuthorityRead, "https://example.net")
+            , ("WebSearch", "{\"query\":\"Haskell\"}", "WebSearch", AuthorityRead, "Haskell")
+            , ("web_search", "{\"query\":\"tool registry\"}", "WebSearch", AuthorityRead, "tool registry")
+            , ("websearch", "{\"query\":\"capability\"}", "WebSearch", AuthorityRead, "capability")
+            ]
+          showResult = \case
+            Nothing -> "unknown name"
+            Just (Left err) -> T.unpack err
+            Just (Right _) -> "resolved unexpectedly"
+      mapM_ (\(name, args, canonical, authority, target) ->
+        case resolveCommandWebTool (ToolCall "call" name args) of
+          Just (Right resolved) -> do
+            resolvedCommandWebCanonicalName resolved `shouldBe` canonical
+            resolvedCommandWebAuthority resolved `shouldBe` authority
+            resolvedCommandWebTarget resolved `shouldBe` target
+            commandWebToolTarget name args `shouldBe` Just target
+          other -> expectationFailure ("Did not resolve " <> T.unpack name <> ": " <> showResult other)
+        ) cases
+
+    it "rejects invalid command and web arguments before execution" $ do
+      case resolveCommandWebTool (ToolCall "bad" "Bash" "{}") of
+        Just (Left _) -> pure ()
+        _ -> expectationFailure "Invalid Bash arguments resolved unexpectedly"
+      executeCodingTool "." (ToolCall "bad" "Bash" "{}") `shouldReturn` ToolError "Failed to parse run_command args: Error in $: key \"command\" not found"
+
   describe "truncateToolOutput" $ do
     it "leaves short output intact" $ do
       let out = "Line 1\nLine 2"

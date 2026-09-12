@@ -968,6 +968,11 @@ spec = do
         formatToolTarget "grep" "{\"pattern\":\"TODO\"}" `shouldBe` "TODO"
         formatToolTarget "ListDir" "{\"path\":\"src\"}" `shouldBe` "src"
 
+      it "uses resolved command and web capability targets" $ do
+        formatToolTarget "Bash" "{\"command\":\"npm test\",\"timeout\":30}" `shouldBe` "npm test"
+        formatToolTarget "web_fetch" "{\"url\":\"https://example.com/docs\"}" `shouldBe` "https://example.com/docs"
+        formatToolTarget "websearch" "{\"query\":\"Haskell tool registry\"}" `shouldBe` "Haskell tool registry"
+
       it "still truncates raw args for unknown tool names" $ do
         formatToolTarget "browser" "{\"url\":\"https://example.com/page\"}"
           `shouldBe` "{\"url\":\"https://example.com/pa..."

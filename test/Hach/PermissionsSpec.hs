@@ -3,6 +3,7 @@
 module Hach.PermissionsSpec (spec) where
 
 import Hach.Permissions
+import Hach.Tools
 import Hach.Types
 import Data.Aeson (object, (.=))
 import Test.Hspec
@@ -164,6 +165,27 @@ spec = describe "Hach.Permissions" $ do
       case evalPermission ModeDefault [rule] "run_command" args of
         PermDeny _ -> pure ()
         other      -> expectationFailure ("Expected PermDeny, got " <> show other)
+
+  describe "registry-backed command and web authorization" $ do
+    it "uses the canonical command name for every command alias" $ do
+      let args = object ["command" .= ("cabal test" :: String)]
+          rule = PermissionRule RuleDeny (Just "run_command") Nothing
+          calls = [ToolCall "call" name "{\"command\":\"cabal test\"}" | name <- ["run_command", "Bash", "bash"]]
+      mapM_ (\call -> case resolveCommandWebTool call of
+        Just (Right resolved) ->
+          evalPermissionForAuthority ModeDefault [rule] (resolvedCommandWebCanonicalName resolved) args (resolvedCommandWebAuthority resolved)
+            `shouldBe` PermDeny "Denied by permission rule for run_command"
+        _ -> expectationFailure "Command alias did not resolve") calls
+
+    it "classifies every web alias as read authority" $ do
+      let calls =
+            [ ToolCall "fetch" name "{\"url\":\"https://example.com\"}" | name <- ["WebFetch", "web_fetch", "webfetch"] ]
+            <> [ ToolCall "search" name "{\"query\":\"Haskell\"}" | name <- ["WebSearch", "web_search", "websearch"] ]
+      mapM_ (\call -> case resolveCommandWebTool call of
+        Just (Right resolved) ->
+          evalPermissionForAuthority ModePlan [] (resolvedCommandWebCanonicalName resolved) (object []) (resolvedCommandWebAuthority resolved)
+            `shouldBe` PermAllow
+        _ -> expectationFailure "Web alias did not resolve") calls
 
   describe "TaskCreate with a command (issue #110)" $ do
     let cmdArgs = object ["name" .= ("t" :: String), "command" .= ("rm -rf /tmp/x" :: String)]
