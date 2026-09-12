@@ -391,9 +391,12 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
       mode <- readIORef prtMode
       let argsVal = fromMaybe Aeson.Null (Aeson.decodeStrict (TE.encodeUtf8 args))
           capability = resolveReadWorkspaceTool (ToolCall "" tool args)
+          commandWebCapability = resolveCommandWebTool (ToolCall "" tool args)
           decision = case capability of
             Just (Right resolved) -> evalPermissionForAuthority mode prtRules (resolvedReadCanonicalName resolved) argsVal (resolvedReadAuthority resolved)
-            _ -> evalPermission mode prtRules tool argsVal
+            _ -> case commandWebCapability of
+              Just (Right resolved) -> evalPermissionForAuthority mode prtRules (resolvedCommandWebCanonicalName resolved) argsVal (resolvedCommandWebAuthority resolved)
+              _ -> evalPermission mode prtRules tool argsVal
       case decision of
         PermAllow      -> pure True
         PermDeny _     -> pure False

@@ -73,6 +73,15 @@ module Hach.Tools
   , executeResolvedReadWorkspaceTool
   , readWorkspaceToolTarget
 
+    -- * Command and Web Capability Registry
+  , ResolvedCommandWebTool
+   , resolveCommandWebTool
+   , resolvedCommandWebCanonicalName
+   , resolvedCommandWebAuthority
+   , resolvedCommandWebTarget
+   , executeResolvedCommandWebTool
+   , commandWebToolTarget
+
   , parseReadFileArgs
   , parseWriteFileArgs
   , parseReplaceFileContentArgs
@@ -264,7 +273,10 @@ replaceFileContentToolDef = ToolDef
   }
 
 runCommandToolDef :: ToolDef
-runCommandToolDef = ToolDef
+runCommandToolDef = commandWebToolDef "run_command"
+
+runCommandToolModel :: ToolDef
+runCommandToolModel = ToolDef
   { toolName = "run_command"
   , toolDescription = "Execute a shell command inside the workspace directory, capturing stdout, stderr, and exit code."
   , toolParameters = object
@@ -410,7 +422,10 @@ grepToolDef = ToolDef
   }
 
 webFetchToolDef :: ToolDef
-webFetchToolDef = ToolDef
+webFetchToolDef = commandWebToolDef "WebFetch"
+
+webFetchToolModel :: ToolDef
+webFetchToolModel = ToolDef
   { toolName = "WebFetch"
   , toolDescription = "Fetch web page content via HTTP/HTTPS GET."
   , toolParameters = object
@@ -423,7 +438,10 @@ webFetchToolDef = ToolDef
   }
 
 webSearchToolDef :: ToolDef
-webSearchToolDef = ToolDef
+webSearchToolDef = commandWebToolDef "WebSearch"
+
+webSearchToolModel :: ToolDef
+webSearchToolModel = ToolDef
   { toolName = "WebSearch"
   , toolDescription = "Perform a web search query."
   , toolParameters = object
@@ -1073,6 +1091,72 @@ readWorkspaceToolTarget name rawArgs = do
   either (const Nothing) (Just . resolvedReadTarget) resolved
 
 --------------------------------------------------------------------------------
+-- Command and Web Capability Registry
+--------------------------------------------------------------------------------
+
+data CommandWebCapability
+  = RunCommandCapability
+  | WebFetchCapability
+  | WebSearchCapability
+
+data ResolvedCommandWebTool = ResolvedCommandWebTool
+  { resolvedCommandWebCapability :: !CommandWebCapability
+  , resolvedCommandWebCanonicalName :: !Text
+  , resolvedCommandWebAuthority :: !ToolAuthority
+  , resolvedCommandWebTarget :: !Text
+  }
+
+-- | The registration point for every command and web capability. Model
+-- definitions, accepted names, authority, target text, and execution all
+-- resolve through this table.
+commandWebRegistry :: [(CommandWebCapability, Text, [Text], ToolAuthority, ToolDef)]
+commandWebRegistry =
+  [ (RunCommandCapability, "run_command", ["run_command", "Bash", "bash"], AuthorityCommand, runCommandToolModel)
+  , (WebFetchCapability, "WebFetch", ["WebFetch", "web_fetch", "webfetch"], AuthorityRead, webFetchToolModel)
+  , (WebSearchCapability, "WebSearch", ["WebSearch", "web_search", "websearch"], AuthorityRead, webSearchToolModel)
+  ]
+
+commandWebToolDef :: Text -> ToolDef
+commandWebToolDef canonical = case find (\(_, name, _, _, _) -> name == canonical) commandWebRegistry of
+  Just (_, _, _, _, model) -> model
+  Nothing -> error "missing command or web tool registration"
+
+resolveCommandWebTool :: ToolCall -> Maybe (Either Text ResolvedCommandWebTool)
+resolveCommandWebTool call = do
+  (capability, canonical, _, authority, _) <- findCapability (functionName call)
+  pure $ case capability of
+    RunCommandCapability -> do
+      args <- firstParse canonical (parseRunCommandArgs call)
+      pure (ResolvedCommandWebTool capability canonical authority (runCommandCmd args))
+    WebFetchCapability -> do
+      args <- firstParse canonical (parseWebFetchArgs call)
+      pure (ResolvedCommandWebTool capability canonical authority (webFetchUrl args))
+    WebSearchCapability -> do
+      args <- firstParse canonical (parseWebSearchArgs call)
+      pure (ResolvedCommandWebTool capability canonical authority (webSearchQuery args))
+  where
+    findCapability name = find (\(_, _, names, _, _) -> name `elem` names) commandWebRegistry
+    firstParse canonical = either (\err -> Left ("Failed to parse " <> canonical <> " args: " <> T.pack err)) Right
+
+executeResolvedCommandWebTool :: FilePath -> ToolCall -> ResolvedCommandWebTool -> IO ToolResult
+executeResolvedCommandWebTool root call ResolvedCommandWebTool{..} =
+  case resolvedCommandWebCapability of
+    RunCommandCapability -> case parseRunCommandArgs call of
+      Left err -> pure (ToolError (T.pack err))
+      Right args -> executeRunCommand root args
+    WebFetchCapability -> case parseWebFetchArgs call of
+      Left err -> pure (ToolError (T.pack err))
+      Right args -> executeWebFetch args
+    WebSearchCapability -> case parseWebSearchArgs call of
+      Left err -> pure (ToolError (T.pack err))
+      Right args -> executeWebSearch args
+
+commandWebToolTarget :: Text -> Text -> Maybe Text
+commandWebToolTarget name rawArgs = do
+  resolved <- resolveCommandWebTool (ToolCall "" name rawArgs)
+  either (const Nothing) (Just . resolvedCommandWebTarget) resolved
+
+--------------------------------------------------------------------------------
 -- Output Truncation
 --------------------------------------------------------------------------------
 
@@ -1134,7 +1218,17 @@ executeCodingTool :: FilePath -> ToolCall -> IO ToolResult
 executeCodingTool root call = fmap truncateResult $ case resolveReadWorkspaceTool call of
   Just (Left err) -> pure (ToolError err)
   Just (Right resolved) -> executeResolvedReadWorkspaceTool root call resolved
-  Nothing -> case functionName call of
+  Nothing -> case resolveCommandWebTool call of
+    Just (Left err) -> pure (ToolError err)
+    Just (Right resolved) -> executeResolvedCommandWebTool root call resolved
+    Nothing -> executeLegacyCodingTool root call
+  where
+    truncateResult = \case
+      ToolSuccess out -> ToolSuccess (truncateToolOutput out)
+      err             -> err
+
+executeLegacyCodingTool :: FilePath -> ToolCall -> IO ToolResult
+executeLegacyCodingTool root call = case functionName call of
 
     "write_file" ->
       case parseWriteFileArgs call of
@@ -1145,21 +1239,6 @@ executeCodingTool root call = fmap truncateResult $ case resolveReadWorkspaceToo
       case parseEditArgs call of
         Left err   -> pure $ ToolError ("Failed to parse Edit args: " <> T.pack err)
         Right args -> executeReplaceFileContent root (ReplaceFileContentArgs (editPath args) (editOldContent args) (editNewContent args))
-
-    name | name `elem` ["run_command", "Bash", "bash"] ->
-      case parseBashArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse Bash args: " <> T.pack err)
-        Right args -> executeRunCommand root (RunCommandArgs (bashCommand args) (bashTimeout args))
-
-    name | name `elem` ["WebFetch", "web_fetch"] ->
-      case parseWebFetchArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse WebFetch args: " <> T.pack err)
-        Right args -> executeWebFetch args
-
-    name | name `elem` ["WebSearch", "web_search"] ->
-      case parseWebSearchArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse WebSearch args: " <> T.pack err)
-        Right args -> executeWebSearch args
 
     name | name `elem` ["Agent", "agent"] ->
       case parseAgentArgs call of
@@ -1241,10 +1320,6 @@ executeCodingTool root call = fmap truncateResult $ case resolveReadWorkspaceToo
 
     unknown ->
       pure $ ToolError ("Unknown tool function: " <> unknown)
-  where
-    truncateResult = \case
-      ToolSuccess out -> ToolSuccess (truncateToolOutput out)
-      err             -> err
 
 executeReadFile :: FilePath -> ReadFileArgs -> IO ToolResult
 executeReadFile root (ReadFileArgs path) = do
