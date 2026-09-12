@@ -63,6 +63,16 @@ module Hach.Tools
   , TaskStopArgs(..)
   , AskUserQuestionArgs(..)
 
+    -- * Capability Registry
+    , resolveTool
+    , toolDefinitionForName
+    , resolvedToolCanonicalName
+    , resolvedToolAuthority
+    , resolvedToolTarget
+    , resolveToolIdentity
+    , toolTarget
+    , executeResolvedTool
+
   , parseReadFileArgs
   , parseWriteFileArgs
   , parseReplaceFileContentArgs
@@ -124,7 +134,7 @@ module Hach.Tools
 
 import Hach.Git (createWorktree, isWorktreeDirectory)
 import Hach.Notifications (sendDesktopNotification)
-import Hach.Paths (resolveWorkspacePath)
+import Hach.Paths (isProtectedPath, matchStarGlob, resolveWorkspacePath)
 import Hach.Skills (discoverSkills, expandSkillContent, skillContent)
 import Hach.Tasks
   ( Task(..)
@@ -142,7 +152,6 @@ import Hach.Tasks
   , getBackgroundOutput
   , stopBackgroundProcess
   )
-import Hach.Permissions (isProtectedPath, matchStarGlob)
 import Hach.Types
 import Control.Applicative ((<|>))
 import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, writeTVar)
@@ -157,6 +166,7 @@ import qualified Data.Aeson.Types as AesonTypes
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Map.Strict as Map
+import Data.List (find)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -619,39 +629,10 @@ endConversationToolDef = ToolDef
 
 -- | Standard set of coding tools exposed to the agent.
 allToolDefs :: [ToolDef]
-allToolDefs =
-  [ readFileToolDef
-  , writeFileToolDef
-  , replaceFileContentToolDef
-  , runCommandToolDef
-  , listDirToolDef
-  , findFilesToolDef
-  , grepSearchToolDef
-  , editToolDef
-  , bashToolDef
-  , globToolDef
-  , grepToolDef
-  , webFetchToolDef
-  , webSearchToolDef
-  , agentToolDef
-  , todoWriteToolDef
-  , skillToolDef
-  , enterPlanModeToolDef
-  , exitPlanModeToolDef
-  , enterWorktreeToolDef
-  , exitWorktreeToolDef
-  , listAgentsToolDef
-  , sendMessageToolDef
-  , pushNotificationToolDef
-  , monitorToolDef
-  , taskCreateToolDef
-  , taskGetToolDef
-  , taskListToolDef
-  , taskUpdateToolDef
-  , taskStopToolDef
-  , askUserQuestionToolDef
-  , endConversationToolDef
-  ]
+allToolDefs = filter ((`elem` codingToolNames) . toolName) definitions ++ filter ((`notElem` codingToolNames) . toolName) definitions
+  where
+    codingToolNames = ["read_file", "write_file", "replace_file_content", "run_command", "list_dir", "find_files", "grep_search"]
+    definitions = concatMap toolDefinitions toolRegistry
 
 --------------------------------------------------------------------------------
 -- Argument Types & Parsers
@@ -973,6 +954,119 @@ parseAskUserQuestionArgs :: ToolCall -> Either String AskUserQuestionArgs
 parseAskUserQuestionArgs = parseArgsWith
 
 --------------------------------------------------------------------------------
+-- Unified Tool Capability Registry
+--------------------------------------------------------------------------------
+
+data ToolRegistration = ToolRegistration
+  { toolCanonicalName :: !Text
+  , toolAliases :: ![Text]
+  , toolAuthority :: !ToolAuthority
+  , toolDefinitions :: ![ToolDef]
+  , toolResolve :: ToolCall -> Either Text (ToolAuthority, Maybe Text)
+  , toolPartialTarget :: ToolCall -> Maybe Text
+  , toolExecute :: FilePath -> ToolCall -> IO ToolResult
+  }
+
+data ResolvedTool = ResolvedTool
+  { resolvedToolCanonicalName :: !Text
+  , resolvedToolAuthority :: !ToolAuthority
+  , resolvedToolTarget :: !(Maybe Text)
+  , resolvedToolExecute :: FilePath -> ToolCall -> IO ToolResult
+  }
+
+-- | The sole registration point for supported tool definitions, aliases,
+-- authority, target text, validation, and executor selection.
+toolRegistry :: [ToolRegistration]
+toolRegistry =
+  [ registration "read_file" ["read_file"] AuthorityRead [readFileToolDef] (target parseReadFileArgs (T.pack . readFilePath)) noTarget (run parseReadFileArgs executeReadFile)
+  , registration "write_file" ["write_file"] AuthorityWorkspaceWrite [writeFileToolDef] (target parseWriteFileArgs (T.pack . writeFilePath)) pathTarget (run parseWriteFileArgs executeWriteFile)
+  , registration "replace_file_content" ["replace_file_content", "Edit", "edit"] AuthorityWorkspaceWrite [replaceFileContentToolDef, editToolDef] (target parseEditArgs (T.pack . editPath)) pathTarget (run parseEditArgs (\root args -> executeReplaceFileContent root (ReplaceFileContentArgs (editPath args) (editOldContent args) (editNewContent args))))
+  , registration "run_command" ["run_command", "Bash", "bash"] AuthorityCommand [runCommandToolDef, bashToolDef] (target parseRunCommandArgs runCommandCmd) noTarget (run parseRunCommandArgs executeRunCommand)
+  , registration "list_dir" ["list_dir", "ListDir", "listdir"] AuthorityRead [listDirToolDef] (target parseListDirArgs (T.pack . listDirPath)) noTarget (run parseListDirArgs executeListDir)
+  , registration "find_files" ["find_files", "Glob", "glob"] AuthorityRead [findFilesToolDef, globToolDef] (target parseGlobArgs globPattern) noTarget (run parseGlobArgs (\root args -> executeFindFiles root (FindFilesArgs (globPattern args) (globPath args))))
+  , registration "grep_search" ["grep_search", "Grep", "grep"] AuthorityRead [grepSearchToolDef, grepToolDef] (target parseGrepArgs grepQueryText) noTarget (run parseGrepArgs (\root args -> executeGrepSearch root (GrepSearchArgs (grepQueryText args) (grepPathText args) (grepArgCaseSensitive args))))
+  , registration "WebFetch" ["WebFetch", "web_fetch", "webfetch"] AuthorityRead [webFetchToolDef] (target parseWebFetchArgs webFetchUrl) noTarget (run parseWebFetchArgs (\_ -> executeWebFetch))
+  , registration "WebSearch" ["WebSearch", "web_search", "websearch"] AuthorityRead [webSearchToolDef] (target parseWebSearchArgs webSearchQuery) noTarget (run parseWebSearchArgs (\_ -> executeWebSearch))
+  , registration "Agent" ["Agent", "agent"] AuthorityInteraction [agentToolDef] (target parseAgentArgs agentArgName) noTarget (run parseAgentArgs (\_ args -> pure (ToolSuccess ("Spawned subagent '" <> agentArgName args <> "' with prompt: " <> agentArgPrompt args))))
+  , registration "TodoWrite" ["TodoWrite", "todo_write", "todowrite"] AuthorityWorkspaceWrite [todoWriteToolDef] (noArgs parseTodoWriteArgs) noTarget (run parseTodoWriteArgs executeTodoWrite)
+  , registration "Skill" ["Skill", "skill"] AuthorityCommand [skillToolDef] (target parseSkillToolArgs skillToolName) noTarget (run parseSkillToolArgs executeSkill)
+  , registration "ListAgents" ["ListAgents", "list_agents", "listagents"] AuthorityRead [listAgentsToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Available subagents: explore, plan."))))
+  , registration "SendMessage" ["SendMessage", "send_message"] AuthorityInteraction [sendMessageToolDef] (target parseSendMessageArgs (unAgentId . sendMsgRecipient)) noTarget (run parseSendMessageArgs (\_ args -> pure (ToolSuccess ("Message sent to agent " <> unAgentId (sendMsgRecipient args) <> ": " <> sendMsgContent args))))
+  , registration "AskUserQuestion" ["AskUserQuestion", "ask_user_question"] AuthorityInteraction [askUserQuestionToolDef] (target parseAskUserQuestionArgs askQuestionText) noTarget (run parseAskUserQuestionArgs (\_ -> executeAskUserQuestion))
+  , registration "PushNotification" ["PushNotification", "push_notification"] AuthorityInteraction [pushNotificationToolDef] (target parsePushNotificationArgs pushMessage) noTarget (run parsePushNotificationArgs (\_ -> executePushNotification))
+  , registration "Monitor" ["Monitor", "monitor"] AuthorityRead [monitorToolDef] (target parseMonitorArgs (unTaskId . monitorTaskId)) noTarget (run parseMonitorArgs (\_ -> executeMonitor))
+  , ToolRegistration "TaskCreate" ["TaskCreate", "task_create", "taskcreate"] AuthorityWorkspaceWrite [taskCreateToolDef] taskCreateTarget noTarget (run parseTaskCreateArgs executeTaskCreate)
+  , registration "TaskGet" ["TaskGet", "task_get", "taskget"] AuthorityRead [taskGetToolDef] (target parseTaskGetArgs (unTaskId . taskGetId)) noTarget (run parseTaskGetArgs (\_ -> executeTaskGet))
+  , registration "TaskList" ["TaskList", "task_list", "tasklist"] AuthorityRead [taskListToolDef] (noArgs (const (Right ()))) noTarget (const (const executeTaskList))
+  , registration "TaskUpdate" ["TaskUpdate", "task_update", "taskupdate"] AuthorityWorkspaceWrite [taskUpdateToolDef] (target parseTaskUpdateArgs (unTaskId . taskUpdateId)) noTarget (run parseTaskUpdateArgs (\_ -> executeTaskUpdate))
+  , registration "TaskStop" ["TaskStop", "task_stop", "taskstop"] AuthorityCommand [taskStopToolDef] (target parseTaskStopArgs (unTaskId . taskStopId)) noTarget (run parseTaskStopArgs (\_ -> executeTaskStop))
+  , registration "EnterWorktree" ["EnterWorktree", "enter_worktree", "enterworktree"] AuthorityCommand [enterWorktreeToolDef] (target parseEnterWorktreeArgs worktreeName) noTarget (run parseEnterWorktreeArgs executeEnterWorktree)
+  , registration "ExitWorktree" ["ExitWorktree", "exit_worktree", "exitworktree"] AuthorityCommand [exitWorktreeToolDef] (noArgs (const (Right ()))) noTarget (\root _ -> executeExitWorktree root)
+  , registration "EnterPlanMode" ["EnterPlanMode", "enter_plan_mode"] AuthorityInteraction [enterPlanModeToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Entered plan mode. The agent is now in read-only planning mode."))))
+  , registration "ExitPlanMode" ["ExitPlanMode", "exit_plan_mode"] AuthorityInteraction [exitPlanModeToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Exited plan mode. The agent is now in standard execution mode."))))
+  , registration "EndConversation" ["EndConversation", "end_conversation"] AuthorityInteraction [endConversationToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Conversation completed by agent."))))
+  ]
+  where
+    registration canonical aliases authority definitions resolver partial executor =
+      ToolRegistration canonical aliases authority definitions (fmap ((,) authority) . resolver) partial executor
+    target parser get call = fmap (Just . get) (parsed parser call)
+    noArgs parser call = case parser call of
+      Right _ -> case parseCallArgs call of
+        Right (Aeson.Object _) -> Right Nothing
+        Right _ -> Left "expected an object"
+        Left err -> Left (T.pack err)
+      Left err -> Left (T.pack err)
+    taskCreateTarget call = do
+      args <- parsed parseTaskCreateArgs call
+      let authority = case taskCreateCommand args of
+            Just command | not (T.null (T.strip command)) -> AuthorityCommand
+            _ -> AuthorityWorkspaceWrite
+      pure (authority, Just (taskCreateName args))
+    parsed parser call = either (Left . T.pack) Right (parser call)
+    noTarget _ = Nothing
+    pathTarget call = do
+      Aeson.Object argsObject <- either (const Nothing) Just (parseCallArgs call)
+      AesonTypes.parseMaybe (.: "path") argsObject
+    run parser action root call = case parser call of
+      Left err -> pure (ToolError (T.pack err))
+      Right args -> action root args
+
+resolveTool :: ToolCall -> Maybe (Either Text ResolvedTool)
+resolveTool call = do
+  ToolRegistration{..} <- findToolRegistration (functionName call)
+  pure $ case toolResolve call of
+    Left err -> Left ("Failed to parse " <> toolCanonicalName <> " args: " <> err)
+    Right (authority, target) -> Right (ResolvedTool toolCanonicalName authority target toolExecute)
+
+-- | Identify a registered tool without validating its call arguments. This is
+-- used by permission policy, which must classify malformed calls before they
+-- reach execution.
+resolveToolIdentity :: Text -> Maybe (Text, ToolAuthority)
+resolveToolIdentity name = do
+  ToolRegistration{..} <- findToolRegistration name
+  pure (toolCanonicalName, toolAuthority)
+
+-- | Extract a registered tool's display target. A partial path is still useful
+-- to the TUI when a malformed edit call is about to be rejected by execution.
+toolTarget :: ToolCall -> Maybe Text
+toolTarget call = case resolveTool call of
+  Just (Right resolved) -> resolvedToolTarget resolved
+  _ -> do
+    registration <- findToolRegistration (functionName call)
+    toolPartialTarget registration call
+
+toolDefinitionForName :: Text -> Maybe ToolDef
+toolDefinitionForName name = do
+  ToolRegistration{..} <- findToolRegistration name
+  find ((== name) . toolName) toolDefinitions <|> find ((== toolCanonicalName) . toolName) toolDefinitions
+
+findToolRegistration :: Text -> Maybe ToolRegistration
+findToolRegistration name = find (\registration -> name `elem` toolAliases registration) toolRegistry
+
+executeResolvedTool :: FilePath -> ToolCall -> ResolvedTool -> IO ToolResult
+executeResolvedTool root call ResolvedTool{..} = resolvedToolExecute root call
+
+--------------------------------------------------------------------------------
 -- Output Truncation
 --------------------------------------------------------------------------------
 
@@ -1031,136 +1125,14 @@ isProtectedRawPath root rawPath = do
 
 -- | Execute any supported tool within the given workspace directory.
 executeCodingTool :: FilePath -> ToolCall -> IO ToolResult
-executeCodingTool root call = do
-  res <- case functionName call of
-    "read_file" ->
-      case parseReadFileArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse read_file args: " <> T.pack err)
-        Right args -> executeReadFile root args
-
-    "write_file" ->
-      case parseWriteFileArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse write_file args: " <> T.pack err)
-        Right args -> executeWriteFile root args
-
-    name | name `elem` ["replace_file_content", "Edit", "edit"] ->
-      case parseEditArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse Edit args: " <> T.pack err)
-        Right args -> executeReplaceFileContent root (ReplaceFileContentArgs (editPath args) (editOldContent args) (editNewContent args))
-
-    name | name `elem` ["run_command", "Bash", "bash"] ->
-      case parseBashArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse Bash args: " <> T.pack err)
-        Right args -> executeRunCommand root (RunCommandArgs (bashCommand args) (bashTimeout args))
-
-    name | name `elem` ["list_dir", "ListDir"] ->
-      case parseListDirArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse list_dir args: " <> T.pack err)
-        Right args -> executeListDir root args
-
-    name | name `elem` ["find_files", "Glob", "glob"] ->
-      case parseGlobArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse " <> name <> " args: " <> T.pack err)
-        Right args -> executeFindFiles root (FindFilesArgs (globPattern args) (globPath args))
-
-    name | name `elem` ["grep_search", "Grep", "grep"] ->
-      case parseGrepArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse " <> name <> " args: " <> T.pack err)
-        Right args -> executeGrepSearch root (GrepSearchArgs (grepQueryText args) (grepPathText args) (grepArgCaseSensitive args))
-
-    name | name `elem` ["WebFetch", "web_fetch"] ->
-      case parseWebFetchArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse WebFetch args: " <> T.pack err)
-        Right args -> executeWebFetch args
-
-    name | name `elem` ["WebSearch", "web_search"] ->
-      case parseWebSearchArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse WebSearch args: " <> T.pack err)
-        Right args -> executeWebSearch args
-
-    name | name `elem` ["Agent", "agent"] ->
-      case parseAgentArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse Agent args: " <> T.pack err)
-        Right args -> pure $ ToolSuccess ("Spawned subagent '" <> agentArgName args <> "' with prompt: " <> agentArgPrompt args)
-
-    name | name `elem` ["TodoWrite", "todo_write"] ->
-      case parseTodoWriteArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse TodoWrite args: " <> T.pack err)
-        Right args -> executeTodoWrite root args
-
-    name | name `elem` ["Skill", "skill"] ->
-      case parseSkillToolArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse Skill args: " <> T.pack err)
-        Right args -> executeSkill root args
-
-    name | name `elem` ["EnterPlanMode", "enter_plan_mode"] ->
-      pure $ ToolSuccess "Entered plan mode. The agent is now in read-only planning mode."
-
-    name | name `elem` ["ExitPlanMode", "exit_plan_mode"] ->
-      pure $ ToolSuccess "Exited plan mode. The agent is now in standard execution mode."
-
-    name | name `elem` ["EnterWorktree", "enter_worktree"] ->
-      case parseEnterWorktreeArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse EnterWorktree args: " <> T.pack err)
-        Right args -> executeEnterWorktree root args
-
-    name | name `elem` ["ExitWorktree", "exit_worktree"] ->
-      executeExitWorktree root
-
-    name | name `elem` ["ListAgents", "list_agents"] ->
-      pure $ ToolSuccess "Available subagents: explore, plan."
-
-    name | name `elem` ["SendMessage", "send_message"] ->
-      case parseSendMessageArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse SendMessage args: " <> T.pack err)
-        Right args -> pure $ ToolSuccess ("Message sent to agent " <> unAgentId (sendMsgRecipient args) <> ": " <> sendMsgContent args)
-
-    name | name `elem` ["PushNotification", "push_notification"] ->
-      case parsePushNotificationArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse PushNotification args: " <> T.pack err)
-        Right args -> executePushNotification args
-
-    name | name `elem` ["Monitor", "monitor"] ->
-      case parseMonitorArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse Monitor args: " <> T.pack err)
-        Right args -> executeMonitor args
-
-    name | name `elem` ["TaskCreate", "task_create"] ->
-      case parseTaskCreateArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse TaskCreate args: " <> T.pack err)
-        Right args -> executeTaskCreate root args
-
-    name | name `elem` ["TaskGet", "task_get"] ->
-      case parseTaskGetArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse TaskGet args: " <> T.pack err)
-        Right args -> executeTaskGet args
-
-    name | name `elem` ["TaskList", "task_list"] ->
-      executeTaskList
-
-    name | name `elem` ["TaskUpdate", "task_update"] ->
-      case parseTaskUpdateArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse TaskUpdate args: " <> T.pack err)
-        Right args -> executeTaskUpdate args
-
-    name | name `elem` ["TaskStop", "task_stop"] ->
-      case parseTaskStopArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse TaskStop args: " <> T.pack err)
-        Right args -> executeTaskStop args
-
-    name | name `elem` ["AskUserQuestion", "ask_user_question"] ->
-      case parseAskUserQuestionArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse AskUserQuestion args: " <> T.pack err)
-        Right args -> executeAskUserQuestion args
-
-    name | name `elem` ["EndConversation", "end_conversation"] ->
-      pure $ ToolSuccess "Conversation completed by agent."
-
-    unknown ->
-      pure $ ToolError ("Unknown tool function: " <> unknown)
-  pure $ case res of
-    ToolSuccess out -> ToolSuccess (truncateToolOutput out)
-    err             -> err
+executeCodingTool root call = fmap truncateResult $ case resolveTool call of
+  Just (Left err) -> pure (ToolError err)
+  Just (Right resolved) -> executeResolvedTool root call resolved
+  Nothing -> pure (ToolError ("Unknown tool function: " <> functionName call))
+  where
+    truncateResult = \case
+      ToolSuccess out -> ToolSuccess (truncateToolOutput out)
+      err             -> err
 
 executeReadFile :: FilePath -> ReadFileArgs -> IO ToolResult
 executeReadFile root (ReadFileArgs path) = do

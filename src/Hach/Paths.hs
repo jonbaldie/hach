@@ -5,10 +5,14 @@
 module Hach.Paths
   ( collapseLogicalPath
   , canonicalizeCandidate
-  , resolveWorkspacePath
+   , resolveWorkspacePath
+   , isProtectedPath
+   , matchStarGlob
   ) where
 
 import Data.List (isPrefixOf)
+import Data.Text (Text)
+import qualified Data.Text as T
 import System.Directory
   ( canonicalizePath
   , doesDirectoryExist
@@ -73,3 +77,20 @@ isUnderRootCanon :: FilePath -> FilePath -> Bool
 isUnderRootCanon rootCanon finalPath =
   let rootWithSep = addTrailingPathSeparator rootCanon
   in finalPath == rootCanon || rootWithSep `isPrefixOf` finalPath
+
+isProtectedPath :: FilePath -> Bool
+isProtectedPath fp =
+  let dirs = splitDirectories fp
+      cleanDirs = [ d | d <- dirs, d /= "." && d /= "./" ]
+  in any (`elem` [".git", ".claude", ".agents", ".agent"]) cleanDirs
+
+-- | Linear wildcard matching where '*' may span directory separators.
+matchStarGlob :: Text -> Text -> Bool
+matchStarGlob pat str = go pat str Nothing
+  where
+    go p s star
+      | Just p' <- T.stripPrefix "*" p = go p' s (Just (p', s))
+      | Just (pc, p') <- T.uncons p, Just (sc, s') <- T.uncons s, pc == sc = go p' s' star
+      | Just (p', s0) <- star, not (T.null s), Just (_, s') <- T.uncons s0 = go p' s' (Just (p', s'))
+      | T.null s = T.all (== '*') p
+      | otherwise = False
