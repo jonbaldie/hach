@@ -18,20 +18,16 @@ module Hach.TUI.UI
 
 import Hach.Skills (inputSlashCompletion)
 import Hach.TUI.Types
-import Hach.Tools (commandWebToolTarget, readWorkspaceToolTarget, writeWorkspaceToolTarget)
-import Hach.Types (SessionTokenUsage(..), ToolResult(..), modelContextLimit)
+import Hach.Tools (resolveTool, resolvedToolTarget)
+import Hach.Types (SessionTokenUsage(..), ToolCall(..), ToolResult(..), modelContextLimit)
 import Brick
 import Brick.Widgets.Border
 import Brick.Widgets.Border.Style
 import Brick.Widgets.Center
 import Control.Exception (handle)
-import Data.Aeson (Value, (.:))
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Types as AesonTypes
 import Data.Char (ord)
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as TE
 import qualified Graphics.Vty as Vty
 import Lens.Micro ((^.))
 import Text.Printf (printf)
@@ -390,34 +386,8 @@ groupCodeBlocks = go []
 -- | Extract a clean, human-readable summary of tool arguments (Claude Code style).
 formatToolTarget :: Text -> Text -> Text
 formatToolTarget name rawArgs =
-  case readWorkspaceToolTarget name rawArgs of
-    Just target -> target
-    Nothing -> case writeWorkspaceToolTarget name rawArgs of
-      Just target -> target
-      Nothing -> case commandWebToolTarget name rawArgs of
-        Just target -> target
-        Nothing -> formatLegacyToolTarget name rawArgs
-
-formatLegacyToolTarget :: Text -> Text -> Text
-formatLegacyToolTarget name rawArgs =
-  case Aeson.decodeStrict (TE.encodeUtf8 rawArgs) :: Maybe Value of
-    Just (Aeson.Object o) ->
-      case name of
-        "write_file" ->
-          case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
-            Just (p :: Text) -> p
-            Nothing          -> truncateText 30 rawArgs
-        n | n `elem` ["replace_file_content", "Edit", "edit"] ->
-          case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
-            Just (p :: Text) -> p
-            Nothing          -> truncateText 30 rawArgs
-        n | n `elem` ["run_command", "Bash", "bash"] ->
-          case AesonTypes.parseMaybe (\obj -> obj .: "command") o of
-            Just (c :: Text) -> c
-            Nothing          -> case AesonTypes.parseMaybe (\obj -> obj .: "cmd") o of
-              Just (c :: Text) -> c
-              Nothing          -> truncateText 30 rawArgs
-        _ -> truncateText 30 rawArgs
+  case resolveTool (ToolCall "" name rawArgs) of
+    Just (Right resolved) -> maybe (truncateText 30 rawArgs) id (resolvedToolTarget resolved)
     _ -> truncateText 30 rawArgs
 
 truncateText :: Int -> Text -> Text

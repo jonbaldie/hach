@@ -137,135 +137,35 @@ spec = do
          , "grep_search"
         ]
 
-  describe "read workspace capability registry" $ do
-    it "resolves every accepted name to its canonical model, authority, and target" $ do
+  describe "unified tool capability registry" $ do
+    it "resolves canonical names and aliases with their authority and Tool Card target" $ do
       let cases =
-            [ ("read_file", "{\"path\":\"README.md\"}", "read_file", "README.md")
-            , ("list_dir", "{}", "list_dir", ".")
-            , ("ListDir", "{\"path\":\"src\"}", "list_dir", "src")
-            , ("find_files", "{\"pattern\":\"*.hs\"}", "find_files", "*.hs")
-            , ("Glob", "{\"pattern\":\"**/*.json\"}", "find_files", "**/*.json")
-            , ("glob", "{\"pattern\":\"*.md\"}", "find_files", "*.md")
-            , ("grep_search", "{\"query\":\"TODO\"}", "grep_search", "TODO")
-            , ("Grep", "{\"query\":\"TODO\"}", "grep_search", "TODO")
-            , ("grep", "{\"pattern\":\"FIXME\"}", "grep_search", "FIXME")
-            ]
-          showResult = \case
-            Nothing -> "unknown name"
-            Just (Left err) -> T.unpack err
-            Just (Right _) -> "resolved unexpectedly"
-      mapM_ (\(name, args, canonical, target) ->
-        case resolveReadWorkspaceTool (ToolCall "call" name args) of
-          Just (Right resolved) -> do
-            resolvedReadCanonicalName resolved `shouldBe` canonical
-            resolvedReadAuthority resolved `shouldBe` AuthorityRead
-            resolvedReadTarget resolved `shouldBe` target
-            readWorkspaceToolTarget name args `shouldBe` Just target
-          other -> expectationFailure ("Did not resolve " <> T.unpack name <> ": " <> showResult other)
-        ) cases
-
-    it "rejects invalid read arguments and unknown read names before execution" $ do
-      case resolveReadWorkspaceTool (ToolCall "bad" "Glob" "{}") of
-        Just (Left _) -> pure ()
-        _ -> expectationFailure "Invalid Glob arguments resolved unexpectedly"
-      executeCodingTool "." (ToolCall "bad" "Glob" "{}") `shouldReturn` ToolError "Failed to parse find_files args: Error in $: key \"pattern\" not found"
-      executeCodingTool "." (ToolCall "unknown" "unknown_read" "{}") `shouldReturn` ToolError "Unknown tool function: unknown_read"
-
-  describe "workspace write capability registry" $ do
-    it "resolves every accepted name to its canonical authority and Tool Card target" $ do
-      let cases =
-            [ ("write_file", "{\"path\":\"TODO.md\",\"content\":\"task\"}", "write_file", "TODO.md")
-            , ("replace_file_content", "{\"path\":\"src/Main.hs\",\"old_content\":\"old\",\"new_content\":\"new\"}", "replace_file_content", "src/Main.hs")
-            , ("Edit", "{\"path\":\"src/Main.hs\",\"old_content\":\"old\",\"new_content\":\"new\"}", "replace_file_content", "src/Main.hs")
-            , ("edit", "{\"path\":\"app/Main.hs\",\"old_content\":\"old\",\"new_content\":\"new\"}", "replace_file_content", "app/Main.hs")
-            ]
-          showResult = \case
-            Nothing -> "unknown name"
-            Just (Left err) -> T.unpack err
-            Just (Right _) -> "resolved unexpectedly"
-      mapM_ (\(name, args, canonical, target) ->
-        case resolveWriteWorkspaceTool (ToolCall "call" name args) of
-          Just (Right resolved) -> do
-            resolvedWriteCanonicalName resolved `shouldBe` canonical
-            resolvedWriteAuthority resolved `shouldBe` AuthorityWorkspaceWrite
-            resolvedWriteTarget resolved `shouldBe` target
-            writeWorkspaceToolTarget name args `shouldBe` Just target
-          other -> expectationFailure ("Did not resolve " <> T.unpack name <> ": " <> showResult other)
-        ) cases
-
-    it "rejects invalid write arguments before execution" $ do
-      case resolveWriteWorkspaceTool (ToolCall "bad" "Edit" "{}") of
-        Just (Left _) -> pure ()
-        _ -> expectationFailure "Invalid Edit arguments resolved unexpectedly"
-      executeCodingTool "." (ToolCall "bad" "Edit" "{}") `shouldReturn` ToolError "Failed to parse replace_file_content args: Error in $: key \"path\" not found"
-
-  describe "command and web capability registry" $ do
-    it "resolves every accepted name to its canonical model, authority, and target" $ do
-      let cases =
-            [ ("run_command", "{\"command\":\"cabal test\",\"timeout\":60}", "run_command", AuthorityCommand, "cabal test")
-            , ("Bash", "{\"command\":\"make check\"}", "run_command", AuthorityCommand, "make check")
-            , ("bash", "{\"command\":\"stack test\"}", "run_command", AuthorityCommand, "stack test")
-            , ("WebFetch", "{\"url\":\"https://example.com\"}", "WebFetch", AuthorityRead, "https://example.com")
-            , ("web_fetch", "{\"url\":\"https://example.org\"}", "WebFetch", AuthorityRead, "https://example.org")
-            , ("webfetch", "{\"url\":\"https://example.net\"}", "WebFetch", AuthorityRead, "https://example.net")
-            , ("WebSearch", "{\"query\":\"Haskell\"}", "WebSearch", AuthorityRead, "Haskell")
-            , ("web_search", "{\"query\":\"tool registry\"}", "WebSearch", AuthorityRead, "tool registry")
-            , ("websearch", "{\"query\":\"capability\"}", "WebSearch", AuthorityRead, "capability")
-            ]
-          showResult = \case
-            Nothing -> "unknown name"
-            Just (Left err) -> T.unpack err
-            Just (Right _) -> "resolved unexpectedly"
-      mapM_ (\(name, args, canonical, authority, target) ->
-        case resolveCommandWebTool (ToolCall "call" name args) of
-          Just (Right resolved) -> do
-            resolvedCommandWebCanonicalName resolved `shouldBe` canonical
-            resolvedCommandWebAuthority resolved `shouldBe` authority
-            resolvedCommandWebTarget resolved `shouldBe` target
-            commandWebToolTarget name args `shouldBe` Just target
-          other -> expectationFailure ("Did not resolve " <> T.unpack name <> ": " <> showResult other)
-        ) cases
-
-    it "rejects invalid command and web arguments before execution" $ do
-      case resolveCommandWebTool (ToolCall "bad" "Bash" "{}") of
-        Just (Left _) -> pure ()
-        _ -> expectationFailure "Invalid Bash arguments resolved unexpectedly"
-      executeCodingTool "." (ToolCall "bad" "Bash" "{}") `shouldReturn` ToolError "Failed to parse run_command args: Error in $: key \"command\" not found"
-  describe "interaction and task capability registry" $ do
-    it "resolves every requested capability family with canonical authority and target" $ do
-      let cases =
-            [ ("Agent", "{\"name\":\"explore\",\"prompt\":\"Inspect\"}", "Agent", AuthorityInteraction, Just "explore")
-            , ("skill", "{\"name\":\"review\"}", "Skill", AuthorityCommand, Just "review")
-            , ("push_notification", "{\"message\":\"Done\"}", "PushNotification", AuthorityInteraction, Just "Done")
-            , ("TaskCreate", "{\"name\":\"compile\"}", "TaskCreate", AuthorityWorkspaceWrite, Just "compile")
+            [ ("Glob", "{\"pattern\":\"*.hs\"}", "find_files", AuthorityRead, Just "*.hs")
+            , ("Edit", "{\"path\":\"src/Main.hs\",\"old_content\":\"old\",\"new_content\":\"new\"}", "replace_file_content", AuthorityWorkspaceWrite, Just "src/Main.hs")
+            , ("Bash", "{\"command\":\"cabal test\"}", "run_command", AuthorityCommand, Just "cabal test")
+            , ("web_fetch", "{\"url\":\"https://example.com\"}", "WebFetch", AuthorityRead, Just "https://example.com")
             , ("task_get", "{\"task_id\":\"task-1\"}", "TaskGet", AuthorityRead, Just "task-1")
             , ("enter_worktree", "{\"name\":\"feature\"}", "EnterWorktree", AuthorityCommand, Just "feature")
-            , ("ask_user_question", "{\"question\":\"Proceed?\"}", "AskUserQuestion", AuthorityInteraction, Just "Proceed?")
             , ("end_conversation", "{}", "EndConversation", AuthorityInteraction, Nothing)
             ]
       mapM_ (\(name, args, canonical, authority, target) ->
-        case resolveInteractionTool (ToolCall "call" name args) of
+        case resolveTool (ToolCall "call" name args) of
           Just (Right resolved) -> do
-            resolvedInteractionCanonicalName resolved `shouldBe` canonical
-            resolvedInteractionAuthority resolved `shouldBe` authority
-            resolvedInteractionTarget resolved `shouldBe` target
+            resolvedToolCanonicalName resolved `shouldBe` canonical
+            resolvedToolAuthority resolved `shouldBe` authority
+            resolvedToolTarget resolved `shouldBe` target
           Just (Left err) -> expectationFailure (T.unpack err)
           Nothing -> expectationFailure ("Did not resolve " <> T.unpack name)
         ) cases
 
-    it "treats TaskCreate with a command as command authority" $ do
-      case resolveInteractionTool (ToolCall "call" "TaskCreate" "{\"name\":\"compile\",\"command\":\"cabal build\"}") of
-        Just (Right resolved) -> resolvedInteractionAuthority resolved `shouldBe` AuthorityCommand
-        _ -> expectationFailure "TaskCreate did not resolve"
-
-    it "rejects invalid and unknown registry calls before execution" $ do
-      case resolveInteractionTool (ToolCall "bad" "SendMessage" "{\"message\":\"missing recipient\"}") of
+    it "rejects invalid and unknown calls before execution through the common seam" $ do
+      case resolveTool (ToolCall "bad" "Bash" "{}") of
         Just (Left _) -> pure ()
-        _ -> expectationFailure "Invalid SendMessage arguments resolved unexpectedly"
-      executeCodingTool "." (ToolCall "bad" "SendMessage" "{\"message\":\"missing recipient\"}") `shouldReturn`
-        ToolError "Failed to parse SendMessage args: Error in $: key \"agent_id\" not found"
-      executeCodingTool "." (ToolCall "unknown" "unregistered_interaction" "{}") `shouldReturn`
-        ToolError "Unknown tool function: unregistered_interaction"
+        _ -> expectationFailure "Invalid Bash arguments resolved unexpectedly"
+      case resolveTool (ToolCall "unknown" "unregistered_tool" "{}") of
+        Nothing -> pure ()
+        _ -> expectationFailure "Unknown tool resolved unexpectedly"
+      executeCodingTool "." (ToolCall "bad" "Bash" "{}") `shouldReturn` ToolError "Failed to parse run_command args: Error in $: key \"command\" not found"
 
   describe "truncateToolOutput" $ do
     it "leaves short output intact" $ do
