@@ -358,6 +358,14 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
               writeIORef ioCurrentWorkspace ioWorkspace
               writeIORef ioCurrentWorktree Nothing
               pure $ ToolSuccess "Exited worktree and restored workspace root."
+        name | name `elem` ["EnterPlanMode", "enter_plan_mode"] -> do
+          setIOPermissionMode env ModePlan
+          currentWs <- readIORef ioCurrentWorkspace
+          executeCodingTool currentWs call
+        name | name `elem` ["ExitPlanMode", "exit_plan_mode"] -> do
+          setIOPermissionMode env ModeDefault
+          currentWs <- readIORef ioCurrentWorkspace
+          executeCodingTool currentWs call
         _ -> do
           currentWs <- readIORef ioCurrentWorkspace
           executeCodingTool currentWs call

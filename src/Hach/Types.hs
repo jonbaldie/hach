@@ -519,8 +519,10 @@ classifyError err =
 unrecoverableKeywords :: [Text]
 unrecoverableKeywords = concat
   [ ["401", "unauthorized", "authentication", "api key"]
-  , ["402", "payment", "credit", "balance", "quota", "billing"]
-  , ["context", "overflow", "too long", "maximum context", "token limit"]
+  , ["402", "payment", "credit", "balance", "quota exceeded", "quota exhausted", "billing"]
+  , ["context length", "context window", "context overflow"
+    , "maximum context length", "prompt is too long", "token limit"
+    ]
   , ["404", "model not found", "model unavailable", "model does not exist", "unknown model"]
   ]
 
@@ -1014,4 +1016,3 @@ instance FromJSON OutputStyle where
     "explanatory" -> pure StyleExplanatory
     "code_only"   -> pure StyleCodeOnly
     other         -> pure (StyleCustom other)
-

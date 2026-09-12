@@ -132,6 +132,59 @@ spec = describe "Hach.Git" $ do
       r2 `shouldBe` r1
       removeDirectoryRecursive tempDir
 
+    it "attaches to an existing branch when the branch already exists in the repository" $ do
+      let tempDir = "dist-newstyle/test-git-existing-branch"
+      exists <- doesDirectoryExist tempDir
+      when exists (removeDirectoryRecursive tempDir)
+      createDirectoryIfMissing True tempDir
+      canonicalTempDir <- canonicalizePath tempDir
+      callProcess "git" ["-C", canonicalTempDir, "init"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.name", "Test"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.email", "test@test.com"]
+      callProcess "git" ["-C", canonicalTempDir, "commit", "--allow-empty", "-m", "init"]
+      callProcess "git" ["-C", canonicalTempDir, "branch", "feature-test"]
+      res <- createWorktree canonicalTempDir "feature-test"
+      res `shouldBe` Right (worktreePath canonicalTempDir "feature-test")
+      status <- getGitStatus (worktreePath canonicalTempDir "feature-test")
+      gsiBranch status `shouldBe` "feature-test"
+      removeDirectoryRecursive tempDir
+
+    it "creates a new branch when the branch does not exist in the repository" $ do
+      let tempDir = "dist-newstyle/test-git-new-branch"
+      exists <- doesDirectoryExist tempDir
+      when exists (removeDirectoryRecursive tempDir)
+      createDirectoryIfMissing True tempDir
+      canonicalTempDir <- canonicalizePath tempDir
+      callProcess "git" ["-C", canonicalTempDir, "init"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.name", "Test"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.email", "test@test.com"]
+      callProcess "git" ["-C", canonicalTempDir, "commit", "--allow-empty", "-m", "init"]
+      res <- createWorktree canonicalTempDir "new-feature"
+      res `shouldBe` Right (worktreePath canonicalTempDir "new-feature")
+      status <- getGitStatus (worktreePath canonicalTempDir "new-feature")
+      gsiBranch status `shouldBe` "new-feature"
+      removeDirectoryRecursive tempDir
+
+    it "re-creates a worktree after removeWorktree when the branch remains in the repository" $ do
+      let tempDir = "dist-newstyle/test-git-remove-recreate"
+      exists <- doesDirectoryExist tempDir
+      when exists (removeDirectoryRecursive tempDir)
+      createDirectoryIfMissing True tempDir
+      canonicalTempDir <- canonicalizePath tempDir
+      callProcess "git" ["-C", canonicalTempDir, "init"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.name", "Test"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.email", "test@test.com"]
+      callProcess "git" ["-C", canonicalTempDir, "commit", "--allow-empty", "-m", "init"]
+      r1 <- createWorktree canonicalTempDir "ephemeral-feature"
+      r1 `shouldBe` Right (worktreePath canonicalTempDir "ephemeral-feature")
+      removeRes <- removeWorktree canonicalTempDir "ephemeral-feature"
+      removeRes `shouldBe` Right ()
+      r2 <- createWorktree canonicalTempDir "ephemeral-feature"
+      r2 `shouldBe` Right (worktreePath canonicalTempDir "ephemeral-feature")
+      status <- getGitStatus (worktreePath canonicalTempDir "ephemeral-feature")
+      gsiBranch status `shouldBe` "ephemeral-feature"
+      removeDirectoryRecursive tempDir
+
     it "rejects an existing non-worktree target directory" $ do
       let tempDir = "dist-newstyle/test-git-target-exists"
       exists <- doesDirectoryExist tempDir

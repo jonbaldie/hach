@@ -208,6 +208,7 @@ evalPermission mode rules tool args
       , "task_list"
       , "taskget"
       , "task_get"
+      , "monitor"
       ]
 
     writeTools =
@@ -243,6 +244,7 @@ evalPermission mode rules tool args
       , "endconversation"
       , "end_conversation"
       , "skill"
+      , "monitor"
       ]
 
     evalModeDefault m t isWrite isCommand = case m of
@@ -253,16 +255,16 @@ evalPermission mode rules tool args
           then PermAllow
           else PermDeny "Plan mode is read-only. Tool execution denied."
       ModeAcceptEdits ->
-        if t `elem` readOnlyTools || isWrite
+        if t `elem` readOnlyTools || t `elem` planAllowedTools || isWrite
           then PermAllow
           else if isCommand
             then PermAsk ("Command execution requires approval: " <> tool)
             else PermAsk ("Tool execution requires approval: " <> tool)
       ModeAuto ->
-        if t `elem` readOnlyTools || isWrite
+        if t `elem` readOnlyTools || t `elem` planAllowedTools || isWrite
           then PermAllow
           else PermAsk ("Auto mode requires approval for: " <> tool)
       ModeDefault ->
-        if t `elem` readOnlyTools
+        if t `elem` readOnlyTools || t `elem` planAllowedTools
           then PermAllow
           else PermAsk ("Tool execution requires approval: " <> tool)

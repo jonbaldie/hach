@@ -78,7 +78,7 @@ spec = describe "Hach.Permissions" $ do
         PermDeny _ -> pure ()
         other      -> expectationFailure ("Expected PermDeny, got " <> show other)
 
-    it "allows ExitPlanMode, AskUserQuestion, and EndConversation" $ do
+    it "allows ExitPlanMode, AskUserQuestion, EndConversation, and Monitor" $ do
       let args = object []
       evalPermission ModePlan [] "ExitPlanMode" args `shouldBe` PermAllow
       evalPermission ModePlan [] "exit_plan_mode" args `shouldBe` PermAllow
@@ -90,6 +90,8 @@ spec = describe "Hach.Permissions" $ do
       evalPermission ModePlan [] "skill" args `shouldBe` PermAllow
       evalPermission ModePlan [] "EnterPlanMode" args `shouldBe` PermAllow
       evalPermission ModePlan [] "enter_plan_mode" args `shouldBe` PermAllow
+      evalPermission ModePlan [] "Monitor" args `shouldBe` PermAllow
+      evalPermission ModePlan [] "monitor" args `shouldBe` PermAllow
 
   describe "DontAsk and BypassPermissions modes" $ do
     it "auto-approves all actions in DontAsk" $ do
@@ -193,3 +195,18 @@ spec = describe "Hach.Permissions" $ do
     it "stays a write tool without a non-blank command" $
       mapM_ (\t -> mapM_ (\(m, a) -> evalPermission m [] t a `shouldBe` PermAllow)
                          [ (m, a) | m <- [ModeAcceptEdits, ModeAuto], a <- [noCmdArgs, blankCmdArgs] ]) tools
+
+  describe "Coordination tools (issue #125)" $ do
+    let args = object []
+        tools =
+          [ "AskUserQuestion", "ask_user_question"
+          , "EndConversation", "end_conversation"
+          , "Skill", "skill"
+          , "EnterPlanMode", "enter_plan_mode"
+          , "ExitPlanMode", "exit_plan_mode"
+          , "Monitor", "monitor"
+          ]
+        modes = [ModeAcceptEdits, ModeDefault, ModePlan]
+
+    it "allows AskUserQuestion, EndConversation, Skill, EnterPlanMode, ExitPlanMode, and Monitor without asking" $
+      mapM_ (\t -> mapM_ (\m -> evalPermission m [] t args `shouldBe` PermAllow) modes) tools

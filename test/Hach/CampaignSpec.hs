@@ -173,6 +173,7 @@ readOnlyAliases =
   , "ListAgents", "list_agents", "listagents"
   , "TaskList", "task_list", "tasklist"
   , "TaskGet", "task_get", "taskget"
+  , "Monitor", "monitor"
   ]
 
 writeAliases :: [Text]

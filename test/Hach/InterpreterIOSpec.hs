@@ -380,6 +380,23 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         tsPermissionMode s `shouldBe` ModeAcceptEdits
         actions `shouldContain` [ActionSetPermissionMode ModeAcceptEdits]
 
+    describe "plan mode switching in IO interpreter" $ do
+      it "updates the live permission mode for EnterPlanMode aliases" $ do
+        env <- newIOEnv "k" "test-model" testDir False
+        let alg = ioAlgebra env
+        mapM_ (\name -> do
+          _ <- interpTool alg (ToolCall "p1" name "{}")
+          currentIOPermissionMode env `shouldReturn` ModePlan)
+          ["EnterPlanMode", "enter_plan_mode"]
+
+      it "restores the default permission mode for ExitPlanMode aliases" $ do
+        env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
+        let alg = ioAlgebra env
+        mapM_ (\name -> do
+          _ <- interpTool alg (ToolCall "p1" name "{}")
+          currentIOPermissionMode env `shouldReturn` ModeDefault)
+          ["ExitPlanMode", "exit_plan_mode"]
+
     describe "worktree switching in IO interpreter" $ do
       it "fails ExitWorktree when not inside a worktree" $ do
         env <- newIOEnv "k" "test-model" testDir False
