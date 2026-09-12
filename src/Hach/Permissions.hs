@@ -13,14 +13,17 @@ module Hach.Permissions
   ) where
 
 import Hach.Types
+import Hach.Paths (isProtectedPath, matchStarGlob)
+import Hach.Tools (resolveTool, resolvedToolAuthority, resolvedToolCanonicalName)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KM
+import qualified Data.ByteString.Lazy as BSL
 import Data.List (tails)
 import qualified Data.Map.Lazy as Map
 import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
-import System.FilePath (normalise, splitDirectories)
+import qualified Data.Text.Encoding as TE
 
 -- | Cycle through the available permission modes.
 cyclePermissionMode :: PermissionMode -> PermissionMode
@@ -31,16 +34,6 @@ cyclePermissionMode = \case
   ModeAuto              -> ModeDontAsk
   ModeDontAsk           -> ModeBypassPermissions
   ModeBypassPermissions -> ModeDefault
-
--- | Check if a path falls within a protected system directory (.git, .claude, .agents).
--- Standard repository files such as .gitignore, .gitattributes, .gitmodules, or .github workflows
--- are NOT inside .git and are therefore not protected.
-isProtectedPath :: FilePath -> Bool
-isProtectedPath fp =
-  let dirs = splitDirectories (normalise fp)
-      cleanDirs = [ d | d <- dirs, d /= "." && d /= "./" ]
-      protected = [".git", ".claude", ".agents", ".agent"]
-  in any (`elem` protected) cleanDirs
 
 -- | Extract a target path argument from a JSON tool call argument object.
 extractPathArg :: Aeson.Value -> Maybe FilePath
@@ -117,34 +110,6 @@ matchToks toks target = cell 0 0
                (pre, '/' : _) -> cell i (j + length pre + 1)
                _              -> False
 
--- | '*' matches any sequence of characters (including '/').
---
--- Linear in the combined length of pattern and string: only the most
--- recent '*' is remembered, which is sufficient when a star may consume
--- any character.  The resume point is a 'Maybe' of remaining texts,
--- not a sentinel index.
-matchStarGlob :: Text -> Text -> Bool
-matchStarGlob pat str = go pat str Nothing
-  where
-    go p s star
-      | Just p' <- T.stripPrefix "*" p =
-          go p' s (Just (p', s))
-      | Just (pc, p') <- T.uncons p
-      , Just (sc, s') <- T.uncons s
-      , pc == sc =
-          go p' s' star
-      -- Resume only while the current string still has characters, matching
-      -- the original "j < slen && star >= 0" guard.  An exhausted string
-      -- falls through to the leftover-stars check instead of replaying s0.
-      | Just (p', s0) <- star
-      , not (T.null s)
-      , Just (_, s') <- T.uncons s0 =
-          go p' s' (Just (p', s'))
-      | T.null s =
-          T.all (== '*') p
-      | otherwise =
-          False
-
 -- | Check if a single rule matches the given tool and path.
 matchRule :: PermissionRule -> Text -> Maybe FilePath -> Maybe PermissionDecision
 matchRule PermissionRule{..} tool mPath =
@@ -170,105 +135,17 @@ evalPermission
   -> Aeson.Value
   -> PermissionDecision
 evalPermission mode rules tool args
-  | mode == ModeBypassPermissions = PermAllow
-  | otherwise =
-      let mPath = extractPathArg args
-          normTool = T.toLower tool
-          spawnsCommand = isTaskCreateWithCommand normTool args
-          isWriteTool = normTool `elem` writeTools && not spawnsCommand
-          isCommandTool = normTool `elem` commandTools || spawnsCommand
-      in if isWriteTool && maybe False isProtectedPath mPath
-           then PermDeny ("Protected path: access denied to " <> maybe "" T.pack mPath)
-           else case listToMaybe (concatMap (\r -> maybe [] pure (matchRule r tool mPath)) rules) of
-             Just decision -> decision
-             Nothing       -> evalModeDefault mode normTool isWriteTool isCommandTool
+  = case resolveTool (ToolCall "" tool (TE.decodeUtf8 (BSL.toStrict (Aeson.encode args)))) of
+      Just (Right resolved) ->
+        evalPermissionForAuthority mode rules (resolvedToolCanonicalName resolved) args (resolvedToolAuthority resolved)
+      _ -> fallback
   where
-    -- TaskCreate with a non-blank command spawns a shell process, so it must
-    -- be gated like a command tool rather than auto-approved as a write.
-    isTaskCreateWithCommand t (Aeson.Object km)
-      | t `elem` ["taskcreate", "task_create"]
-      , Just (Aeson.String cmd) <- KM.lookup "command" km
-      = not (T.null (T.strip cmd))
-    isTaskCreateWithCommand _ _ = False
-
-    readOnlyTools =
-      [ "read_file"
-      , "list_dir"
-      , "listdir"
-      , "find_files"
-      , "grep_search"
-      , "glob"
-      , "grep"
-      , "webfetch"
-      , "web_fetch"
-      , "websearch"
-      , "web_search"
-      , "listagents"
-      , "list_agents"
-      , "tasklist"
-      , "task_list"
-      , "taskget"
-      , "task_get"
-      , "monitor"
-      ]
-
-    writeTools =
-      [ "write_file"
-      , "replace_file_content"
-      , "edit"
-      , "todowrite"
-      , "todo_write"
-      , "taskcreate"
-      , "task_create"
-      , "taskupdate"
-      , "task_update"
-      ]
-
-    commandTools =
-      [ "run_command"
-      , "bash"
-      , "taskstop"
-      , "task_stop"
-      , "enterworktree"
-      , "enter_worktree"
-      , "exitworktree"
-      , "exit_worktree"
-      , "skill"
-      ]
-
-    planAllowedTools =
-      [ "exitplanmode"
-      , "exit_plan_mode"
-      , "enterplanmode"
-      , "enter_plan_mode"
-      , "askuserquestion"
-      , "ask_user_question"
-      , "endconversation"
-      , "end_conversation"
-      , "monitor"
-      ]
-
-    evalModeDefault m t isWrite isCommand = case m of
+    fallback = case mode of
       ModeBypassPermissions -> PermAllow
-      ModeDontAsk           -> PermAllow
-      ModePlan ->
-        if t `elem` readOnlyTools || t `elem` planAllowedTools
-          then PermAllow
-          else PermDeny "Plan mode is read-only. Tool execution denied."
-      ModeAcceptEdits ->
-        if t `elem` readOnlyTools || t `elem` planAllowedTools || isWrite
-          then PermAllow
-          else if isCommand
-            then PermAsk ("Command execution requires approval: " <> tool)
-            else PermAsk ("Tool execution requires approval: " <> tool)
-      ModeAuto ->
-        if t `elem` readOnlyTools || t `elem` planAllowedTools || isWrite
-          then PermAllow
-          else PermAsk ("Auto mode requires approval for: " <> tool)
-      ModeDefault ->
-        if t `elem` readOnlyTools || t `elem` planAllowedTools
-          then PermAllow
-          else PermAsk ("Tool execution requires approval: " <> tool)
+      ModeDontAsk -> PermAllow
+      ModePlan -> PermDeny "Plan mode is read-only. Tool execution denied."
+      ModeAuto -> PermAsk ("Auto mode requires approval for: " <> tool)
+      _ -> PermAsk ("Tool execution requires approval: " <> tool)
 
 -- | Evaluate a capability after the registry has resolved its authority.
 -- Rules match the canonical tool name, so aliases cannot get a different
@@ -283,13 +160,19 @@ evalPermissionForAuthority
 evalPermissionForAuthority mode rules tool args authority
   | mode == ModeBypassPermissions = PermAllow
   | otherwise =
-      case listToMaybe (concatMap (\r -> maybe [] pure (matchRule r tool (extractPathArg args))) rules) of
-        Just decision -> decision
-        Nothing -> case mode of
-          ModePlan | authority /= AuthorityRead -> PermDeny "Plan mode is read-only. Tool execution denied."
-          ModeDefault | authority /= AuthorityRead -> PermAsk ("Tool execution requires approval: " <> tool)
-          ModeAcceptEdits | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
-          ModeAcceptEdits -> PermAsk ("Tool execution requires approval: " <> tool)
-          ModeAuto | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
-          ModeAuto -> PermAsk ("Auto mode requires approval for: " <> tool)
-          _ -> PermAllow
+       let mPath = extractPathArg args
+       in if authority == AuthorityWorkspaceWrite && maybe False isProtectedPath mPath
+            then PermDeny ("Protected path: access denied to " <> maybe "" T.pack mPath)
+            else case listToMaybe (concatMap (\r -> maybe [] pure (matchRule r tool mPath)) rules) of
+              Just decision -> decision
+              Nothing -> case mode of
+                ModePlan | authority /= AuthorityRead -> PermDeny "Plan mode is read-only. Tool execution denied."
+                ModePlan -> PermAllow
+                ModeDefault | authority /= AuthorityRead -> PermAsk ("Tool execution requires approval: " <> tool)
+                ModeDefault -> PermAllow
+                ModeAcceptEdits | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
+                ModeAcceptEdits -> PermAsk ("Tool execution requires approval: " <> tool)
+                ModeAuto | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
+                ModeAuto -> PermAsk ("Auto mode requires approval for: " <> tool)
+                ModeDontAsk -> PermAllow
+                ModeBypassPermissions -> PermAllow

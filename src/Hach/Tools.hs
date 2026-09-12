@@ -4,8 +4,6 @@
 module Hach.Tools
   ( -- * Tool Definitions
     allToolDefs
-  , readWorkspaceToolDefs
-  , writeWorkspaceToolDefs
   , readFileToolDef
   , writeFileToolDef
   , replaceFileContentToolDef
@@ -66,40 +64,11 @@ module Hach.Tools
   , AskUserQuestionArgs(..)
 
     -- * Capability Registry
-  , ResolvedReadWorkspaceTool
-  , resolveReadWorkspaceTool
-  , resolvedReadCanonicalName
-  , resolvedReadAuthority
-   , resolvedReadTarget
-   , executeResolvedReadWorkspaceTool
-  , readWorkspaceToolTarget
-  , ResolvedInteractionTool
-  , resolveInteractionTool
-  , resolvedInteractionCanonicalName
-  , resolvedInteractionAuthority
-  , resolvedInteractionTarget
-  , executeResolvedInteractionTool
-  , resolveTool
-  , resolvedToolCanonicalName
-  , resolvedToolAuthority
-
-    -- * Workspace Write Capability Registry
-  , ResolvedWriteWorkspaceTool
-  , resolveWriteWorkspaceTool
-  , resolvedWriteCanonicalName
-  , resolvedWriteAuthority
-  , resolvedWriteTarget
-  , executeResolvedWriteWorkspaceTool
-  , writeWorkspaceToolTarget
-
-    -- * Command and Web Capability Registry
-  , ResolvedCommandWebTool
-  , resolveCommandWebTool
-  , resolvedCommandWebCanonicalName
-  , resolvedCommandWebAuthority
-  , resolvedCommandWebTarget
-  , executeResolvedCommandWebTool
-  , commandWebToolTarget
+   , resolveTool
+   , resolvedToolCanonicalName
+   , resolvedToolAuthority
+   , resolvedToolTarget
+   , executeResolvedTool
 
   , parseReadFileArgs
   , parseWriteFileArgs
@@ -162,7 +131,7 @@ module Hach.Tools
 
 import Hach.Git (createWorktree, isWorktreeDirectory)
 import Hach.Notifications (sendDesktopNotification)
-import Hach.Paths (resolveWorkspacePath)
+import Hach.Paths (isProtectedPath, matchStarGlob, resolveWorkspacePath)
 import Hach.Skills (discoverSkills, expandSkillContent, skillContent)
 import Hach.Tasks
   ( Task(..)
@@ -180,7 +149,6 @@ import Hach.Tasks
   , getBackgroundOutput
   , stopBackgroundProcess
   )
-import Hach.Permissions (isProtectedPath, matchStarGlob)
 import Hach.Types
 import Control.Applicative ((<|>))
 import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, writeTVar)
@@ -229,7 +197,7 @@ import System.Timeout (timeout)
 --------------------------------------------------------------------------------
 
 readFileToolDef :: ToolDef
-readFileToolDef = readWorkspaceToolDef "read_file"
+readFileToolDef = readFileToolModel
 
 readFileToolModel :: ToolDef
 readFileToolModel = ToolDef
@@ -248,7 +216,7 @@ readFileToolModel = ToolDef
   }
 
 writeFileToolDef :: ToolDef
-writeFileToolDef = writeWorkspaceToolDef "write_file"
+writeFileToolDef = writeFileToolModel
 
 writeFileToolModel :: ToolDef
 writeFileToolModel = ToolDef
@@ -271,7 +239,7 @@ writeFileToolModel = ToolDef
   }
 
 replaceFileContentToolDef :: ToolDef
-replaceFileContentToolDef = writeWorkspaceToolDef "replace_file_content"
+replaceFileContentToolDef = replaceFileContentToolModel
 
 replaceFileContentToolModel :: ToolDef
 replaceFileContentToolModel = ToolDef
@@ -298,7 +266,7 @@ replaceFileContentToolModel = ToolDef
   }
 
 runCommandToolDef :: ToolDef
-runCommandToolDef = commandWebToolDef "run_command"
+runCommandToolDef = runCommandToolModel
 
 runCommandToolModel :: ToolDef
 runCommandToolModel = ToolDef
@@ -321,7 +289,7 @@ runCommandToolModel = ToolDef
   }
 
 listDirToolDef :: ToolDef
-listDirToolDef = readWorkspaceToolDef "list_dir"
+listDirToolDef = listDirToolModel
 
 listDirToolModel :: ToolDef
 listDirToolModel = ToolDef
@@ -339,7 +307,7 @@ listDirToolModel = ToolDef
   }
 
 findFilesToolDef :: ToolDef
-findFilesToolDef = readWorkspaceToolDef "find_files"
+findFilesToolDef = findFilesToolModel
 
 findFilesToolModel :: ToolDef
 findFilesToolModel = ToolDef
@@ -362,7 +330,7 @@ findFilesToolModel = ToolDef
   }
 
 grepSearchToolDef :: ToolDef
-grepSearchToolDef = readWorkspaceToolDef "grep_search"
+grepSearchToolDef = grepSearchToolModel
 
 grepSearchToolModel :: ToolDef
 grepSearchToolModel = ToolDef
@@ -389,7 +357,7 @@ grepSearchToolModel = ToolDef
   }
 
 editToolDef :: ToolDef
-editToolDef = writeWorkspaceToolDef "Edit"
+editToolDef = editToolModel
 
 editToolModel :: ToolDef
 editToolModel = ToolDef
@@ -450,7 +418,7 @@ grepToolDef = ToolDef
   }
 
 webFetchToolDef :: ToolDef
-webFetchToolDef = commandWebToolDef "WebFetch"
+webFetchToolDef = webFetchToolModel
 
 webFetchToolModel :: ToolDef
 webFetchToolModel = ToolDef
@@ -466,7 +434,7 @@ webFetchToolModel = ToolDef
   }
 
 webSearchToolDef :: ToolDef
-webSearchToolDef = commandWebToolDef "WebSearch"
+webSearchToolDef = webSearchToolModel
 
 webSearchToolModel :: ToolDef
 webSearchToolModel = ToolDef
@@ -688,39 +656,7 @@ endConversationToolDef = ToolDef
 
 -- | Standard set of coding tools exposed to the agent.
 allToolDefs :: [ToolDef]
-allToolDefs =
-  [ readFileToolDef
-  , writeFileToolDef
-  , replaceFileContentToolDef
-  , runCommandToolDef
-  ] ++ filter (\tool -> toolName tool == "Edit") writeWorkspaceToolDefs ++
-  [ listDirToolDef
-  , findFilesToolDef
-  , grepSearchToolDef
-  , bashToolDef
-  , globToolDef
-  , grepToolDef
-  , webFetchToolDef
-  , webSearchToolDef
-  , agentToolDef
-  , todoWriteToolDef
-  , skillToolDef
-  , enterPlanModeToolDef
-  , exitPlanModeToolDef
-  , enterWorktreeToolDef
-  , exitWorktreeToolDef
-  , listAgentsToolDef
-  , sendMessageToolDef
-  , pushNotificationToolDef
-  , monitorToolDef
-  , taskCreateToolDef
-  , taskGetToolDef
-  , taskListToolDef
-  , taskUpdateToolDef
-  , taskStopToolDef
-  , askUserQuestionToolDef
-  , endConversationToolDef
-  ]
+allToolDefs = map toolDefinition toolRegistry
 
 --------------------------------------------------------------------------------
 -- Argument Types & Parsers
@@ -1042,164 +978,127 @@ parseAskUserQuestionArgs :: ToolCall -> Either String AskUserQuestionArgs
 parseAskUserQuestionArgs = parseArgsWith
 
 --------------------------------------------------------------------------------
--- Read Workspace Capability Registry
+-- Unified Tool Capability Registry
 --------------------------------------------------------------------------------
 
-data ReadWorkspaceCapability
-  = ReadFileCapability
-  | ListDirectoryCapability
-  | FindFilesCapability
-  | GrepSearchCapability
-
-data ResolvedReadWorkspaceTool = ResolvedReadWorkspaceTool
-  { resolvedCapability :: !ReadWorkspaceCapability
-  , resolvedReadCanonicalName :: !Text
-  , resolvedReadAuthority :: !ToolAuthority
-  , resolvedReadTarget :: !Text
-  }
-
--- | The registration point for every read-only workspace capability.  Model
--- definitions, accepted names, validation, target text, and execution all
--- resolve through this table.
-readWorkspaceRegistry :: [(ReadWorkspaceCapability, Text, [Text], ToolDef)]
-readWorkspaceRegistry =
-  [ (ReadFileCapability, "read_file", ["read_file"], readFileToolModel)
-  , (ListDirectoryCapability, "list_dir", ["list_dir", "ListDir"], listDirToolModel)
-  , (FindFilesCapability, "find_files", ["find_files", "Glob", "glob"], findFilesToolModel)
-  , (GrepSearchCapability, "grep_search", ["grep_search", "Grep", "grep"], grepSearchToolModel)
-  ]
-
-readWorkspaceToolDefs :: [ToolDef]
-readWorkspaceToolDefs = [ model | (_, _, _, model) <- readWorkspaceRegistry ]
-
-readWorkspaceToolDef :: Text -> ToolDef
-readWorkspaceToolDef canonical = case find (\(_, name, _, _) -> name == canonical) readWorkspaceRegistry of
-  Just (_, _, _, model) -> model
-  Nothing -> error "missing read workspace tool registration"
-
-resolveReadWorkspaceTool :: ToolCall -> Maybe (Either Text ResolvedReadWorkspaceTool)
-resolveReadWorkspaceTool call = do
-  (capability, canonical, _, _) <- findCapability (functionName call)
-  pure $ case capability of
-    ReadFileCapability -> do
-      args <- firstParse canonical (parseReadFileArgs call)
-      pure (ResolvedReadWorkspaceTool capability canonical AuthorityRead (T.pack (readFilePath args)))
-    ListDirectoryCapability -> do
-      args <- firstParse canonical (parseListDirArgs call)
-      pure (ResolvedReadWorkspaceTool capability canonical AuthorityRead (T.pack (listDirPath args)))
-    FindFilesCapability -> do
-      args <- firstParse canonical (parseGlobArgs call)
-      pure (ResolvedReadWorkspaceTool capability canonical AuthorityRead (globPattern args))
-    GrepSearchCapability -> do
-      args <- firstParse canonical (parseGrepArgs call)
-      pure (ResolvedReadWorkspaceTool capability canonical AuthorityRead (grepQueryText args))
-  where
-    findCapability name = find (\(_, _, names, _) -> name `elem` names) readWorkspaceRegistry
-    firstParse canonical = either (\err -> Left ("Failed to parse " <> canonical <> " args: " <> T.pack err)) Right
-
-executeResolvedReadWorkspaceTool :: FilePath -> ToolCall -> ResolvedReadWorkspaceTool -> IO ToolResult
-executeResolvedReadWorkspaceTool root call ResolvedReadWorkspaceTool{..} =
-  case resolvedCapability of
-    ReadFileCapability -> case parseReadFileArgs call of
-      Left err -> pure (ToolError (T.pack err))
-      Right args -> executeReadFile root args
-    ListDirectoryCapability -> case parseListDirArgs call of
-      Left err -> pure (ToolError (T.pack err))
-      Right args -> executeListDir root args
-    FindFilesCapability -> case parseGlobArgs call of
-      Left err -> pure (ToolError (T.pack err))
-      Right args -> executeFindFiles root (FindFilesArgs (globPattern args) (globPath args))
-    GrepSearchCapability -> case parseGrepArgs call of
-      Left err -> pure (ToolError (T.pack err))
-      Right args -> executeGrepSearch root (GrepSearchArgs (grepQueryText args) (grepPathText args) (grepArgCaseSensitive args))
-
-readWorkspaceToolTarget :: Text -> Text -> Maybe Text
-readWorkspaceToolTarget name rawArgs = do
-  resolved <- resolveReadWorkspaceTool (ToolCall "" name rawArgs)
-  either (const Nothing) (Just . resolvedReadTarget) resolved
-
--- | The registration point for interaction, notification, task, worktree, and
--- conversation-control capabilities.  As with read tools, accepted names,
--- validation, authority, targets, and execution are resolved in one place.
-data InteractionCapability
-  = AgentCapability | TodoWriteCapability | SkillCapability
-  | ListAgentsCapability | SendMessageCapability | AskUserQuestionCapability
-  | PushNotificationCapability
+data ToolCapability
+  = ReadFileCapability | ListDirectoryCapability | FindFilesCapability | GrepSearchCapability
+  | WriteFileCapability | ReplaceFileContentCapability
+  | RunCommandCapability | WebFetchCapability | WebSearchCapability
+  | AgentCapability | TodoWriteCapability | SkillCapability
+  | ListAgentsCapability | SendMessageCapability | AskUserQuestionCapability | PushNotificationCapability
   | MonitorCapability | TaskCreateCapability | TaskGetCapability | TaskListCapability | TaskUpdateCapability | TaskStopCapability
-  | EnterWorktreeCapability | ExitWorktreeCapability
-  | EnterPlanModeCapability | ExitPlanModeCapability | EndConversationCapability
+  | EnterWorktreeCapability | ExitWorktreeCapability | EnterPlanModeCapability | ExitPlanModeCapability | EndConversationCapability
 
-data ResolvedInteractionTool = ResolvedInteractionTool
-  { resolvedInteractionCapability :: !InteractionCapability
-  , resolvedInteractionCanonicalName :: !Text
-  , resolvedInteractionAuthority :: !ToolAuthority
-  , resolvedInteractionTarget :: !(Maybe Text)
+data ToolRegistration = ToolRegistration
+  { toolCapability :: !ToolCapability
+  , toolCanonicalName :: !Text
+  , toolAliases :: ![Text]
+  , toolAuthority :: !ToolAuthority
+  , toolDefinition :: !ToolDef
   }
 
-interactionRegistry :: [(InteractionCapability, Text, [Text], ToolAuthority, ToolDef)]
-interactionRegistry =
-  [ (AgentCapability, "Agent", ["Agent", "agent"], AuthorityInteraction, agentToolDef)
-  , (TodoWriteCapability, "TodoWrite", ["TodoWrite", "todo_write"], AuthorityWorkspaceWrite, todoWriteToolDef)
-  , (SkillCapability, "Skill", ["Skill", "skill"], AuthorityCommand, skillToolDef)
-  , (ListAgentsCapability, "ListAgents", ["ListAgents", "list_agents"], AuthorityInteraction, listAgentsToolDef)
-  , (SendMessageCapability, "SendMessage", ["SendMessage", "send_message"], AuthorityInteraction, sendMessageToolDef)
-  , (AskUserQuestionCapability, "AskUserQuestion", ["AskUserQuestion", "ask_user_question"], AuthorityInteraction, askUserQuestionToolDef)
-  , (PushNotificationCapability, "PushNotification", ["PushNotification", "push_notification"], AuthorityInteraction, pushNotificationToolDef)
-  , (MonitorCapability, "Monitor", ["Monitor", "monitor"], AuthorityRead, monitorToolDef)
-  , (TaskCreateCapability, "TaskCreate", ["TaskCreate", "task_create"], AuthorityWorkspaceWrite, taskCreateToolDef)
-  , (TaskGetCapability, "TaskGet", ["TaskGet", "task_get"], AuthorityRead, taskGetToolDef)
-  , (TaskListCapability, "TaskList", ["TaskList", "task_list"], AuthorityRead, taskListToolDef)
-  , (TaskUpdateCapability, "TaskUpdate", ["TaskUpdate", "task_update"], AuthorityWorkspaceWrite, taskUpdateToolDef)
-  , (TaskStopCapability, "TaskStop", ["TaskStop", "task_stop"], AuthorityCommand, taskStopToolDef)
-  , (EnterWorktreeCapability, "EnterWorktree", ["EnterWorktree", "enter_worktree"], AuthorityCommand, enterWorktreeToolDef)
-  , (ExitWorktreeCapability, "ExitWorktree", ["ExitWorktree", "exit_worktree"], AuthorityCommand, exitWorktreeToolDef)
-  , (EnterPlanModeCapability, "EnterPlanMode", ["EnterPlanMode", "enter_plan_mode"], AuthorityInteraction, enterPlanModeToolDef)
-  , (ExitPlanModeCapability, "ExitPlanMode", ["ExitPlanMode", "exit_plan_mode"], AuthorityInteraction, exitPlanModeToolDef)
-  , (EndConversationCapability, "EndConversation", ["EndConversation", "end_conversation"], AuthorityInteraction, endConversationToolDef)
+data ResolvedTool = ResolvedTool
+  { resolvedCapability :: !ToolCapability
+  , resolvedToolCanonicalName :: !Text
+  , resolvedToolAuthority :: !ToolAuthority
+  , resolvedToolTarget :: !(Maybe Text)
+  }
+
+-- | The sole registration point for supported tool definitions, aliases,
+-- authority, target text, validation, and executor selection.
+toolRegistry :: [ToolRegistration]
+toolRegistry =
+  [ ToolRegistration ReadFileCapability "read_file" ["read_file"] AuthorityRead readFileToolDef
+  , ToolRegistration ListDirectoryCapability "list_dir" ["list_dir", "ListDir"] AuthorityRead listDirToolDef
+  , ToolRegistration FindFilesCapability "find_files" ["find_files", "Glob", "glob"] AuthorityRead findFilesToolDef
+  , ToolRegistration GrepSearchCapability "grep_search" ["grep_search", "Grep", "grep"] AuthorityRead grepSearchToolDef
+  , ToolRegistration WriteFileCapability "write_file" ["write_file"] AuthorityWorkspaceWrite writeFileToolDef
+  , ToolRegistration ReplaceFileContentCapability "replace_file_content" ["replace_file_content", "Edit", "edit"] AuthorityWorkspaceWrite replaceFileContentToolDef
+  , ToolRegistration RunCommandCapability "run_command" ["run_command", "Bash", "bash"] AuthorityCommand runCommandToolDef
+  , ToolRegistration WebFetchCapability "WebFetch" ["WebFetch", "web_fetch", "webfetch"] AuthorityRead webFetchToolDef
+  , ToolRegistration WebSearchCapability "WebSearch" ["WebSearch", "web_search", "websearch"] AuthorityRead webSearchToolDef
+  , ToolRegistration AgentCapability "Agent" ["Agent", "agent"] AuthorityInteraction agentToolDef
+  , ToolRegistration TodoWriteCapability "TodoWrite" ["TodoWrite", "todo_write"] AuthorityWorkspaceWrite todoWriteToolDef
+  , ToolRegistration SkillCapability "Skill" ["Skill", "skill"] AuthorityCommand skillToolDef
+  , ToolRegistration ListAgentsCapability "ListAgents" ["ListAgents", "list_agents"] AuthorityInteraction listAgentsToolDef
+  , ToolRegistration SendMessageCapability "SendMessage" ["SendMessage", "send_message"] AuthorityInteraction sendMessageToolDef
+  , ToolRegistration AskUserQuestionCapability "AskUserQuestion" ["AskUserQuestion", "ask_user_question"] AuthorityInteraction askUserQuestionToolDef
+  , ToolRegistration PushNotificationCapability "PushNotification" ["PushNotification", "push_notification"] AuthorityInteraction pushNotificationToolDef
+  , ToolRegistration MonitorCapability "Monitor" ["Monitor", "monitor"] AuthorityRead monitorToolDef
+  , ToolRegistration TaskCreateCapability "TaskCreate" ["TaskCreate", "task_create"] AuthorityWorkspaceWrite taskCreateToolDef
+  , ToolRegistration TaskGetCapability "TaskGet" ["TaskGet", "task_get"] AuthorityRead taskGetToolDef
+  , ToolRegistration TaskListCapability "TaskList" ["TaskList", "task_list"] AuthorityRead taskListToolDef
+  , ToolRegistration TaskUpdateCapability "TaskUpdate" ["TaskUpdate", "task_update"] AuthorityWorkspaceWrite taskUpdateToolDef
+  , ToolRegistration TaskStopCapability "TaskStop" ["TaskStop", "task_stop"] AuthorityCommand taskStopToolDef
+  , ToolRegistration EnterWorktreeCapability "EnterWorktree" ["EnterWorktree", "enter_worktree"] AuthorityCommand enterWorktreeToolDef
+  , ToolRegistration ExitWorktreeCapability "ExitWorktree" ["ExitWorktree", "exit_worktree"] AuthorityCommand exitWorktreeToolDef
+  , ToolRegistration EnterPlanModeCapability "EnterPlanMode" ["EnterPlanMode", "enter_plan_mode"] AuthorityInteraction enterPlanModeToolDef
+  , ToolRegistration ExitPlanModeCapability "ExitPlanMode" ["ExitPlanMode", "exit_plan_mode"] AuthorityInteraction exitPlanModeToolDef
+  , ToolRegistration EndConversationCapability "EndConversation" ["EndConversation", "end_conversation"] AuthorityInteraction endConversationToolDef
   ]
 
-resolveInteractionTool :: ToolCall -> Maybe (Either Text ResolvedInteractionTool)
-resolveInteractionTool call = do
-  (capability, canonical, _, authority, _) <- find (\(_, _, names, _, _) -> functionName call `elem` names) interactionRegistry
-  pure $ resolve capability canonical authority
+resolveTool :: ToolCall -> Maybe (Either Text ResolvedTool)
+resolveTool call = do
+  ToolRegistration{..} <- find (\registration -> functionName call `elem` toolAliases registration) toolRegistry
+  pure (resolve toolCapability toolCanonicalName toolAuthority)
   where
+    parsed :: Text -> Either String a -> Either Text a
+    parsed name = either (\err -> Left ("Failed to parse " <> name <> " args: " <> T.pack err)) Right
+    resolved capability canonical authority target = ResolvedTool capability canonical authority target
+    target :: ToolCapability -> Text -> ToolAuthority -> (a -> Text) -> (ToolCall -> Either String a) -> Either Text ResolvedTool
+    target capability canonical authority get parser =
+      fmap (resolved capability canonical authority . Just . get) (parsed canonical (parser call))
+    noArgs capability canonical authority = case parseCallArgs call of
+      Right (Aeson.Object _) -> Right (resolved capability canonical authority Nothing)
+      Right _ -> Left ("Failed to parse " <> canonical <> " args: expected an object")
+      Left err -> Left ("Failed to parse " <> canonical <> " args: " <> T.pack err)
     resolve capability canonical authority = case capability of
-      AgentCapability -> target (Just . agentArgName) parseAgentArgs
-      TodoWriteCapability -> target (const Nothing) parseTodoWriteArgs
-      SkillCapability -> target (Just . skillToolName) parseSkillToolArgs
-      ListAgentsCapability -> noArgs
-      SendMessageCapability -> target (Just . unAgentId . sendMsgRecipient) parseSendMessageArgs
-      AskUserQuestionCapability -> target (Just . askQuestionText) parseAskUserQuestionArgs
-      PushNotificationCapability -> target (Just . pushMessage) parsePushNotificationArgs
-      MonitorCapability -> target (Just . unTaskId . monitorTaskId) parseMonitorArgs
+      ReadFileCapability -> target capability canonical authority (T.pack . readFilePath) parseReadFileArgs
+      ListDirectoryCapability -> target capability canonical authority (T.pack . listDirPath) parseListDirArgs
+      FindFilesCapability -> target capability canonical authority globPattern parseGlobArgs
+      GrepSearchCapability -> target capability canonical authority grepQueryText parseGrepArgs
+      WriteFileCapability -> target capability canonical authority (T.pack . writeFilePath) parseWriteFileArgs
+      ReplaceFileContentCapability -> target capability canonical authority (T.pack . editPath) parseEditArgs
+      RunCommandCapability -> target capability canonical authority runCommandCmd parseRunCommandArgs
+      WebFetchCapability -> target capability canonical authority webFetchUrl parseWebFetchArgs
+      WebSearchCapability -> target capability canonical authority webSearchQuery parseWebSearchArgs
+      AgentCapability -> target capability canonical authority agentArgName parseAgentArgs
+      TodoWriteCapability -> fmap (const (resolved capability canonical authority Nothing)) (parsed canonical (parseTodoWriteArgs call))
+      SkillCapability -> target capability canonical authority skillToolName parseSkillToolArgs
+      ListAgentsCapability -> noArgs capability canonical authority
+      SendMessageCapability -> target capability canonical authority (unAgentId . sendMsgRecipient) parseSendMessageArgs
+      AskUserQuestionCapability -> target capability canonical authority askQuestionText parseAskUserQuestionArgs
+      PushNotificationCapability -> target capability canonical authority pushMessage parsePushNotificationArgs
+      MonitorCapability -> target capability canonical authority (unTaskId . monitorTaskId) parseMonitorArgs
       TaskCreateCapability -> do
-        args <- firstParse canonical (parseTaskCreateArgs call)
+        args <- parsed canonical (parseTaskCreateArgs call)
         let taskAuthority = case taskCreateCommand args of
               Just command | not (T.null (T.strip command)) -> AuthorityCommand
               _ -> authority
-        pure (ResolvedInteractionTool capability canonical taskAuthority (Just (taskCreateName args)))
-      TaskGetCapability -> target (Just . unTaskId . taskGetId) parseTaskGetArgs
-      TaskListCapability -> noArgs
-      TaskUpdateCapability -> target (Just . unTaskId . taskUpdateId) parseTaskUpdateArgs
-      TaskStopCapability -> target (Just . unTaskId . taskStopId) parseTaskStopArgs
-      EnterWorktreeCapability -> target (Just . worktreeName) parseEnterWorktreeArgs
-      ExitWorktreeCapability -> noArgs
-      EnterPlanModeCapability -> noArgs
-      ExitPlanModeCapability -> noArgs
-      EndConversationCapability -> noArgs
-      where
-        resolved targetValue = ResolvedInteractionTool capability canonical authority targetValue
-        target :: (a -> Maybe Text) -> (ToolCall -> Either String a) -> Either Text ResolvedInteractionTool
-        target get parser = fmap (resolved . get) (firstParse canonical (parser call))
-        noArgs = case parseCallArgs call of
-          Right (Aeson.Object _) -> Right (resolved Nothing)
-          Right _ -> Left ("Failed to parse " <> canonical <> " args: expected an object")
-          Left err -> Left ("Failed to parse " <> canonical <> " args: " <> T.pack err)
-    firstParse name = either (\err -> Left ("Failed to parse " <> name <> " args: " <> T.pack err)) Right
+        pure (resolved capability canonical taskAuthority (Just (taskCreateName args)))
+      TaskGetCapability -> target capability canonical authority (unTaskId . taskGetId) parseTaskGetArgs
+      TaskListCapability -> noArgs capability canonical authority
+      TaskUpdateCapability -> target capability canonical authority (unTaskId . taskUpdateId) parseTaskUpdateArgs
+      TaskStopCapability -> target capability canonical authority (unTaskId . taskStopId) parseTaskStopArgs
+      EnterWorktreeCapability -> target capability canonical authority worktreeName parseEnterWorktreeArgs
+      ExitWorktreeCapability -> noArgs capability canonical authority
+      EnterPlanModeCapability -> noArgs capability canonical authority
+      ExitPlanModeCapability -> noArgs capability canonical authority
+      EndConversationCapability -> noArgs capability canonical authority
 
-executeResolvedInteractionTool :: FilePath -> ToolCall -> ResolvedInteractionTool -> IO ToolResult
-executeResolvedInteractionTool root call ResolvedInteractionTool{..} =
-  case resolvedInteractionCapability of
+executeResolvedTool :: FilePath -> ToolCall -> ResolvedTool -> IO ToolResult
+executeResolvedTool root call ResolvedTool{..} =
+  case resolvedCapability of
+    ReadFileCapability -> run parseReadFileArgs (executeReadFile root)
+    ListDirectoryCapability -> run parseListDirArgs (executeListDir root)
+    FindFilesCapability -> run parseGlobArgs (\args -> executeFindFiles root (FindFilesArgs (globPattern args) (globPath args)))
+    GrepSearchCapability -> run parseGrepArgs (\args -> executeGrepSearch root (GrepSearchArgs (grepQueryText args) (grepPathText args) (grepArgCaseSensitive args)))
+    WriteFileCapability -> run parseWriteFileArgs (executeWriteFile root)
+    ReplaceFileContentCapability -> run parseEditArgs (\args -> executeReplaceFileContent root (ReplaceFileContentArgs (editPath args) (editOldContent args) (editNewContent args)))
+    RunCommandCapability -> run parseRunCommandArgs (executeRunCommand root)
+    WebFetchCapability -> run parseWebFetchArgs executeWebFetch
+    WebSearchCapability -> run parseWebSearchArgs executeWebSearch
     AgentCapability -> run parseAgentArgs (\args -> pure (ToolSuccess ("Spawned subagent '" <> agentArgName args <> "' with prompt: " <> agentArgPrompt args)))
     TodoWriteCapability -> run parseTodoWriteArgs (executeTodoWrite root)
     SkillCapability -> run parseSkillToolArgs (executeSkill root)
@@ -1223,167 +1122,6 @@ executeResolvedInteractionTool root call ResolvedInteractionTool{..} =
     run parser action = case parser call of
       Left err -> pure (ToolError (T.pack err))
       Right args -> action args
-
--- | A resolved capability from any registry family.
-data ResolvedTool
-  = ResolvedReadTool !ResolvedReadWorkspaceTool
-  | ResolvedInteraction !ResolvedInteractionTool
-  | ResolvedWriteTool !ResolvedWriteWorkspaceTool
-  | ResolvedCommandWeb !ResolvedCommandWebTool
-
--- | Resolve every capability currently backed by the registry.
-resolveTool :: ToolCall -> Maybe (Either Text ResolvedTool)
-resolveTool call = case resolveReadWorkspaceTool call of
-  Just resolved -> Just (fmap ResolvedReadTool resolved)
-  Nothing -> case resolveInteractionTool call of
-    Just resolved -> Just (fmap ResolvedInteraction resolved)
-    Nothing -> case resolveWriteWorkspaceTool call of
-      Just resolved -> Just (fmap ResolvedWriteTool resolved)
-      Nothing -> fmap (fmap ResolvedCommandWeb) (resolveCommandWebTool call)
-
-resolvedToolCanonicalName :: ResolvedTool -> Text
-resolvedToolCanonicalName = \case
-  ResolvedReadTool tool -> resolvedReadCanonicalName tool
-  ResolvedInteraction tool -> resolvedInteractionCanonicalName tool
-  ResolvedWriteTool tool -> resolvedWriteCanonicalName tool
-  ResolvedCommandWeb tool -> resolvedCommandWebCanonicalName tool
-
-resolvedToolAuthority :: ResolvedTool -> ToolAuthority
-resolvedToolAuthority = \case
-  ResolvedReadTool tool -> resolvedReadAuthority tool
-  ResolvedInteraction tool -> resolvedInteractionAuthority tool
-  ResolvedWriteTool tool -> resolvedWriteAuthority tool
-  ResolvedCommandWeb tool -> resolvedCommandWebAuthority tool
-
---------------------------------------------------------------------------------
--- Workspace Write Capability Registry
---------------------------------------------------------------------------------
-
-data WriteWorkspaceCapability
-  = WriteFileCapability
-  | ReplaceFileContentCapability
-
-data ResolvedWriteWorkspaceTool = ResolvedWriteWorkspaceTool
-  { resolvedWriteCapability :: !WriteWorkspaceCapability
-  , resolvedWriteCanonicalName :: !Text
-  , resolvedWriteAuthority :: !ToolAuthority
-  , resolvedWriteTarget :: !Text
-  }
-
--- | The registration point for every workspace-writing capability. Model
--- definitions, accepted names, validation, target text, and execution resolve
--- through this table while the existing executors retain path protection.
-writeWorkspaceRegistry :: [(WriteWorkspaceCapability, Text, [Text], [ToolDef])]
-writeWorkspaceRegistry =
-  [ (WriteFileCapability, "write_file", ["write_file"], [writeFileToolModel])
-  , (ReplaceFileContentCapability, "replace_file_content", ["replace_file_content", "Edit", "edit"], [replaceFileContentToolModel, editToolModel])
-  ]
-
-writeWorkspaceToolDefs :: [ToolDef]
-writeWorkspaceToolDefs = concat [ models | (_, _, _, models) <- writeWorkspaceRegistry ]
-
-writeWorkspaceToolDef :: Text -> ToolDef
-writeWorkspaceToolDef name = case findToolDef name of
-  Just model -> model
-  Nothing -> error "missing workspace write tool registration"
-  where
-    findToolDef target = do
-      (_, _, _, models) <- find (\(_, _, names, _) -> target `elem` names) writeWorkspaceRegistry
-      find (\model -> toolName model == target) models
-
-resolveWriteWorkspaceTool :: ToolCall -> Maybe (Either Text ResolvedWriteWorkspaceTool)
-resolveWriteWorkspaceTool call = do
-  (capability, canonical, _, _) <- findCapability (functionName call)
-  pure $ case capability of
-    WriteFileCapability -> do
-      args <- firstParse canonical (parseWriteFileArgs call)
-      pure (ResolvedWriteWorkspaceTool capability canonical AuthorityWorkspaceWrite (T.pack (writeFilePath args)))
-    ReplaceFileContentCapability -> do
-      args <- firstParse canonical (parseEditArgs call)
-      pure (ResolvedWriteWorkspaceTool capability canonical AuthorityWorkspaceWrite (T.pack (editPath args)))
-  where
-    findCapability name = find (\(_, _, names, _) -> name `elem` names) writeWorkspaceRegistry
-    firstParse canonical = either (\err -> Left ("Failed to parse " <> canonical <> " args: " <> T.pack err)) Right
-
-executeResolvedWriteWorkspaceTool :: FilePath -> ToolCall -> ResolvedWriteWorkspaceTool -> IO ToolResult
-executeResolvedWriteWorkspaceTool root call ResolvedWriteWorkspaceTool{..} =
-  case resolvedWriteCapability of
-    WriteFileCapability -> case parseWriteFileArgs call of
-      Left err -> pure (ToolError (T.pack err))
-      Right args -> executeWriteFile root args
-    ReplaceFileContentCapability -> case parseEditArgs call of
-      Left err -> pure (ToolError (T.pack err))
-      Right args -> executeReplaceFileContent root (ReplaceFileContentArgs (editPath args) (editOldContent args) (editNewContent args))
-
-writeWorkspaceToolTarget :: Text -> Text -> Maybe Text
-writeWorkspaceToolTarget name rawArgs = do
-  resolved <- resolveWriteWorkspaceTool (ToolCall "" name rawArgs)
-  either (const Nothing) (Just . resolvedWriteTarget) resolved
-
--- Command and Web Capability Registry
---------------------------------------------------------------------------------
-
-data CommandWebCapability
-  = RunCommandCapability
-  | WebFetchCapability
-  | WebSearchCapability
-
-data ResolvedCommandWebTool = ResolvedCommandWebTool
-  { resolvedCommandWebCapability :: !CommandWebCapability
-  , resolvedCommandWebCanonicalName :: !Text
-  , resolvedCommandWebAuthority :: !ToolAuthority
-  , resolvedCommandWebTarget :: !Text
-  }
-
--- | The registration point for every command and web capability. Model
--- definitions, accepted names, authority, target text, and execution all
--- resolve through this table.
-commandWebRegistry :: [(CommandWebCapability, Text, [Text], ToolAuthority, ToolDef)]
-commandWebRegistry =
-  [ (RunCommandCapability, "run_command", ["run_command", "Bash", "bash"], AuthorityCommand, runCommandToolModel)
-  , (WebFetchCapability, "WebFetch", ["WebFetch", "web_fetch", "webfetch"], AuthorityRead, webFetchToolModel)
-  , (WebSearchCapability, "WebSearch", ["WebSearch", "web_search", "websearch"], AuthorityRead, webSearchToolModel)
-  ]
-
-commandWebToolDef :: Text -> ToolDef
-commandWebToolDef canonical = case find (\(_, name, _, _, _) -> name == canonical) commandWebRegistry of
-  Just (_, _, _, _, model) -> model
-  Nothing -> error "missing command or web tool registration"
-
-resolveCommandWebTool :: ToolCall -> Maybe (Either Text ResolvedCommandWebTool)
-resolveCommandWebTool call = do
-  (capability, canonical, _, authority, _) <- findCapability (functionName call)
-  pure $ case capability of
-    RunCommandCapability -> do
-      args <- firstParse canonical (parseRunCommandArgs call)
-      pure (ResolvedCommandWebTool capability canonical authority (runCommandCmd args))
-    WebFetchCapability -> do
-      args <- firstParse canonical (parseWebFetchArgs call)
-      pure (ResolvedCommandWebTool capability canonical authority (webFetchUrl args))
-    WebSearchCapability -> do
-      args <- firstParse canonical (parseWebSearchArgs call)
-      pure (ResolvedCommandWebTool capability canonical authority (webSearchQuery args))
-  where
-    findCapability name = find (\(_, _, names, _, _) -> name `elem` names) commandWebRegistry
-    firstParse canonical = either (\err -> Left ("Failed to parse " <> canonical <> " args: " <> T.pack err)) Right
-
-executeResolvedCommandWebTool :: FilePath -> ToolCall -> ResolvedCommandWebTool -> IO ToolResult
-executeResolvedCommandWebTool root call ResolvedCommandWebTool{..} =
-  case resolvedCommandWebCapability of
-    RunCommandCapability -> case parseRunCommandArgs call of
-      Left err -> pure (ToolError (T.pack err))
-      Right args -> executeRunCommand root args
-    WebFetchCapability -> case parseWebFetchArgs call of
-      Left err -> pure (ToolError (T.pack err))
-      Right args -> executeWebFetch args
-    WebSearchCapability -> case parseWebSearchArgs call of
-      Left err -> pure (ToolError (T.pack err))
-      Right args -> executeWebSearch args
-
-commandWebToolTarget :: Text -> Text -> Maybe Text
-commandWebToolTarget name rawArgs = do
-  resolved <- resolveCommandWebTool (ToolCall "" name rawArgs)
-  either (const Nothing) (Just . resolvedCommandWebTarget) resolved
 
 --------------------------------------------------------------------------------
 -- Output Truncation
@@ -1446,23 +1184,12 @@ isProtectedRawPath root rawPath = do
 executeCodingTool :: FilePath -> ToolCall -> IO ToolResult
 executeCodingTool root call = fmap truncateResult $ case resolveTool call of
   Just (Left err) -> pure (ToolError err)
-  Just (Right resolved) -> case resolved of
-    ResolvedReadTool tool -> executeResolvedReadWorkspaceTool root call tool
-    ResolvedInteraction tool -> executeResolvedInteractionTool root call tool
-    ResolvedWriteTool tool -> executeResolvedWriteWorkspaceTool root call tool
-    ResolvedCommandWeb tool -> executeResolvedCommandWebTool root call tool
-  Nothing -> executeLegacyCodingTool root call
+  Just (Right resolved) -> executeResolvedTool root call resolved
+  Nothing -> pure (ToolError ("Unknown tool function: " <> functionName call))
   where
     truncateResult = \case
       ToolSuccess out -> ToolSuccess (truncateToolOutput out)
       err             -> err
-
-executeLegacyCodingTool :: FilePath -> ToolCall -> IO ToolResult
-executeLegacyCodingTool root call = case functionName call of
-
-
-    unknown ->
-      pure $ ToolError ("Unknown tool function: " <> unknown)
 
 executeReadFile :: FilePath -> ReadFileArgs -> IO ToolResult
 executeReadFile root (ReadFileArgs path) = do

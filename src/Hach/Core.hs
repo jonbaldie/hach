@@ -330,21 +330,6 @@ agentStep cfg tools turn currentHistory
                     let effectiveCall = case hrModifiedInput preHook of
                           Just newVal -> call { callArgsRaw = TE.decodeUtf8 (BSL.toStrict (Aeson.encode newVal)) }
                           Nothing     -> call
-                        runAuthorized permissionTool = do
-                          allowed <- checkPermission permissionTool (callArgsRaw effectiveCall)
-                          if not allowed
-                            then do
-                              logEvent (EvPermissionDenied permissionTool "Permission denied by policy")
-                              pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) "Execution denied by permission policy."
-                            else do
-                              res <- executeTool effectiveCall
-                              logEvent (EvToolResult (functionName effectiveCall) res)
-                              postHook <- runHook HookPostToolUse (functionName effectiveCall <> " " <> toolResultToText res)
-                              let baseOutput = toolResultToText res
-                                  finalOutput = case hrAdditionalContext postHook of
-                                    Just extra -> baseOutput <> "\n[Additional Context]: " <> extra
-                                    Nothing    -> baseOutput
-                              pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) finalOutput
                     case resolveTool effectiveCall of
                       Just (Left err) -> do
                         let res = ToolError err
