@@ -28,7 +28,7 @@ import Hach.Hooks (executeHooks)
 import Hach.Memory (loadHierarchicalMemory, resolveMemoryImports)
 import Hach.Notifications (sendDesktopNotification)
 import Hach.OpenRouter
-import Hach.Permissions (evalPermission)
+import Hach.Permissions (evalPermission, evalPermissionForAuthority)
 import qualified Hach.Sessions as Sessions
 import Hach.Tools
 import Hach.TUI.Types (ProjectInitializationResult(..))
@@ -390,7 +390,11 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
   , interpCheckPermission = \tool args -> do
       mode <- readIORef prtMode
       let argsVal = fromMaybe Aeson.Null (Aeson.decodeStrict (TE.encodeUtf8 args))
-      case evalPermission mode prtRules tool argsVal of
+          capability = resolveReadWorkspaceTool (ToolCall "" tool args)
+          decision = case capability of
+            Just (Right resolved) -> evalPermissionForAuthority mode prtRules (resolvedReadCanonicalName resolved) argsVal (resolvedReadAuthority resolved)
+            _ -> evalPermission mode prtRules tool argsVal
+      case decision of
         PermAllow      -> pure True
         PermDeny _     -> pure False
         PermAsk reason -> ioResolveAsk tool args reason

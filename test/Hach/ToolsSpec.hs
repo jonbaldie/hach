@@ -132,10 +132,44 @@ spec = do
         , "write_file"
         , "replace_file_content"
         , "run_command"
-        , "list_dir"
-        , "find_files"
-        , "grep_search"
+         , "list_dir"
+         , "find_files"
+         , "grep_search"
         ]
+
+  describe "read workspace capability registry" $ do
+    it "resolves every accepted name to its canonical model, authority, and target" $ do
+      let cases =
+            [ ("read_file", "{\"path\":\"README.md\"}", "read_file", "README.md")
+            , ("list_dir", "{}", "list_dir", ".")
+            , ("ListDir", "{\"path\":\"src\"}", "list_dir", "src")
+            , ("find_files", "{\"pattern\":\"*.hs\"}", "find_files", "*.hs")
+            , ("Glob", "{\"pattern\":\"**/*.json\"}", "find_files", "**/*.json")
+            , ("glob", "{\"pattern\":\"*.md\"}", "find_files", "*.md")
+            , ("grep_search", "{\"query\":\"TODO\"}", "grep_search", "TODO")
+            , ("Grep", "{\"query\":\"TODO\"}", "grep_search", "TODO")
+            , ("grep", "{\"pattern\":\"FIXME\"}", "grep_search", "FIXME")
+            ]
+          showResult = \case
+            Nothing -> "unknown name"
+            Just (Left err) -> T.unpack err
+            Just (Right _) -> "resolved unexpectedly"
+      mapM_ (\(name, args, canonical, target) ->
+        case resolveReadWorkspaceTool (ToolCall "call" name args) of
+          Just (Right resolved) -> do
+            resolvedReadCanonicalName resolved `shouldBe` canonical
+            resolvedReadAuthority resolved `shouldBe` AuthorityRead
+            resolvedReadTarget resolved `shouldBe` target
+            readWorkspaceToolTarget name args `shouldBe` Just target
+          other -> expectationFailure ("Did not resolve " <> T.unpack name <> ": " <> showResult other)
+        ) cases
+
+    it "rejects invalid read arguments and unknown read names before execution" $ do
+      case resolveReadWorkspaceTool (ToolCall "bad" "Glob" "{}") of
+        Just (Left _) -> pure ()
+        _ -> expectationFailure "Invalid Glob arguments resolved unexpectedly"
+      executeCodingTool "." (ToolCall "bad" "Glob" "{}") `shouldReturn` ToolError "Failed to parse find_files args: Error in $: key \"pattern\" not found"
+      executeCodingTool "." (ToolCall "unknown" "unknown_read" "{}") `shouldReturn` ToolError "Unknown tool function: unknown_read"
 
   describe "truncateToolOutput" $ do
     it "leaves short output intact" $ do

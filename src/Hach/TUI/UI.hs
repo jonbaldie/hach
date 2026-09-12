@@ -18,6 +18,7 @@ module Hach.TUI.UI
 
 import Hach.Skills (inputSlashCompletion)
 import Hach.TUI.Types
+import Hach.Tools (readWorkspaceToolTarget)
 import Hach.Types (SessionTokenUsage(..), ToolResult(..), modelContextLimit)
 import Brick
 import Brick.Widgets.Border
@@ -389,42 +390,29 @@ groupCodeBlocks = go []
 -- | Extract a clean, human-readable summary of tool arguments (Claude Code style).
 formatToolTarget :: Text -> Text -> Text
 formatToolTarget name rawArgs =
+  case readWorkspaceToolTarget name rawArgs of
+    Just target -> target
+    Nothing -> formatLegacyToolTarget name rawArgs
+
+formatLegacyToolTarget :: Text -> Text -> Text
+formatLegacyToolTarget name rawArgs =
   case Aeson.decodeStrict (TE.encodeUtf8 rawArgs) :: Maybe Value of
     Just (Aeson.Object o) ->
       case name of
-        "read_file" ->
-          case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
-            Just (p :: Text) -> p
-            Nothing          -> truncateText 30 rawArgs
         "write_file" ->
           case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
             Just (p :: Text) -> p
             Nothing          -> truncateText 30 rawArgs
-        -- Alias sets mirror executeCodingTool's dispatch in Hach.Tools.
         n | n `elem` ["replace_file_content", "Edit", "edit"] ->
           case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
             Just (p :: Text) -> p
             Nothing          -> truncateText 30 rawArgs
-        n | n `elem` ["find_files", "Glob", "glob"] ->
-          case AesonTypes.parseMaybe (\obj -> obj .: "pattern") o of
-            Just (p :: Text) -> p
-            Nothing          -> truncateText 30 rawArgs
-        n | n `elem` ["grep_search", "Grep", "grep"] ->
-          case AesonTypes.parseMaybe (\obj -> obj .: "query") o of
-            Just (q :: Text) -> q
-            Nothing          -> case AesonTypes.parseMaybe (\obj -> obj .: "pattern") o of
-              Just (q :: Text) -> q
-              Nothing          -> truncateText 30 rawArgs
         n | n `elem` ["run_command", "Bash", "bash"] ->
           case AesonTypes.parseMaybe (\obj -> obj .: "command") o of
             Just (c :: Text) -> c
             Nothing          -> case AesonTypes.parseMaybe (\obj -> obj .: "cmd") o of
               Just (c :: Text) -> c
               Nothing          -> truncateText 30 rawArgs
-        n | n `elem` ["list_dir", "ListDir"] ->
-          case AesonTypes.parseMaybe (\obj -> obj .: "path") o of
-            Just (p :: Text) -> p
-            Nothing          -> "."
         _ -> truncateText 30 rawArgs
     _ -> truncateText 30 rawArgs
 
