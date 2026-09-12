@@ -202,7 +202,6 @@ createWorktree root name
       pure (Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes.")
   | otherwise = do
       let targetPath = worktreePath root name
-          args = ["worktree", "add", "-b", T.unpack name, targetPath]
       targetExists <- doesDirectoryExist targetPath
       if targetExists
         then do
@@ -211,6 +210,11 @@ createWorktree root name
             then pure (Right targetPath)
             else pure (Left ("Failed to create worktree: target path already exists and is not a git worktree: " <> T.pack targetPath))
         else do
+          (refCode, _, _) <- runGit root ["show-ref", "--verify", "--quiet", "refs/heads/" ++ T.unpack name]
+          let branchExists = refCode == ExitSuccess
+              args = if branchExists
+                       then ["worktree", "add", targetPath, T.unpack name]
+                       else ["worktree", "add", "-b", T.unpack name, targetPath]
           (code, out, err) <- runGit root args
           if code == ExitSuccess
             then pure (Right targetPath)
