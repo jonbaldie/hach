@@ -187,6 +187,7 @@ evalPermissionForAuthorityAs mode rules canonical displayName args authority
                  ModeDefault -> PermAllow
                  ModeAcceptEdits | isCoordinationTool canonical -> PermAllow
                  ModeAcceptEdits | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
+                 ModeAcceptEdits | authority == AuthorityCommand -> PermAsk ("Command execution requires approval: " <> displayName)
                  ModeAcceptEdits -> PermAsk ("Tool execution requires approval: " <> displayName)
                  ModeAuto | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
                  ModeAuto -> PermAsk ("Auto mode requires approval for: " <> displayName)

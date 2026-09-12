@@ -1023,7 +1023,7 @@ toolRegistry =
   , ToolRegistration AgentCapability "Agent" ["Agent", "agent"] AuthorityInteraction agentToolDef
   , ToolRegistration TodoWriteCapability "TodoWrite" ["TodoWrite", "todo_write", "todowrite"] AuthorityWorkspaceWrite todoWriteToolDef
   , ToolRegistration SkillCapability "Skill" ["Skill", "skill"] AuthorityCommand skillToolDef
-  , ToolRegistration ListAgentsCapability "ListAgents" ["ListAgents", "list_agents", "listagents"] AuthorityInteraction listAgentsToolDef
+  , ToolRegistration ListAgentsCapability "ListAgents" ["ListAgents", "list_agents", "listagents"] AuthorityRead listAgentsToolDef
   , ToolRegistration SendMessageCapability "SendMessage" ["SendMessage", "send_message"] AuthorityInteraction sendMessageToolDef
   , ToolRegistration AskUserQuestionCapability "AskUserQuestion" ["AskUserQuestion", "ask_user_question"] AuthorityInteraction askUserQuestionToolDef
   , ToolRegistration PushNotificationCapability "PushNotification" ["PushNotification", "push_notification"] AuthorityInteraction pushNotificationToolDef
