@@ -134,21 +134,44 @@ spec = do
         , "run_command"
          , "list_dir"
          , "find_files"
-         , "grep_search"
-        ]
+          , "grep_search"
+          ]
+      names `shouldContain` ["Bash", "Glob", "Grep"]
 
   describe "unified tool capability registry" $ do
-    it "resolves canonical names and aliases with their authority and Tool Card target" $ do
-      let cases =
-            [ ("Glob", "{\"pattern\":\"*.hs\"}", "find_files", AuthorityRead, Just "*.hs")
-            , ("Edit", "{\"path\":\"src/Main.hs\",\"old_content\":\"old\",\"new_content\":\"new\"}", "replace_file_content", AuthorityWorkspaceWrite, Just "src/Main.hs")
-            , ("Bash", "{\"command\":\"cabal test\"}", "run_command", AuthorityCommand, Just "cabal test")
-            , ("web_fetch", "{\"url\":\"https://example.com\"}", "WebFetch", AuthorityRead, Just "https://example.com")
-            , ("task_get", "{\"task_id\":\"task-1\"}", "TaskGet", AuthorityRead, Just "task-1")
-            , ("enter_worktree", "{\"name\":\"feature\"}", "EnterWorktree", AuthorityCommand, Just "feature")
-            , ("end_conversation", "{}", "EndConversation", AuthorityInteraction, Nothing)
+    it "resolves every registered name and alias through its definition, canonical authority, and target" $ do
+      let groups =
+            [ (["read_file"], "{\"path\":\"file.txt\"}", "read_file", AuthorityRead, Just "file.txt")
+            , (["write_file"], "{\"path\":\"file.txt\",\"content\":\"x\"}", "write_file", AuthorityWorkspaceWrite, Just "file.txt")
+            , (["replace_file_content", "Edit", "edit"], "{\"path\":\"file.txt\",\"old_content\":\"x\",\"new_content\":\"y\"}", "replace_file_content", AuthorityWorkspaceWrite, Just "file.txt")
+            , (["run_command", "Bash", "bash"], "{\"command\":\"true\"}", "run_command", AuthorityCommand, Just "true")
+            , (["list_dir", "ListDir", "listdir"], "{\"path\":\".\"}", "list_dir", AuthorityRead, Just ".")
+            , (["find_files", "Glob", "glob"], "{\"pattern\":\"*.hs\"}", "find_files", AuthorityRead, Just "*.hs")
+            , (["grep_search", "Grep", "grep"], "{\"query\":\"needle\"}", "grep_search", AuthorityRead, Just "needle")
+            , (["WebFetch", "web_fetch", "webfetch"], "{\"url\":\"https://example.com\"}", "WebFetch", AuthorityRead, Just "https://example.com")
+            , (["WebSearch", "web_search", "websearch"], "{\"query\":\"query\"}", "WebSearch", AuthorityRead, Just "query")
+            , (["Agent", "agent"], "{\"name\":\"explore\",\"prompt\":\"go\"}", "Agent", AuthorityInteraction, Just "explore")
+            , (["TodoWrite", "todo_write", "todowrite"], "{\"tasks\":[]}", "TodoWrite", AuthorityWorkspaceWrite, Nothing)
+            , (["Skill", "skill"], "{\"name\":\"review\"}", "Skill", AuthorityCommand, Just "review")
+            , (["ListAgents", "list_agents", "listagents"], "{}", "ListAgents", AuthorityRead, Nothing)
+            , (["SendMessage", "send_message"], "{\"agent_id\":\"agent-1\",\"message\":\"hi\"}", "SendMessage", AuthorityInteraction, Just "agent-1")
+            , (["AskUserQuestion", "ask_user_question"], "{\"question\":\"Proceed?\"}", "AskUserQuestion", AuthorityInteraction, Just "Proceed?")
+            , (["PushNotification", "push_notification"], "{\"message\":\"done\"}", "PushNotification", AuthorityInteraction, Just "done")
+            , (["Monitor", "monitor"], "{\"task_id\":\"task-1\"}", "Monitor", AuthorityRead, Just "task-1")
+            , (["TaskCreate", "task_create", "taskcreate"], "{\"name\":\"build\"}", "TaskCreate", AuthorityWorkspaceWrite, Just "build")
+            , (["TaskGet", "task_get", "taskget"], "{\"task_id\":\"task-1\"}", "TaskGet", AuthorityRead, Just "task-1")
+            , (["TaskList", "task_list", "tasklist"], "{}", "TaskList", AuthorityRead, Nothing)
+            , (["TaskUpdate", "task_update", "taskupdate"], "{\"task_id\":\"task-1\",\"status\":\"completed\"}", "TaskUpdate", AuthorityWorkspaceWrite, Just "task-1")
+            , (["TaskStop", "task_stop", "taskstop"], "{\"task_id\":\"task-1\"}", "TaskStop", AuthorityCommand, Just "task-1")
+            , (["EnterWorktree", "enter_worktree", "enterworktree"], "{\"name\":\"feature\"}", "EnterWorktree", AuthorityCommand, Just "feature")
+            , (["ExitWorktree", "exit_worktree", "exitworktree"], "{}", "ExitWorktree", AuthorityCommand, Nothing)
+            , (["EnterPlanMode", "enter_plan_mode"], "{}", "EnterPlanMode", AuthorityInteraction, Nothing)
+            , (["ExitPlanMode", "exit_plan_mode"], "{}", "ExitPlanMode", AuthorityInteraction, Nothing)
+            , (["EndConversation", "end_conversation"], "{}", "EndConversation", AuthorityInteraction, Nothing)
             ]
-      mapM_ (\(name, args, canonical, authority, target) ->
+          cases = [ (name, args, canonical, authority, target) | (names, args, canonical, authority, target) <- groups, name <- names ]
+      mapM_ (\(name, args, canonical, authority, target) -> do
+        toolDefinitionForName name `shouldSatisfy` (/= Nothing)
         case resolveTool (ToolCall "call" name args) of
           Just (Right resolved) -> do
             resolvedToolCanonicalName resolved `shouldBe` canonical

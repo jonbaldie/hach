@@ -316,46 +316,56 @@ agentStep cfg tools turn currentHistory
               -- Execute each tool call in sequence, checking hooks and permissions.
               toolMsgs <- forM calls $ \call -> do
                 logEvent (EvToolCall (functionName call) (callArgsRaw call))
-                -- 1. Hook PreToolUse
-                preHook <- runHook HookPreToolUse (functionName call <> " " <> callArgsRaw call)
-                let isBlocked = case hrDecision preHook of
-                      Just (PermDeny _) -> True
-                      _                 -> False
-                if isBlocked
-                  then do
-                    logEvent (EvHookTriggered "PreToolUse" "Blocked tool execution")
-                    logEvent (EvPermissionDenied (functionName call) "Blocked by PreToolUse hook")
-                    pure $ ToolMsg (callId call) (functionName call) "Execution blocked by PreToolUse hook."
-                  else do
-                    let effectiveCall = case hrModifiedInput preHook of
-                          Just newVal -> call { callArgsRaw = TE.decodeUtf8 (BSL.toStrict (Aeson.encode newVal)) }
-                          Nothing     -> call
-                    case resolveTool effectiveCall of
-                      Just (Left err) -> do
-                        let res = ToolError err
-                        logEvent (EvToolResult (functionName effectiveCall) res)
-                        pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) (toolResultToText res)
-                      resolved -> do
-                        -- Registry aliases are authorized under their canonical name.
-                        let permissionTool = case resolved of
-                              Just (Right tool) -> resolvedToolCanonicalName tool
-                              Nothing           -> functionName effectiveCall
-                        allowed <- checkPermission permissionTool (callArgsRaw effectiveCall)
-                        if not allowed
-                          then do
-                            logEvent (EvPermissionDenied permissionTool "Permission denied by policy")
-                            pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) "Execution denied by permission policy."
-                          else do
-                            -- 3. Execute tool
-                            res <- executeTool effectiveCall
+                case resolveTool call of
+                  Just (Right _) -> do
+                    -- 1. Hook PreToolUse
+                    preHook <- runHook HookPreToolUse (functionName call <> " " <> callArgsRaw call)
+                    let isBlocked = case hrDecision preHook of
+                          Just (PermDeny _) -> True
+                          _                 -> False
+                    if isBlocked
+                      then do
+                        logEvent (EvHookTriggered "PreToolUse" "Blocked tool execution")
+                        logEvent (EvPermissionDenied (functionName call) "Blocked by PreToolUse hook")
+                        pure $ ToolMsg (callId call) (functionName call) "Execution blocked by PreToolUse hook."
+                      else do
+                        let effectiveCall = case hrModifiedInput preHook of
+                              Just newVal -> call { callArgsRaw = TE.decodeUtf8 (BSL.toStrict (Aeson.encode newVal)) }
+                              Nothing     -> call
+                        case resolveTool effectiveCall of
+                          Just (Right tool) -> do
+                            -- Registry aliases are authorized under their canonical name.
+                            let permissionTool = resolvedToolCanonicalName tool
+                            allowed <- checkPermission permissionTool (callArgsRaw effectiveCall)
+                            if not allowed
+                              then do
+                                logEvent (EvPermissionDenied permissionTool "Permission denied by policy")
+                                pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) "Execution denied by permission policy."
+                              else do
+                                res <- executeTool effectiveCall
+                                logEvent (EvToolResult (functionName effectiveCall) res)
+                                postHook <- runHook HookPostToolUse (functionName effectiveCall <> " " <> toolResultToText res)
+                                let baseOutput = toolResultToText res
+                                    finalOutput = case hrAdditionalContext postHook of
+                                      Just extra -> baseOutput <> "\n[Additional Context]: " <> extra
+                                      Nothing    -> baseOutput
+                                pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) finalOutput
+                          Just (Left err) -> do
+                            let res = ToolError err
                             logEvent (EvToolResult (functionName effectiveCall) res)
-                            -- 4. Hook PostToolUse
-                            postHook <- runHook HookPostToolUse (functionName effectiveCall <> " " <> toolResultToText res)
-                            let baseOutput = toolResultToText res
-                                finalOutput = case hrAdditionalContext postHook of
-                                  Just extra -> baseOutput <> "\n[Additional Context]: " <> extra
-                                  Nothing    -> baseOutput
-                            pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) finalOutput
+                            pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) (toolResultToText res)
+                          Nothing -> do
+                            let res = ToolError ("Unknown tool function: " <> functionName effectiveCall)
+                            logEvent (EvToolResult (functionName effectiveCall) res)
+                            pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) (toolResultToText res)
+                  Just (Left err) -> do
+                        let res = ToolError err
+                        logEvent (EvToolResult (functionName call) res)
+                        pure $ ToolMsg (callId call) (functionName call) (toolResultToText res)
+                  Nothing -> do
+                    let res = ToolError ("Unknown tool function: " <> functionName call)
+                    logEvent (EvToolResult (functionName call) res)
+                    pure $ ToolMsg (callId call) (functionName call) (toolResultToText res)
 
               let updatedHistory = currentHistory ++ [asstMsg] ++ toolMsgs
               logEvent (EvTurnComplete turn)

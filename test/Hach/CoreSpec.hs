@@ -101,6 +101,21 @@ spec = do
       finalHistory `shouldSatisfy` \history ->
         any (\case ToolMsg "message-call" "send_message" output -> "denied" `T.isInfixOf` output; _ -> False) history
 
+    it "rejects unknown and unresolved calls before permissions and execution" $ do
+      let unknown = ToolCall "unknown" "not_registered" "{}"
+          unresolved = ToolCall "unresolved" "Bash" "{}"
+          step1 _ _ = Right (AssistantResponse Nothing [unknown, unresolved] Nothing)
+          step2 _ _ = Right (AssistantResponse (Just "done") [] Nothing)
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockPermissions = \_ _ -> error "permissions must not run for rejected calls"
+            }
+          ((result, history), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Call tools"])
+      result `shouldBe` AgentCompleted "done"
+      history `shouldSatisfy` \messages ->
+        any (\case ToolMsg "unknown" "not_registered" output -> output == "Error: Unknown tool function: not_registered"; _ -> False) messages
+          && any (\case ToolMsg "unresolved" "Bash" output -> "Failed to parse run_command args" `T.isInfixOf` output; _ -> False) messages
+
     it "supports writing files purely" $ do
       let writeCall = ToolCall
             { callId = "call_write"
