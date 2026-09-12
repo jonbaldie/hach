@@ -552,6 +552,19 @@ spec = do
       Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Nothing
       mockEvents endEnv `shouldContain` [EvPermissionDenied "write_file" "Permission denied by policy"]
 
+    it "authorizes Edit through its canonical workspace-write capability" $ do
+      let toolCall = ToolCall "c1" "Edit" "{\"path\":\"foo.txt\",\"old_content\":\"old\",\"new_content\":\"new\"}"
+          step1 _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
+          step2 _ _ = Right $ AssistantResponse (Just "done") [] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockFiles = Map.singleton "foo.txt" "old"
+            , mockPermissions = \tool _ -> tool == "replace_file_content"
+            }
+          ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Edit foo"])
+      result `shouldBe` AgentCompleted "done"
+      Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Just "new"
+
     it "executes exposed tool aliases (Bash, Edit, Glob, Grep, ListDir) in pureAlgebra" $ do
       let prog = do
             rBash <- executeTool (ToolCall "c1" "Bash" "{\"command\":\"ls\"}")

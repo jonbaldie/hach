@@ -107,6 +107,14 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         interpCheckPermission alg "read_file" "{\"path\":\"out.txt\"}"
           `shouldReturn` True
 
+      it "authorizes Edit aliases as workspace writes" $ do
+        env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
+        let alg = ioAlgebra env
+            args = "{\"path\":\"out.txt\",\"old_content\":\"old\",\"new_content\":\"new\"}"
+        interpCheckPermission alg "Edit" args `shouldReturn` False
+        setIOPermissionMode env ModeAcceptEdits
+        interpCheckPermission alg "edit" args `shouldReturn` True
+
       it "denies writes to protected paths in default mode" $ do
         isProtectedPath ".git/config" `shouldBe` True
         env <- newIOEnv "k" "test-model" testDir False

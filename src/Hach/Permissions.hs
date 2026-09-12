@@ -288,6 +288,8 @@ evalPermissionForAuthority mode rules tool args authority
         Nothing -> case mode of
           ModePlan | authority /= AuthorityRead -> PermDeny "Plan mode is read-only. Tool execution denied."
           ModeDefault | authority /= AuthorityRead -> PermAsk ("Tool execution requires approval: " <> tool)
-          ModeAcceptEdits | authority /= AuthorityRead -> PermAsk ("Tool execution requires approval: " <> tool)
-          ModeAuto | authority /= AuthorityRead -> PermAsk ("Auto mode requires approval for: " <> tool)
+          ModeAcceptEdits | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
+          ModeAcceptEdits -> PermAsk ("Tool execution requires approval: " <> tool)
+          ModeAuto | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
+          ModeAuto -> PermAsk ("Auto mode requires approval for: " <> tool)
           _ -> PermAllow
