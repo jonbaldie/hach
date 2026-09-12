@@ -492,14 +492,14 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         callProcess "git" ["-C", testDir, "config", "user.email", "test@test.com"]
         callProcess "git" ["-C", testDir, "commit", "--allow-empty", "-m", "init"]
         let aliases =
-              [ ("EnterWorktree", "ExitWorktree")
-              , ("enter_worktree", "exit_worktree")
-              , ("enterworktree", "exitworktree")
+              [ ("EnterWorktree", "ExitWorktree", "alias-pascal")
+              , ("enter_worktree", "exit_worktree", "alias-snake")
+              , ("enterworktree", "exitworktree", "alias-lower")
               ]
-        mapM_ (\(enterName, exitName) -> do
+        -- Fixture paths must stay distinct on case-insensitive filesystems.
+        mapM_ (\(enterName, exitName, branch) -> do
           env <- newIOEnv "k" "test-model" testDir False
           let alg = ioAlgebra env
-              branch = "alias-" <> T.unpack enterName
               wtPath = testDir </> ".agents" </> "worktrees" </> branch
           enterRes <- interpTool alg (ToolCall "enter" enterName ("{\"name\":\"" <> T.pack branch <> "\"}"))
           enterRes `shouldSatisfy` \case ToolSuccess _ -> True; ToolError _ -> False
