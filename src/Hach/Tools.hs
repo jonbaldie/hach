@@ -690,9 +690,11 @@ endConversationToolDef = ToolDef
 allToolDefs :: [ToolDef]
 allToolDefs =
   [ readFileToolDef
-  ] ++ writeWorkspaceToolDefs ++
-  [ runCommandToolDef
-  , listDirToolDef
+  , writeFileToolDef
+  , replaceFileContentToolDef
+  , runCommandToolDef
+  ] ++ filter (\tool -> toolName tool == "Edit") writeWorkspaceToolDefs ++
+  [ listDirToolDef
   , findFilesToolDef
   , grepSearchToolDef
   , bashToolDef
