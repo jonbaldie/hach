@@ -233,6 +233,7 @@ evalPermission mode rules tool args
       , "enter_worktree"
       , "exitworktree"
       , "exit_worktree"
+      , "skill"
       ]
 
     planAllowedTools =
@@ -244,7 +245,6 @@ evalPermission mode rules tool args
       , "ask_user_question"
       , "endconversation"
       , "end_conversation"
-      , "skill"
       , "monitor"
       ]
 
