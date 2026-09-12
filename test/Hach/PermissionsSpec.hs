@@ -24,9 +24,12 @@ spec = describe "Hach.Permissions" $ do
         PermAsk _ -> pure ()
         other     -> expectationFailure ("Expected PermAsk, got " <> show other)
 
-    it "asks for command execution" $ do
+    it "asks for command execution, including skills whose expansion can run commands" $ do
       let args = object ["command" .= ("cargo test" :: String)]
       case evalPermission ModeDefault [] "run_command" args of
+        PermAsk _ -> pure ()
+        other     -> expectationFailure ("Expected PermAsk, got " <> show other)
+      case evalPermission ModeDefault [] "Skill" (object ["name" .= ("deploy" :: String)]) of
         PermAsk _ -> pure ()
         other     -> expectationFailure ("Expected PermAsk, got " <> show other)
 
@@ -78,6 +81,9 @@ spec = describe "Hach.Permissions" $ do
       case evalPermission ModePlan [] "run_command" cmdArgs of
         PermDeny _ -> pure ()
         other      -> expectationFailure ("Expected PermDeny, got " <> show other)
+      case evalPermission ModePlan [] "Skill" (object ["name" .= ("deploy" :: String)]) of
+        PermDeny _ -> pure ()
+        other      -> expectationFailure ("Expected PermDeny, got " <> show other)
 
     it "allows ExitPlanMode, AskUserQuestion, EndConversation, and Monitor" $ do
       let args = object []
@@ -87,8 +93,6 @@ spec = describe "Hach.Permissions" $ do
       evalPermission ModePlan [] "ask_user_question" args `shouldBe` PermAllow
       evalPermission ModePlan [] "EndConversation" args `shouldBe` PermAllow
       evalPermission ModePlan [] "end_conversation" args `shouldBe` PermAllow
-      evalPermission ModePlan [] "Skill" args `shouldBe` PermAllow
-      evalPermission ModePlan [] "skill" args `shouldBe` PermAllow
       evalPermission ModePlan [] "EnterPlanMode" args `shouldBe` PermAllow
       evalPermission ModePlan [] "enter_plan_mode" args `shouldBe` PermAllow
       evalPermission ModePlan [] "Monitor" args `shouldBe` PermAllow
@@ -223,12 +227,11 @@ spec = describe "Hach.Permissions" $ do
         tools =
           [ "AskUserQuestion", "ask_user_question"
           , "EndConversation", "end_conversation"
-          , "Skill", "skill"
           , "EnterPlanMode", "enter_plan_mode"
           , "ExitPlanMode", "exit_plan_mode"
           , "Monitor", "monitor"
           ]
         modes = [ModeAcceptEdits, ModeDefault, ModePlan]
 
-    it "allows AskUserQuestion, EndConversation, Skill, EnterPlanMode, ExitPlanMode, and Monitor without asking" $
+    it "allows AskUserQuestion, EndConversation, EnterPlanMode, ExitPlanMode, and Monitor without asking" $
       mapM_ (\t -> mapM_ (\m -> evalPermission m [] t args `shouldBe` PermAllow) modes) tools

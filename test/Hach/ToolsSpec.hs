@@ -235,6 +235,7 @@ spec = do
     it "resolves every requested capability family with canonical authority and target" $ do
       let cases =
             [ ("Agent", "{\"name\":\"explore\",\"prompt\":\"Inspect\"}", "Agent", AuthorityInteraction, Just "explore")
+            , ("skill", "{\"name\":\"review\"}", "Skill", AuthorityCommand, Just "review")
             , ("push_notification", "{\"message\":\"Done\"}", "PushNotification", AuthorityInteraction, Just "Done")
             , ("TaskCreate", "{\"name\":\"compile\"}", "TaskCreate", AuthorityWorkspaceWrite, Just "compile")
             , ("task_get", "{\"task_id\":\"task-1\"}", "TaskGet", AuthorityRead, Just "task-1")

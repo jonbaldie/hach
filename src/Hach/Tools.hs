@@ -1140,7 +1140,7 @@ interactionRegistry :: [(InteractionCapability, Text, [Text], ToolAuthority, Too
 interactionRegistry =
   [ (AgentCapability, "Agent", ["Agent", "agent"], AuthorityInteraction, agentToolDef)
   , (TodoWriteCapability, "TodoWrite", ["TodoWrite", "todo_write"], AuthorityWorkspaceWrite, todoWriteToolDef)
-  , (SkillCapability, "Skill", ["Skill", "skill"], AuthorityInteraction, skillToolDef)
+  , (SkillCapability, "Skill", ["Skill", "skill"], AuthorityCommand, skillToolDef)
   , (ListAgentsCapability, "ListAgents", ["ListAgents", "list_agents"], AuthorityInteraction, listAgentsToolDef)
   , (SendMessageCapability, "SendMessage", ["SendMessage", "send_message"], AuthorityInteraction, sendMessageToolDef)
   , (AskUserQuestionCapability, "AskUserQuestion", ["AskUserQuestion", "ask_user_question"], AuthorityInteraction, askUserQuestionToolDef)
