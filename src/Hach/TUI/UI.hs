@@ -18,7 +18,7 @@ module Hach.TUI.UI
 
 import Hach.Skills (inputSlashCompletion)
 import Hach.TUI.Types
-import Hach.Tools (resolveTool, resolvedToolTarget)
+import Hach.Tools (toolTarget)
 import Hach.Types (SessionTokenUsage(..), ToolCall(..), ToolResult(..), modelContextLimit)
 import Brick
 import Brick.Widgets.Border
@@ -386,9 +386,7 @@ groupCodeBlocks = go []
 -- | Extract a clean, human-readable summary of tool arguments (Claude Code style).
 formatToolTarget :: Text -> Text -> Text
 formatToolTarget name rawArgs =
-  case resolveTool (ToolCall "" name rawArgs) of
-    Just (Right resolved) -> maybe (truncateText 30 rawArgs) id (resolvedToolTarget resolved)
-    _ -> truncateText 30 rawArgs
+  maybe (truncateText 30 rawArgs) id (toolTarget (ToolCall "" name rawArgs))
 
 truncateText :: Int -> Text -> Text
 truncateText maxLen t

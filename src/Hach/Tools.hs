@@ -65,10 +65,12 @@ module Hach.Tools
 
     -- * Capability Registry
    , resolveTool
-   , resolvedToolCanonicalName
-   , resolvedToolAuthority
-   , resolvedToolTarget
-   , executeResolvedTool
+    , resolvedToolCanonicalName
+    , resolvedToolAuthority
+    , resolvedToolTarget
+    , resolveToolIdentity
+    , toolTarget
+    , executeResolvedTool
 
   , parseReadFileArgs
   , parseWriteFileArgs
@@ -1010,29 +1012,29 @@ data ResolvedTool = ResolvedTool
 toolRegistry :: [ToolRegistration]
 toolRegistry =
   [ ToolRegistration ReadFileCapability "read_file" ["read_file"] AuthorityRead readFileToolDef
-  , ToolRegistration ListDirectoryCapability "list_dir" ["list_dir", "ListDir"] AuthorityRead listDirToolDef
-  , ToolRegistration FindFilesCapability "find_files" ["find_files", "Glob", "glob"] AuthorityRead findFilesToolDef
-  , ToolRegistration GrepSearchCapability "grep_search" ["grep_search", "Grep", "grep"] AuthorityRead grepSearchToolDef
   , ToolRegistration WriteFileCapability "write_file" ["write_file"] AuthorityWorkspaceWrite writeFileToolDef
   , ToolRegistration ReplaceFileContentCapability "replace_file_content" ["replace_file_content", "Edit", "edit"] AuthorityWorkspaceWrite replaceFileContentToolDef
   , ToolRegistration RunCommandCapability "run_command" ["run_command", "Bash", "bash"] AuthorityCommand runCommandToolDef
+  , ToolRegistration ListDirectoryCapability "list_dir" ["list_dir", "ListDir", "listdir"] AuthorityRead listDirToolDef
+  , ToolRegistration FindFilesCapability "find_files" ["find_files", "Glob", "glob"] AuthorityRead findFilesToolDef
+  , ToolRegistration GrepSearchCapability "grep_search" ["grep_search", "Grep", "grep"] AuthorityRead grepSearchToolDef
   , ToolRegistration WebFetchCapability "WebFetch" ["WebFetch", "web_fetch", "webfetch"] AuthorityRead webFetchToolDef
   , ToolRegistration WebSearchCapability "WebSearch" ["WebSearch", "web_search", "websearch"] AuthorityRead webSearchToolDef
   , ToolRegistration AgentCapability "Agent" ["Agent", "agent"] AuthorityInteraction agentToolDef
-  , ToolRegistration TodoWriteCapability "TodoWrite" ["TodoWrite", "todo_write"] AuthorityWorkspaceWrite todoWriteToolDef
+  , ToolRegistration TodoWriteCapability "TodoWrite" ["TodoWrite", "todo_write", "todowrite"] AuthorityWorkspaceWrite todoWriteToolDef
   , ToolRegistration SkillCapability "Skill" ["Skill", "skill"] AuthorityCommand skillToolDef
-  , ToolRegistration ListAgentsCapability "ListAgents" ["ListAgents", "list_agents"] AuthorityInteraction listAgentsToolDef
+  , ToolRegistration ListAgentsCapability "ListAgents" ["ListAgents", "list_agents", "listagents"] AuthorityInteraction listAgentsToolDef
   , ToolRegistration SendMessageCapability "SendMessage" ["SendMessage", "send_message"] AuthorityInteraction sendMessageToolDef
   , ToolRegistration AskUserQuestionCapability "AskUserQuestion" ["AskUserQuestion", "ask_user_question"] AuthorityInteraction askUserQuestionToolDef
   , ToolRegistration PushNotificationCapability "PushNotification" ["PushNotification", "push_notification"] AuthorityInteraction pushNotificationToolDef
   , ToolRegistration MonitorCapability "Monitor" ["Monitor", "monitor"] AuthorityRead monitorToolDef
-  , ToolRegistration TaskCreateCapability "TaskCreate" ["TaskCreate", "task_create"] AuthorityWorkspaceWrite taskCreateToolDef
-  , ToolRegistration TaskGetCapability "TaskGet" ["TaskGet", "task_get"] AuthorityRead taskGetToolDef
-  , ToolRegistration TaskListCapability "TaskList" ["TaskList", "task_list"] AuthorityRead taskListToolDef
-  , ToolRegistration TaskUpdateCapability "TaskUpdate" ["TaskUpdate", "task_update"] AuthorityWorkspaceWrite taskUpdateToolDef
-  , ToolRegistration TaskStopCapability "TaskStop" ["TaskStop", "task_stop"] AuthorityCommand taskStopToolDef
-  , ToolRegistration EnterWorktreeCapability "EnterWorktree" ["EnterWorktree", "enter_worktree"] AuthorityCommand enterWorktreeToolDef
-  , ToolRegistration ExitWorktreeCapability "ExitWorktree" ["ExitWorktree", "exit_worktree"] AuthorityCommand exitWorktreeToolDef
+  , ToolRegistration TaskCreateCapability "TaskCreate" ["TaskCreate", "task_create", "taskcreate"] AuthorityWorkspaceWrite taskCreateToolDef
+  , ToolRegistration TaskGetCapability "TaskGet" ["TaskGet", "task_get", "taskget"] AuthorityRead taskGetToolDef
+  , ToolRegistration TaskListCapability "TaskList" ["TaskList", "task_list", "tasklist"] AuthorityRead taskListToolDef
+  , ToolRegistration TaskUpdateCapability "TaskUpdate" ["TaskUpdate", "task_update", "taskupdate"] AuthorityWorkspaceWrite taskUpdateToolDef
+  , ToolRegistration TaskStopCapability "TaskStop" ["TaskStop", "task_stop", "taskstop"] AuthorityCommand taskStopToolDef
+  , ToolRegistration EnterWorktreeCapability "EnterWorktree" ["EnterWorktree", "enter_worktree", "enterworktree"] AuthorityCommand enterWorktreeToolDef
+  , ToolRegistration ExitWorktreeCapability "ExitWorktree" ["ExitWorktree", "exit_worktree", "exitworktree"] AuthorityCommand exitWorktreeToolDef
   , ToolRegistration EnterPlanModeCapability "EnterPlanMode" ["EnterPlanMode", "enter_plan_mode"] AuthorityInteraction enterPlanModeToolDef
   , ToolRegistration ExitPlanModeCapability "ExitPlanMode" ["ExitPlanMode", "exit_plan_mode"] AuthorityInteraction exitPlanModeToolDef
   , ToolRegistration EndConversationCapability "EndConversation" ["EndConversation", "end_conversation"] AuthorityInteraction endConversationToolDef
@@ -1040,7 +1042,7 @@ toolRegistry =
 
 resolveTool :: ToolCall -> Maybe (Either Text ResolvedTool)
 resolveTool call = do
-  ToolRegistration{..} <- find (\registration -> functionName call `elem` toolAliases registration) toolRegistry
+  ToolRegistration{..} <- findToolRegistration (functionName call)
   pure (resolve toolCapability toolCanonicalName toolAuthority)
   where
     parsed :: Text -> Either String a -> Either Text a
@@ -1086,6 +1088,33 @@ resolveTool call = do
       EnterPlanModeCapability -> noArgs capability canonical authority
       ExitPlanModeCapability -> noArgs capability canonical authority
       EndConversationCapability -> noArgs capability canonical authority
+
+-- | Identify a registered tool without validating its call arguments. This is
+-- used by permission policy, which must classify malformed calls before they
+-- reach execution.
+resolveToolIdentity :: Text -> Maybe (Text, ToolAuthority)
+resolveToolIdentity name = do
+  ToolRegistration{..} <- findToolRegistration name
+  pure (toolCanonicalName, toolAuthority)
+
+-- | Extract a registered tool's display target. A partial path is still useful
+-- to the TUI when a malformed edit call is about to be rejected by execution.
+toolTarget :: ToolCall -> Maybe Text
+toolTarget call = case resolveTool call of
+  Just (Right resolved) -> resolvedToolTarget resolved
+  _ -> do
+    ToolRegistration{..} <- findToolRegistration (functionName call)
+    case toolCapability of
+      WriteFileCapability -> pathTarget
+      ReplaceFileContentCapability -> pathTarget
+      _ -> Nothing
+  where
+    pathTarget = do
+      Aeson.Object object <- either (const Nothing) Just (parseCallArgs call)
+      AesonTypes.parseMaybe (.: "path") object
+
+findToolRegistration :: Text -> Maybe ToolRegistration
+findToolRegistration name = find (\registration -> name `elem` toolAliases registration) toolRegistry
 
 executeResolvedTool :: FilePath -> ToolCall -> ResolvedTool -> IO ToolResult
 executeResolvedTool root call ResolvedTool{..} =

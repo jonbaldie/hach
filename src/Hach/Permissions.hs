@@ -14,7 +14,7 @@ module Hach.Permissions
 
 import Hach.Types
 import Hach.Paths (isProtectedPath, matchStarGlob)
-import Hach.Tools (resolveTool, resolvedToolAuthority, resolvedToolCanonicalName)
+import Hach.Tools (resolveTool, resolveToolIdentity, resolvedToolAuthority, resolvedToolCanonicalName)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy as BSL
@@ -137,7 +137,9 @@ evalPermission
 evalPermission mode rules tool args
   = case resolveTool (ToolCall "" tool (TE.decodeUtf8 (BSL.toStrict (Aeson.encode args)))) of
       Just (Right resolved) ->
-        evalPermissionForAuthority mode rules (resolvedToolCanonicalName resolved) args (resolvedToolAuthority resolved)
+        evalPermissionForAuthorityAs mode rules (resolvedToolCanonicalName resolved) tool args (resolvedToolAuthority resolved)
+      _ | Just (canonical, authority) <- resolveToolIdentity tool ->
+        evalPermissionForAuthorityAs mode rules canonical tool args authority
       _ -> fallback
   where
     fallback = case mode of
@@ -158,21 +160,39 @@ evalPermissionForAuthority
   -> ToolAuthority
   -> PermissionDecision
 evalPermissionForAuthority mode rules tool args authority
+  = evalPermissionForAuthorityAs mode rules tool tool args authority
+
+evalPermissionForAuthorityAs
+  :: PermissionMode
+  -> [PermissionRule]
+  -> Text
+  -> Text
+  -> Aeson.Value
+  -> ToolAuthority
+  -> PermissionDecision
+evalPermissionForAuthorityAs mode rules canonical displayName args authority
   | mode == ModeBypassPermissions = PermAllow
   | otherwise =
        let mPath = extractPathArg args
-       in if authority == AuthorityWorkspaceWrite && maybe False isProtectedPath mPath
-            then PermDeny ("Protected path: access denied to " <> maybe "" T.pack mPath)
-            else case listToMaybe (concatMap (\r -> maybe [] pure (matchRule r tool mPath)) rules) of
-              Just decision -> decision
-              Nothing -> case mode of
-                ModePlan | authority /= AuthorityRead -> PermDeny "Plan mode is read-only. Tool execution denied."
-                ModePlan -> PermAllow
-                ModeDefault | authority /= AuthorityRead -> PermAsk ("Tool execution requires approval: " <> tool)
-                ModeDefault -> PermAllow
-                ModeAcceptEdits | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
-                ModeAcceptEdits -> PermAsk ("Tool execution requires approval: " <> tool)
-                ModeAuto | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
-                ModeAuto -> PermAsk ("Auto mode requires approval for: " <> tool)
-                ModeDontAsk -> PermAllow
-                ModeBypassPermissions -> PermAllow
+        in if authority == AuthorityWorkspaceWrite && maybe False isProtectedPath mPath
+             then PermDeny ("Protected path: access denied to " <> maybe "" T.pack mPath)
+             else case listToMaybe (concatMap (\r -> maybe [] pure (matchRule r canonical mPath)) rules) of
+               Just decision -> decision
+               Nothing -> case mode of
+                 ModePlan | isCoordinationTool canonical -> PermAllow
+                 ModePlan | authority /= AuthorityRead -> PermDeny "Plan mode is read-only. Tool execution denied."
+                 ModePlan -> PermAllow
+                 ModeDefault | isCoordinationTool canonical -> PermAllow
+                 ModeDefault | authority /= AuthorityRead -> PermAsk ("Tool execution requires approval: " <> displayName)
+                 ModeDefault -> PermAllow
+                 ModeAcceptEdits | isCoordinationTool canonical -> PermAllow
+                 ModeAcceptEdits | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
+                 ModeAcceptEdits -> PermAsk ("Tool execution requires approval: " <> displayName)
+                 ModeAuto | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
+                 ModeAuto -> PermAsk ("Auto mode requires approval for: " <> displayName)
+                 ModeDontAsk -> PermAllow
+                 ModeBypassPermissions -> PermAllow
+
+isCoordinationTool :: Text -> Bool
+isCoordinationTool tool = tool `elem`
+  [ "AskUserQuestion", "EndConversation", "EnterPlanMode", "ExitPlanMode", "Monitor" ]
