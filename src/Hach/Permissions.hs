@@ -3,6 +3,7 @@
 
 module Hach.Permissions
   ( evalPermission
+  , evalPermissionForAuthority
   , isProtectedPath
   , extractPathArg
   , matchGlob
@@ -268,3 +269,25 @@ evalPermission mode rules tool args
         if t `elem` readOnlyTools || t `elem` planAllowedTools
           then PermAllow
           else PermAsk ("Tool execution requires approval: " <> tool)
+
+-- | Evaluate a capability after the registry has resolved its authority.
+-- Rules match the canonical tool name, so aliases cannot get a different
+-- policy decision.
+evalPermissionForAuthority
+  :: PermissionMode
+  -> [PermissionRule]
+  -> Text
+  -> Aeson.Value
+  -> ToolAuthority
+  -> PermissionDecision
+evalPermissionForAuthority mode rules tool args authority
+  | mode == ModeBypassPermissions = PermAllow
+  | otherwise =
+      case listToMaybe (concatMap (\r -> maybe [] pure (matchRule r tool (extractPathArg args))) rules) of
+        Just decision -> decision
+        Nothing -> case mode of
+          ModePlan | authority /= AuthorityRead -> PermDeny "Plan mode is read-only. Tool execution denied."
+          ModeDefault | authority /= AuthorityRead -> PermAsk ("Tool execution requires approval: " <> tool)
+          ModeAcceptEdits | authority /= AuthorityRead -> PermAsk ("Tool execution requires approval: " <> tool)
+          ModeAuto | authority /= AuthorityRead -> PermAsk ("Auto mode requires approval for: " <> tool)
+          _ -> PermAllow

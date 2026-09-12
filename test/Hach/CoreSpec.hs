@@ -74,6 +74,20 @@ spec = do
       -- Verify events contain tool execution
       mockEvents endEnv `shouldContain` [EvToolCall "read_file" "{\"path\":\"hello.txt\"}"]
 
+    it "authorizes a read alias under its registry canonical name" $ do
+      let call = ToolCall "glob-call" "Glob" "{\"pattern\":\"*.hs\"}"
+          step1 _ _ = Right (AssistantResponse Nothing [call] Nothing)
+          step2 _ _ = Right (AssistantResponse (Just "done") [] Nothing)
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockFiles = Map.fromList [("src/Main.hs", "module Main where")]
+            , mockPermissions = \tool _ -> tool == "find_files"
+            }
+          ((result, finalHistory), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Find Haskell files"])
+      result `shouldBe` AgentCompleted "done"
+      finalHistory `shouldSatisfy` \history ->
+        any (\case ToolMsg "glob-call" "Glob" output -> "src/Main.hs" `T.isInfixOf` output; _ -> False) history
+
     it "supports writing files purely" $ do
       let writeCall = ToolCall
             { callId = "call_write"
@@ -584,5 +598,3 @@ spec = do
       result `shouldBe` AgentCompleted "done"
       Map.lookup "sanitized.txt" (mockFiles endEnv) `shouldBe` Just "safe"
       Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Nothing
-
-

@@ -45,6 +45,7 @@ module Hach.Core
   ) where
 
 import Hach.Types
+import Hach.Tools (resolveReadWorkspaceTool, resolvedReadCanonicalName)
 import Control.Monad (forM)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BSL
@@ -329,23 +330,32 @@ agentStep cfg tools turn currentHistory
                     let effectiveCall = case hrModifiedInput preHook of
                           Just newVal -> call { callArgsRaw = TE.decodeUtf8 (BSL.toStrict (Aeson.encode newVal)) }
                           Nothing     -> call
-                    -- 2. Check permissions
-                    allowed <- checkPermission (functionName effectiveCall) (callArgsRaw effectiveCall)
-                    if not allowed
-                      then do
-                        logEvent (EvPermissionDenied (functionName effectiveCall) "Permission denied by policy")
-                        pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) "Execution denied by permission policy."
-                      else do
-                        -- 3. Execute tool
-                        res <- executeTool effectiveCall
+                    case resolveReadWorkspaceTool effectiveCall of
+                      Just (Left err) -> do
+                        let res = ToolError err
                         logEvent (EvToolResult (functionName effectiveCall) res)
-                        -- 4. Hook PostToolUse
-                        postHook <- runHook HookPostToolUse (functionName effectiveCall <> " " <> toolResultToText res)
-                        let baseOutput = toolResultToText res
-                            finalOutput = case hrAdditionalContext postHook of
-                              Just extra -> baseOutput <> "\n[Additional Context]: " <> extra
-                              Nothing    -> baseOutput
-                        pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) finalOutput
+                        pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) (toolResultToText res)
+                      resolved -> do
+                        -- Read aliases are authorized under their registry canonical name.
+                        let permissionTool = case resolved of
+                              Just (Right tool) -> resolvedReadCanonicalName tool
+                              Nothing           -> functionName effectiveCall
+                        allowed <- checkPermission permissionTool (callArgsRaw effectiveCall)
+                        if not allowed
+                          then do
+                            logEvent (EvPermissionDenied permissionTool "Permission denied by policy")
+                            pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) "Execution denied by permission policy."
+                          else do
+                            -- 3. Execute tool
+                            res <- executeTool effectiveCall
+                            logEvent (EvToolResult (functionName effectiveCall) res)
+                            -- 4. Hook PostToolUse
+                            postHook <- runHook HookPostToolUse (functionName effectiveCall <> " " <> toolResultToText res)
+                            let baseOutput = toolResultToText res
+                                finalOutput = case hrAdditionalContext postHook of
+                                  Just extra -> baseOutput <> "\n[Additional Context]: " <> extra
+                                  Nothing    -> baseOutput
+                            pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) finalOutput
 
               let updatedHistory = currentHistory ++ [asstMsg] ++ toolMsgs
               logEvent (EvTurnComplete turn)

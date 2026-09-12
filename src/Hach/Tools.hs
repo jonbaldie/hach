@@ -4,6 +4,7 @@
 module Hach.Tools
   ( -- * Tool Definitions
     allToolDefs
+  , readWorkspaceToolDefs
   , readFileToolDef
   , writeFileToolDef
   , replaceFileContentToolDef
@@ -62,6 +63,15 @@ module Hach.Tools
   , TaskUpdateArgs(..)
   , TaskStopArgs(..)
   , AskUserQuestionArgs(..)
+
+    -- * Read Workspace Capability Registry
+  , ResolvedReadWorkspaceTool
+  , resolveReadWorkspaceTool
+  , resolvedReadCanonicalName
+  , resolvedReadAuthority
+  , resolvedReadTarget
+  , executeResolvedReadWorkspaceTool
+  , readWorkspaceToolTarget
 
   , parseReadFileArgs
   , parseWriteFileArgs
@@ -157,6 +167,7 @@ import qualified Data.Aeson.Types as AesonTypes
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Map.Strict as Map
+import Data.List (find)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -190,7 +201,10 @@ import System.Timeout (timeout)
 --------------------------------------------------------------------------------
 
 readFileToolDef :: ToolDef
-readFileToolDef = ToolDef
+readFileToolDef = readWorkspaceToolDef "read_file"
+
+readFileToolModel :: ToolDef
+readFileToolModel = ToolDef
   { toolName = "read_file"
   , toolDescription = "Read the UTF-8 text contents of a file in the workspace."
   , toolParameters = object
@@ -270,7 +284,10 @@ runCommandToolDef = ToolDef
   }
 
 listDirToolDef :: ToolDef
-listDirToolDef = ToolDef
+listDirToolDef = readWorkspaceToolDef "list_dir"
+
+listDirToolModel :: ToolDef
+listDirToolModel = ToolDef
   { toolName = "list_dir"
   , toolDescription = "List files and subdirectories within a given path (defaults to current directory '.')."
   , toolParameters = object
@@ -285,7 +302,10 @@ listDirToolDef = ToolDef
   }
 
 findFilesToolDef :: ToolDef
-findFilesToolDef = ToolDef
+findFilesToolDef = readWorkspaceToolDef "find_files"
+
+findFilesToolModel :: ToolDef
+findFilesToolModel = ToolDef
   { toolName = "find_files"
   , toolDescription = "Search for files within a directory matching a pattern or substring. Automatically ignores .git, dist-newstyle, and .env."
   , toolParameters = object
@@ -305,7 +325,10 @@ findFilesToolDef = ToolDef
   }
 
 grepSearchToolDef :: ToolDef
-grepSearchToolDef = ToolDef
+grepSearchToolDef = readWorkspaceToolDef "grep_search"
+
+grepSearchToolModel :: ToolDef
+grepSearchToolModel = ToolDef
   { toolName = "grep_search"
   , toolDescription = "Search file contents for an exact text pattern. Returns matching file paths, line numbers, and line contents."
   , toolParameters = object
@@ -973,6 +996,83 @@ parseAskUserQuestionArgs :: ToolCall -> Either String AskUserQuestionArgs
 parseAskUserQuestionArgs = parseArgsWith
 
 --------------------------------------------------------------------------------
+-- Read Workspace Capability Registry
+--------------------------------------------------------------------------------
+
+data ReadWorkspaceCapability
+  = ReadFileCapability
+  | ListDirectoryCapability
+  | FindFilesCapability
+  | GrepSearchCapability
+
+data ResolvedReadWorkspaceTool = ResolvedReadWorkspaceTool
+  { resolvedCapability :: !ReadWorkspaceCapability
+  , resolvedReadCanonicalName :: !Text
+  , resolvedReadAuthority :: !ToolAuthority
+  , resolvedReadTarget :: !Text
+  }
+
+-- | The registration point for every read-only workspace capability.  Model
+-- definitions, accepted names, validation, target text, and execution all
+-- resolve through this table.
+readWorkspaceRegistry :: [(ReadWorkspaceCapability, Text, [Text], ToolDef)]
+readWorkspaceRegistry =
+  [ (ReadFileCapability, "read_file", ["read_file"], readFileToolModel)
+  , (ListDirectoryCapability, "list_dir", ["list_dir", "ListDir"], listDirToolModel)
+  , (FindFilesCapability, "find_files", ["find_files", "Glob", "glob"], findFilesToolModel)
+  , (GrepSearchCapability, "grep_search", ["grep_search", "Grep", "grep"], grepSearchToolModel)
+  ]
+
+readWorkspaceToolDefs :: [ToolDef]
+readWorkspaceToolDefs = [ model | (_, _, _, model) <- readWorkspaceRegistry ]
+
+readWorkspaceToolDef :: Text -> ToolDef
+readWorkspaceToolDef canonical = case find (\(_, name, _, _) -> name == canonical) readWorkspaceRegistry of
+  Just (_, _, _, model) -> model
+  Nothing -> error "missing read workspace tool registration"
+
+resolveReadWorkspaceTool :: ToolCall -> Maybe (Either Text ResolvedReadWorkspaceTool)
+resolveReadWorkspaceTool call = do
+  (capability, canonical, _, _) <- findCapability (functionName call)
+  pure $ case capability of
+    ReadFileCapability -> do
+      args <- firstParse canonical (parseReadFileArgs call)
+      pure (ResolvedReadWorkspaceTool capability canonical AuthorityRead (T.pack (readFilePath args)))
+    ListDirectoryCapability -> do
+      args <- firstParse canonical (parseListDirArgs call)
+      pure (ResolvedReadWorkspaceTool capability canonical AuthorityRead (T.pack (listDirPath args)))
+    FindFilesCapability -> do
+      args <- firstParse canonical (parseGlobArgs call)
+      pure (ResolvedReadWorkspaceTool capability canonical AuthorityRead (globPattern args))
+    GrepSearchCapability -> do
+      args <- firstParse canonical (parseGrepArgs call)
+      pure (ResolvedReadWorkspaceTool capability canonical AuthorityRead (grepQueryText args))
+  where
+    findCapability name = find (\(_, _, names, _) -> name `elem` names) readWorkspaceRegistry
+    firstParse canonical = either (\err -> Left ("Failed to parse " <> canonical <> " args: " <> T.pack err)) Right
+
+executeResolvedReadWorkspaceTool :: FilePath -> ToolCall -> ResolvedReadWorkspaceTool -> IO ToolResult
+executeResolvedReadWorkspaceTool root call ResolvedReadWorkspaceTool{..} =
+  case resolvedCapability of
+    ReadFileCapability -> case parseReadFileArgs call of
+      Left err -> pure (ToolError (T.pack err))
+      Right args -> executeReadFile root args
+    ListDirectoryCapability -> case parseListDirArgs call of
+      Left err -> pure (ToolError (T.pack err))
+      Right args -> executeListDir root args
+    FindFilesCapability -> case parseGlobArgs call of
+      Left err -> pure (ToolError (T.pack err))
+      Right args -> executeFindFiles root (FindFilesArgs (globPattern args) (globPath args))
+    GrepSearchCapability -> case parseGrepArgs call of
+      Left err -> pure (ToolError (T.pack err))
+      Right args -> executeGrepSearch root (GrepSearchArgs (grepQueryText args) (grepPathText args) (grepArgCaseSensitive args))
+
+readWorkspaceToolTarget :: Text -> Text -> Maybe Text
+readWorkspaceToolTarget name rawArgs = do
+  resolved <- resolveReadWorkspaceTool (ToolCall "" name rawArgs)
+  either (const Nothing) (Just . resolvedReadTarget) resolved
+
+--------------------------------------------------------------------------------
 -- Output Truncation
 --------------------------------------------------------------------------------
 
@@ -1031,12 +1131,10 @@ isProtectedRawPath root rawPath = do
 
 -- | Execute any supported tool within the given workspace directory.
 executeCodingTool :: FilePath -> ToolCall -> IO ToolResult
-executeCodingTool root call = do
-  res <- case functionName call of
-    "read_file" ->
-      case parseReadFileArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse read_file args: " <> T.pack err)
-        Right args -> executeReadFile root args
+executeCodingTool root call = fmap truncateResult $ case resolveReadWorkspaceTool call of
+  Just (Left err) -> pure (ToolError err)
+  Just (Right resolved) -> executeResolvedReadWorkspaceTool root call resolved
+  Nothing -> case functionName call of
 
     "write_file" ->
       case parseWriteFileArgs call of
@@ -1052,21 +1150,6 @@ executeCodingTool root call = do
       case parseBashArgs call of
         Left err   -> pure $ ToolError ("Failed to parse Bash args: " <> T.pack err)
         Right args -> executeRunCommand root (RunCommandArgs (bashCommand args) (bashTimeout args))
-
-    name | name `elem` ["list_dir", "ListDir"] ->
-      case parseListDirArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse list_dir args: " <> T.pack err)
-        Right args -> executeListDir root args
-
-    name | name `elem` ["find_files", "Glob", "glob"] ->
-      case parseGlobArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse " <> name <> " args: " <> T.pack err)
-        Right args -> executeFindFiles root (FindFilesArgs (globPattern args) (globPath args))
-
-    name | name `elem` ["grep_search", "Grep", "grep"] ->
-      case parseGrepArgs call of
-        Left err   -> pure $ ToolError ("Failed to parse " <> name <> " args: " <> T.pack err)
-        Right args -> executeGrepSearch root (GrepSearchArgs (grepQueryText args) (grepPathText args) (grepArgCaseSensitive args))
 
     name | name `elem` ["WebFetch", "web_fetch"] ->
       case parseWebFetchArgs call of
@@ -1158,9 +1241,10 @@ executeCodingTool root call = do
 
     unknown ->
       pure $ ToolError ("Unknown tool function: " <> unknown)
-  pure $ case res of
-    ToolSuccess out -> ToolSuccess (truncateToolOutput out)
-    err             -> err
+  where
+    truncateResult = \case
+      ToolSuccess out -> ToolSuccess (truncateToolOutput out)
+      err             -> err
 
 executeReadFile :: FilePath -> ReadFileArgs -> IO ToolResult
 executeReadFile root (ReadFileArgs path) = do
