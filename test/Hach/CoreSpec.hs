@@ -88,6 +88,19 @@ spec = do
       finalHistory `shouldSatisfy` \history ->
         any (\case ToolMsg "glob-call" "Glob" output -> "src/Main.hs" `T.isInfixOf` output; _ -> False) history
 
+    it "authorizes interaction aliases under their registry canonical name" $ do
+      let call = ToolCall "message-call" "send_message" "{\"agent_id\":\"agent-1\",\"message\":\"hello\"}"
+          step1 _ _ = Right (AssistantResponse Nothing [call] Nothing)
+          step2 _ _ = Right (AssistantResponse (Just "done") [] Nothing)
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockPermissions = \tool _ -> tool /= "SendMessage"
+            }
+          ((result, finalHistory), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Message the agent"])
+      result `shouldBe` AgentCompleted "done"
+      finalHistory `shouldSatisfy` \history ->
+        any (\case ToolMsg "message-call" "send_message" output -> "denied" `T.isInfixOf` output; _ -> False) history
+
     it "supports writing files purely" $ do
       let writeCall = ToolCall
             { callId = "call_write"

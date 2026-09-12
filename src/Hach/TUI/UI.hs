@@ -393,7 +393,6 @@ formatToolTarget name rawArgs =
   case readWorkspaceToolTarget name rawArgs of
     Just target -> target
     Nothing -> case writeWorkspaceToolTarget name rawArgs of
-    Nothing -> case commandWebToolTarget name rawArgs of
       Just target -> target
       Nothing -> case commandWebToolTarget name rawArgs of
         Just target -> target
