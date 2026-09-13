@@ -433,6 +433,17 @@ spec = do
         tsPendingAsk sNo `shouldBe` Nothing
         tsStatus sNo `shouldBe` StatusThinking
 
+      it "scrolls the pending approval command without responding or moving the transcript" $ do
+        let sAsk = fst $ updateTui
+              (EvHarness (EvPermissionAsk 7 "run_command" "{}" "needs approval"))
+              baseState
+        mapM_ (\(key, delta) -> do
+          let (sNext, actions) = updateTui (EvUserKey key) sAsk
+          sNext `shouldBe` sAsk
+          actions `shouldBe` [ActionScrollPermission 7 delta])
+          [(KeyUp, -1), (KeyDown, 1), (KeyPageUp, -5), (KeyPageDown, 5),
+           (KeyScrollUp, -3), (KeyScrollDown, 3)]
+
       it "cancels a pending ask with Esc and drops stale y (Issue #91)" $ do
         let sAsk = fst $ updateTui
               (EvHarness (EvPermissionAsk 3 "write_file" "{}" "needs approval"))

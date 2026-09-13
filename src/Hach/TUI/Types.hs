@@ -249,6 +249,7 @@ data TuiAction
   | ActionCancelAgent
   | ActionQuit
   | ActionScrollTranscript !Int
+  | ActionScrollPermission !Int !Int
   | ActionSetPermissionMode !PermissionMode
   | ActionRespondPermission !Int !Bool
   deriving (Show, Eq)
@@ -286,5 +287,5 @@ builtinCommands =
 pattern ActionScrollHistory :: Int -> TuiAction
 pattern ActionScrollHistory delta = ActionScrollTranscript delta
 
-{-# COMPLETE ActionInitializeProject, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionSetPermissionMode, ActionRespondPermission #-}
-{-# COMPLETE ActionInitializeProject, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionSetPermissionMode, ActionRespondPermission #-}
+{-# COMPLETE ActionInitializeProject, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}
+{-# COMPLETE ActionInitializeProject, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}

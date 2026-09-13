@@ -12,6 +12,9 @@ module Hach.TUILayoutSpec (spec) where
 import Hach.TUI.Types
 import Hach.TUI.UI (drawUI, installWideGlyphWidths, tuiAttrMap, wideGlyphs)
 import Hach.Types (ToolResult(..))
+import Data.Aeson (encode, object, (.=))
+import qualified Data.ByteString.Lazy as BL
+import qualified Data.Text.Encoding as TE
 import qualified Brick.Main as M
 import Data.List (nub, sort)
 import qualified Data.Text as T
@@ -42,8 +45,11 @@ sampleState maxTurns = (initialTuiState "test/model" maxTurns)
 -- | Render the UI and flatten each row to the characters vty places, in vty's
 -- own column order.
 renderRows :: Maybe Int -> (Int, Int) -> [T.Text]
-renderRows maxTurns region =
-  let pic = M.renderWidget (Just tuiAttrMap) (drawUI (sampleState maxTurns)) region
+renderRows maxTurns = renderStateRows (sampleState maxTurns)
+
+renderStateRows :: TuiState -> (Int, Int) -> [T.Text]
+renderStateRows state region =
+  let pic = M.renderWidget (Just tuiAttrMap) (drawUI state) region
   in map flattenRow (V.toList (PTS.displayOpsForPic pic region))
   where
     flattenRow = V.foldl' step ""
@@ -88,6 +94,35 @@ spec = do
       installWideGlyphWidths
       map safeWcwidth "aX│─ ●✦⚙" `shouldBe` replicate 8 1
       safeWcwidth '\x4E16' `shouldBe` 2  -- CJK stays wide
+
+  describe "approval dialog" $ do
+    mapM_ (\cols ->
+      it ("shows the full long shell command before approval at " <> show cols <> " columns") $ do
+        let command = "printf '%s\\n' '" <> T.replicate 7 "approval-width-probe-" <> "'; printf '%s\\n' 'TAIL-MARKER'"
+            args = TE.decodeUtf8 (BL.toStrict (encode (object ["command" .= command])))
+            state = (initialTuiState "test/model" Nothing)
+              { tsPendingAsk = Just (PermissionPrompt 1 "run_command" args "Shell command requires approval") }
+            rows = renderStateRows state (cols, 45)
+        rows `shouldSatisfy` any (T.isInfixOf "TAIL-MARKER")
+        rows `shouldSatisfy` any (T.isInfixOf "approve"))
+      [80, 140, 240]
+
+    it "preserves quoted spaces and explicit newlines in approval commands" $ do
+      let command = "printf 'two  spaces'\necho '日本語'\necho TAIL-MARKER"
+          args = TE.decodeUtf8 (BL.toStrict (encode (object ["command" .= command])))
+          state = (initialTuiState "test/model" Nothing)
+            { tsPendingAsk = Just (PermissionPrompt 1 "run_command" args "Needs approval") }
+          rows = renderStateRows state (80, 24)
+      mapM_ (\line -> rows `shouldSatisfy` any (T.isInfixOf line)) (T.lines command)
+
+    it "keeps approval controls and a scroll hint visible for a screen-sized command" $ do
+      let command = T.replicate 100 "echo line;\n" <> "echo TAIL-MARKER"
+          args = TE.decodeUtf8 (BL.toStrict (encode (object ["command" .= command])))
+          state = (initialTuiState "test/model" Nothing)
+            { tsPendingAsk = Just (PermissionPrompt 2 "run_command" args "Shell command requires approval") }
+          rows = renderStateRows state (80, 24)
+      rows `shouldSatisfy` any (T.isInfixOf "approve")
+      rows `shouldSatisfy` any (T.isInfixOf "scroll command")
 
   describe "panel borders" $ do
     it "land in identical terminal columns on every row of the panel band" $ do
