@@ -207,6 +207,8 @@ runTuiAction eventChan workerVar gate ioEnv sysPrompt = \case
     vScrollToEnd (viewportScroll VpTranscript)
   ActionScrollTranscript delta ->
     vScrollBy (viewportScroll VpTranscript) delta
+  ActionScrollPermission askId delta ->
+    vScrollBy (viewportScroll (VpApproval askId)) delta
 
 -- | Build the active system prompt for the TUI given workspace and optional custom appended prompt.
 buildTuiSystemPrompt :: FilePath -> Maybe Text -> IO Text

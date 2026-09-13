@@ -553,6 +553,12 @@ handleUserKey key state@TuiState{..} =
 
 handlePermissionKey :: UserKey -> PermissionPrompt -> TuiState -> (TuiState, [TuiAction])
 handlePermissionKey key prompt state = case key of
+  KeyUp       -> scroll (-1)
+  KeyDown     -> scroll 1
+  KeyPageUp   -> scroll (-5)
+  KeyPageDown -> scroll 5
+  KeyScrollUp -> scroll (-3)
+  KeyScrollDown -> scroll 3
   KeyChar 'y' -> approve
   KeyChar 'Y' -> approve
   KeyEnter    -> approve
@@ -560,6 +566,7 @@ handlePermissionKey key prompt state = case key of
   KeyChar 'N' -> deny
   _           -> (state, [])
   where
+    scroll delta = (state, [ActionScrollPermission (ppId prompt) delta])
     approve =
       ( state { tsPendingAsk = Nothing, tsStatus = StatusRunningTool (ppTool prompt) }
       , [ActionRespondPermission (ppId prompt) True]

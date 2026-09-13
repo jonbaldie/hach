@@ -37,6 +37,7 @@ import Graphics.Vty.UnicodeWidthTable.Types (UnicodeWidthTable(..), WidthTableRa
 data Name
   = VpTranscript
   | VpInput
+  | VpApproval !Int
   deriving (Show, Eq, Ord)
 
 --------------------------------------------------------------------------------
@@ -607,27 +608,38 @@ renderFooter =
     ]
 
 permissionOverlay :: PermissionPrompt -> Widget Name
-permissionOverlay PermissionPrompt{..} =
-  center $
-  withBorderStyle unicodeBold $
-  withAttr activeBorderAttr $
-  borderWithLabel (withAttr brandAttr (txt " Approval required ")) $
-  padAll 2 $
-  vBox
-    [ withAttr toolNameAttr (txt ppTool)
-    , withAttr toolTargetAttr (txt (formatToolTarget ppTool ppArgs))
-    , txt " "
-    , withAttr dimAttr (txtWrap ppReason)
-    , txt " "
-    , hBox
-        [ withAttr shortcutKeyAttr (txt "y")
-        , withAttr dimAttr (txt " approve  •  ")
-        , withAttr shortcutKeyAttr (txt "n")
-        , withAttr dimAttr (txt " deny  •  ")
-        , withAttr shortcutKeyAttr (txt "esc")
-        , withAttr dimAttr (txt " cancel")
-        ]
-    ]
+permissionOverlay PermissionPrompt{..} = Widget Greedy Greedy $ do
+  ctx <- getContext
+  let width = max 1 (ctx ^. availWidthL - 6)
+      wrap = concatMap (wrapToDisplayWidth width) . T.splitOn "\n"
+      commandRows = wrap (formatToolTarget ppTool ppArgs)
+      reasonRows = wrap ppReason
+      -- Border and padding use six rows; reserve the remaining fixed content
+      -- before sizing the command viewport so approval controls stay visible.
+      commandHeight = max 1 (ctx ^. availHeightL - 11 - length reasonRows)
+      needsScroll = length commandRows > commandHeight
+  render $ center $
+    withBorderStyle unicodeBold $
+    withAttr activeBorderAttr $
+    borderWithLabel (withAttr brandAttr (txt " Approval required ")) $
+    padAll 2 $
+    vBox
+      [ withAttr toolNameAttr (txt ppTool)
+      , withAttr toolTargetAttr $
+          vLimit (min commandHeight (length commandRows)) $
+          viewport (VpApproval ppId) Vertical (vBox (map txt commandRows))
+      , withAttr dimAttr (txt (if needsScroll then "Up/Down/PgUp/PgDn: scroll command" else " "))
+      , withAttr dimAttr (vBox (map txt reasonRows))
+      , txt " "
+      , hBox
+          [ withAttr shortcutKeyAttr (txt "y")
+          , withAttr dimAttr (txt " approve  •  ")
+          , withAttr shortcutKeyAttr (txt "n")
+          , withAttr dimAttr (txt " deny  •  ")
+          , withAttr shortcutKeyAttr (txt "esc")
+          , withAttr dimAttr (txt " cancel")
+          ]
+      ]
 
 -- | Help dialog overlay.
 helpOverlay :: Widget Name
