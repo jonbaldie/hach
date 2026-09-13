@@ -1,3 +1,5 @@
+All development work on `jonbaldie/hach` must use the public Hach interface that users interact with; file any problems or bugs encountered in the project’s configured issue tracker (see `docs/agents/issue-tracker.md`).
+
 ## Agent skills
 
 ### Issue tracker
