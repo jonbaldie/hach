@@ -197,3 +197,43 @@ spec = describe "Hach.Git" $ do
       result `shouldBe`
         Left ("Failed to create worktree: target path already exists and is not a git worktree: " <> T.pack targetDir)
       removeDirectoryRecursive tempDir
+
+    it "rejects worktree creation when a directory case collision exists" $ do
+      let tempDir = "dist-newstyle/test-git-case-collision"
+      exists <- doesDirectoryExist tempDir
+      when exists (removeDirectoryRecursive tempDir)
+      createDirectoryIfMissing True tempDir
+      canonicalTempDir <- canonicalizePath tempDir
+      callProcess "git" ["-C", canonicalTempDir, "init"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.name", "Test"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.email", "test@test.com"]
+      callProcess "git" ["-C", canonicalTempDir, "commit", "--allow-empty", "-m", "init"]
+      r1 <- createWorktree canonicalTempDir "CaseName"
+      r1 `shouldBe` Right (worktreePath canonicalTempDir "CaseName")
+      -- Reusing with exact case works seamlessly
+      rReuse <- createWorktree canonicalTempDir "CaseName"
+      rReuse `shouldBe` Right (worktreePath canonicalTempDir "CaseName")
+      -- Differing case is rejected with an actionable error
+      r2 <- createWorktree canonicalTempDir "casename"
+      r2 `shouldBe` Left "Worktree case collision: existing worktree directory 'CaseName' differs in casing from requested 'casename'."
+      -- removeWorktree with differing case is also rejected
+      removeCollision <- removeWorktree canonicalTempDir "casename"
+      removeCollision `shouldBe` Left "Worktree case collision: existing worktree directory 'CaseName' differs in casing from requested 'casename'."
+      removeDirectoryRecursive tempDir
+
+    it "rejects worktree creation when a git branch case collision exists" $ do
+      let tempDir = "dist-newstyle/test-git-branch-case-collision"
+      exists <- doesDirectoryExist tempDir
+      when exists (removeDirectoryRecursive tempDir)
+      createDirectoryIfMissing True tempDir
+      canonicalTempDir <- canonicalizePath tempDir
+      callProcess "git" ["-C", canonicalTempDir, "init"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.name", "Test"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.email", "test@test.com"]
+      callProcess "git" ["-C", canonicalTempDir, "commit", "--allow-empty", "-m", "init"]
+      callProcess "git" ["-C", canonicalTempDir, "branch", "BranchCase"]
+      res <- createWorktree canonicalTempDir "branchcase"
+      res `shouldBe` Left "Worktree case collision: git branch 'BranchCase' differs in casing from requested 'branchcase'."
+      removeDirectoryRecursive tempDir
+
+
