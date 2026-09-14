@@ -147,6 +147,27 @@ spec = describe "headless CLI prompt acquisition" $ do
       stdoutText `shouldBe` worktree <> "\n"
       stderrText `shouldBe` ""
 
+  it "rejects worktree case collisions on CLI startup" $ do
+    executable <- hachExecutable
+    withTemporaryGitWorkspace $ \workspace -> do
+      let cmd1 =
+            (proc executable ["--worktree", "CaseName", "--exec", "git branch --show-current"])
+              { cwd = Just workspace
+              }
+      (exitCode1, stdoutText1, stderrText1) <- readCreateProcessWithExitCode cmd1 ""
+      exitCode1 `shouldBe` ExitSuccess
+      stdoutText1 `shouldContain` "CaseName"
+      stderrText1 `shouldBe` ""
+
+      let cmd2 =
+            (proc executable ["--worktree", "casename", "--exec", "git branch --show-current"])
+              { cwd = Just workspace
+              }
+      (exitCode2, stdoutText2, _stderrText2) <- readCreateProcessWithExitCode cmd2 ""
+      exitCode2 `shouldBe` ExitFailure 1
+      stdoutText2 `shouldContain` "Worktree error: Worktree case collision:"
+
+
   describe "--print stdout contract (Issue #116)" $ do
     -- An invalid key makes the agent fail on its first request, which drives
     -- agent events through the real renderer without a live model.

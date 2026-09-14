@@ -18,11 +18,11 @@ import Hach.Types
 import Control.Exception (SomeException, try)
 import qualified Data.ByteString as BS
 import Data.Char (digitToInt, isAlphaNum, isOctDigit, isSpace)
-import Data.List (isInfixOf)
+import Data.List (find, isInfixOf)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import System.Directory (doesDirectoryExist, doesFileExist)
+import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.Process (CreateProcess(cwd), proc, readCreateProcessWithExitCode)
@@ -201,24 +201,70 @@ createWorktree root name
   | not (isValidWorktreeName name) =
       pure (Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes.")
   | otherwise = do
-      let targetPath = worktreePath root name
-      targetExists <- doesDirectoryExist targetPath
-      if targetExists
-        then do
-          isWorktree <- isWorktreeDirectory targetPath
-          if isWorktree
-            then pure (Right targetPath)
-            else pure (Left ("Failed to create worktree: target path already exists and is not a git worktree: " <> T.pack targetPath))
-        else do
-          (refCode, _, _) <- runGit root ["show-ref", "--verify", "--quiet", "refs/heads/" ++ T.unpack name]
-          let branchExists = refCode == ExitSuccess
-              args = if branchExists
-                       then ["worktree", "add", targetPath, T.unpack name]
-                       else ["worktree", "add", "-b", T.unpack name, targetPath]
-          (code, out, err) <- runGit root args
-          if code == ExitSuccess
-            then pure (Right targetPath)
-            else pure (Left ("Failed to create worktree: " <> T.pack (if null err then out else err)))
+      let wtBaseDir = root </> ".agents" </> "worktrees"
+          targetPath = worktreePath root name
+      wtBaseExists <- doesDirectoryExist wtBaseDir
+      dirEntries <- if wtBaseExists
+                      then listDirectory wtBaseDir
+                      else pure []
+      let mCollidingDir = find (\entry ->
+            let entryText = T.pack entry
+            in T.toLower entryText == T.toLower name && entryText /= name
+            ) dirEntries
+      case mCollidingDir of
+        Just collidingEntry ->
+          pure (Left ("Worktree case collision: existing worktree directory '"
+                      <> T.pack collidingEntry
+                      <> "' differs in casing from requested '"
+                      <> name
+                      <> "'."))
+        Nothing -> do
+          targetExists <- doesDirectoryExist targetPath
+          if targetExists
+            then do
+              isWorktree <- isWorktreeDirectory targetPath
+              if not isWorktree
+                then pure (Left ("Failed to create worktree: target path already exists and is not a git worktree: " <> T.pack targetPath))
+                else do
+                  (bCode, bOut, _) <- runGit targetPath ["branch", "--show-current"]
+                  let currentBranch = T.strip (T.pack bOut)
+                  if bCode == ExitSuccess && not (T.null currentBranch) && currentBranch /= name
+                    then if T.toLower currentBranch == T.toLower name
+                           then pure (Left ("Worktree case collision: worktree at '"
+                                            <> T.pack targetPath
+                                            <> "' is on branch '"
+                                            <> currentBranch
+                                            <> "', which differs in casing from requested '"
+                                            <> name
+                                            <> "'."))
+                           else pure (Left ("Worktree branch mismatch: worktree at '"
+                                            <> T.pack targetPath
+                                            <> "' is on branch '"
+                                            <> currentBranch
+                                            <> "', expected '"
+                                            <> name
+                                            <> "'."))
+                    else pure (Right targetPath)
+            else do
+              (bCode, bOut, _) <- runGit root ["for-each-ref", "--format=%(refname:short)", "refs/heads/"]
+              let localBranches = if bCode == ExitSuccess then T.lines (T.pack bOut) else []
+                  mCollidingBranch = find (\b -> T.toLower b == T.toLower name && b /= name) localBranches
+              case mCollidingBranch of
+                Just collidingBranch ->
+                  pure (Left ("Worktree case collision: git branch '"
+                              <> collidingBranch
+                              <> "' differs in casing from requested '"
+                              <> name
+                              <> "'."))
+                Nothing -> do
+                  let branchExists = name `elem` localBranches
+                      args = if branchExists
+                               then ["worktree", "add", targetPath, T.unpack name]
+                               else ["worktree", "add", "-b", T.unpack name, targetPath]
+                  (code, out, err) <- runGit root args
+                  if code == ExitSuccess
+                    then pure (Right targetPath)
+                    else pure (Left ("Failed to create worktree: " <> T.pack (if null err then out else err)))
 
 -- | Check if a directory is an active git worktree (has a .git file pointing to worktrees).
 isWorktreeDirectory :: FilePath -> IO Bool
@@ -238,12 +284,29 @@ removeWorktree root name
   | not (isValidWorktreeName name) =
       pure (Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes.")
   | otherwise = do
-      let targetPath = worktreePath root name
-          args = ["worktree", "remove", "--force", targetPath]
-      (code, out, err) <- runGit root args
-      if code == ExitSuccess
-        then pure (Right ())
-        else pure (Left ("Failed to remove worktree: " <> T.pack (if null err then out else err)))
+      let wtBaseDir = root </> ".agents" </> "worktrees"
+          targetPath = worktreePath root name
+      wtBaseExists <- doesDirectoryExist wtBaseDir
+      dirEntries <- if wtBaseExists
+                      then listDirectory wtBaseDir
+                      else pure []
+      let mCollidingDir = find (\entry ->
+            let entryText = T.pack entry
+            in T.toLower entryText == T.toLower name && entryText /= name
+            ) dirEntries
+      case mCollidingDir of
+        Just collidingEntry ->
+          pure (Left ("Worktree case collision: existing worktree directory '"
+                      <> T.pack collidingEntry
+                      <> "' differs in casing from requested '"
+                      <> name
+                      <> "'."))
+        Nothing -> do
+          let args = ["worktree", "remove", "--force", targetPath]
+          (code, out, err) <- runGit root args
+          if code == ExitSuccess
+            then pure (Right ())
+            else pure (Left ("Failed to remove worktree: " <> T.pack (if null err then out else err)))
 
 -- | Create a PR via gh CLI using direct argument vector.
 createPullRequest :: FilePath -> Text -> Text -> IO (Either Text Text)
