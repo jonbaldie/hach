@@ -169,6 +169,8 @@ main = do
                       putStrLn ("\nAgent failed with error: " <> T.unpack err)
                       printGoalSummary goalState
 
+                exitOnHeadlessFailure result
+
         else do
           finalPrompt <- expandSlashInvokedPrompt currentWorkspace skills trimmedPrompt
           let agentConfig = AgentConfig
@@ -195,6 +197,16 @@ main = do
                 putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
               AgentFailed err -> do
                 putStrLn ("\nAgent failed with error: " <> T.unpack err)
+
+          exitOnHeadlessFailure result
+
+-- | Headless failures must be visible to shell callers through the process
+-- status, after the result has been rendered in the requested format.
+exitOnHeadlessFailure :: AgentResult -> IO ()
+exitOnHeadlessFailure result = case result of
+  AgentCompleted _         -> pure ()
+  AgentMaxTurnsReached _   -> exitFailure
+  AgentFailed _            -> exitFailure
 
 -- | Resolve the workspace selected by the CLI before any task, command, or TUI
 -- work begins. The process remains rooted at the repository checkout so the
