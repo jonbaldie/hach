@@ -165,9 +165,10 @@ spec = describe "headless CLI prompt acquisition" $ do
     it "prints only the JSON result with --output-format json" $ do
       executable <- hachExecutable
       withTemporaryWorkspace $ \workspace -> do
-        (_, stdoutText, stderrText) <-
+        (exitCode, stdoutText, stderrText) <-
           runPrint executable workspace ["-p", "--output-format", "json"]
 
+        exitCode `shouldBe` ExitFailure 1
         (Aeson.eitherDecode (LBS.pack stdoutText) :: Either String Aeson.Value)
           `shouldSatisfy` isRight
         stderrText `shouldContain` "[Agent Error]"
@@ -175,11 +176,60 @@ spec = describe "headless CLI prompt acquisition" $ do
     it "prints only the formatted result in text mode" $ do
       executable <- hachExecutable
       withTemporaryWorkspace $ \workspace -> do
-        (_, stdoutText, _) <- runPrint executable workspace ["--print"]
+        (exitCode, stdoutText, _) <- runPrint executable workspace ["--print"]
 
+        exitCode `shouldBe` ExitFailure 1
         stdoutText `shouldNotContain` "[Agent Error]"
         stdoutText `shouldNotContain` "Final Answer"
         stdoutText `shouldSatisfy` (not . isPrefixOf "\n")
+
+    it "returns a failure status for a failed --no-tui agent" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        environment <- getEnvironment
+        let testEnvironment =
+              ("OPENROUTER_API_KEY", "test")
+                : filter ((/= "OPENROUTER_API_KEY") . fst) environment
+            command =
+              (proc executable ["--no-tui", "--model", "test-model", "Answer in one sentence."])
+                { cwd = Just workspace
+                , env = Just testEnvironment
+                }
+        (exitCode, stdoutText, stderrText) <-
+          readCreateProcessWithExitCode command ""
+
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "Agent failed with error:"
+        stderrText `shouldBe` ""
+
+    it "returns a failure status for a failed headless goal loop" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        environment <- getEnvironment
+        let testEnvironment =
+              ("OPENROUTER_API_KEY", "test")
+                : filter ((/= "OPENROUTER_API_KEY") . fst) environment
+            command =
+              (proc executable
+                [ "--print"
+                , "--output-format"
+                , "json"
+                , "--max-turns"
+                , "1"
+                , "--model"
+                , "test-model"
+                , "/goal answer in one sentence"
+                ])
+                { cwd = Just workspace
+                , env = Just testEnvironment
+                }
+        (exitCode, stdoutText, stderrText) <-
+          readCreateProcessWithExitCode command ""
+
+        exitCode `shouldBe` ExitFailure 1
+        (Aeson.eitherDecode (LBS.pack stdoutText) :: Either String Aeson.Value)
+          `shouldSatisfy` isRight
+        stderrText `shouldContain` "[Goal] Failed"
 
   describe "--init (Issue #118)" $ do
     let initEnvironment = do
