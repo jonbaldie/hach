@@ -249,8 +249,11 @@ genValidWorktreeName = do
   first <- elements (['a'..'z'] ++ ['A'..'Z'] ++ ['0'..'9'])
   rest  <- listOf (elements (['a'..'z'] ++ ['A'..'Z'] ++ ['0'..'9'] ++ "-_."))
   let raw = T.pack (first : rest)
-  -- Reject internally-generated names that contain ".." or start with '-'.
-  if "-" `T.isPrefixOf` raw || ".." `T.isInfixOf` raw
+  -- Reject internally-generated names that contain invalid Git ref patterns.
+  if "-" `T.isPrefixOf` raw
+      || ".." `T.isInfixOf` raw
+      || "." `T.isSuffixOf` raw
+      || ".lock" `T.isSuffixOf` raw
     then genValidWorktreeName
     else pure raw
 

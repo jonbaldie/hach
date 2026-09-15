@@ -183,7 +183,7 @@ getGitDiff root = do
     then pure (T.pack out)
     else pure ("Git diff error: " <> T.pack err)
 
--- | Validate that a worktree name is safe (alphanumeric, no traversal, no leading dashes, no path separators).
+-- | Validate that a worktree name is safe (alphanumeric, no traversal, no leading dashes, no path separators, and no invalid Git ref patterns).
 isValidWorktreeName :: Text -> Bool
 isValidWorktreeName name =
   let stripped = T.strip name
@@ -192,14 +192,21 @@ isValidWorktreeName name =
      && not (null s)
      && not ("-" `T.isPrefixOf` stripped)
      && not (".." `T.isInfixOf` stripped)
+     && not ("." `T.isPrefixOf` stripped)
+     && not ("." `T.isSuffixOf` stripped)
+     && not (".lock" `T.isSuffixOf` stripped)
      && not (any (\c -> c == '/' || c == '\\' || c == ':') s)
      && all (\c -> isAlphaNum c || c `elem` ['-', '_', '.']) s
+
+invalidWorktreeNameError :: Text
+invalidWorktreeNameError =
+  "Invalid worktree name: must be alphanumeric and cannot contain path separators, leading dashes, or invalid git ref patterns."
 
 -- | Create or reuse a git worktree for a branch or feature name.
 createWorktree :: FilePath -> Text -> IO (Either Text FilePath)
 createWorktree root name
   | not (isValidWorktreeName name) =
-      pure (Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes.")
+      pure (Left invalidWorktreeNameError)
   | otherwise = do
       let wtBaseDir = root </> ".agents" </> "worktrees"
           targetPath = worktreePath root name
@@ -282,7 +289,7 @@ isWorktreeDirectory dir = do
 removeWorktree :: FilePath -> Text -> IO (Either Text ())
 removeWorktree root name
   | not (isValidWorktreeName name) =
-      pure (Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes.")
+      pure (Left invalidWorktreeNameError)
   | otherwise = do
       let wtBaseDir = root </> ".agents" </> "worktrees"
           targetPath = worktreePath root name

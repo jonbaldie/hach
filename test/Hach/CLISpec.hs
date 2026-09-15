@@ -1,6 +1,7 @@
 module Hach.CLISpec (spec) where
 
 import Control.Exception (finally)
+import Control.Monad (forM_)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import Data.Either (isRight)
@@ -119,6 +120,21 @@ spec = describe "headless CLI prompt acquisition" $ do
       exitCode `shouldBe` ExitFailure 1
       stdoutText `shouldContain` "Worktree error: Invalid worktree name:"
       stderrText `shouldBe` ""
+
+  it "reports Git-invalid dot-pattern worktree names before creating a worktree" $ do
+    executable <- hachExecutable
+    forM_ [".", ".hidden", "feat.", "feat.lock"] $ \name ->
+      withTemporaryGitWorkspace $ \workspace -> do
+        let command =
+              (proc executable ["--no-tui", "--worktree", name])
+                { cwd = Just workspace
+                }
+        (exitCode, stdoutText, stderrText) <- readCreateProcessWithExitCode command ""
+
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldBe`
+          "Worktree error: Invalid worktree name: must be alphanumeric and cannot contain path separators, leading dashes, or invalid git ref patterns.\n"
+        stderrText `shouldBe` ""
 
   it "reports when a requested worktree is outside a Git repository" $ do
     executable <- hachExecutable
