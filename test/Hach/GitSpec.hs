@@ -101,10 +101,16 @@ spec = describe "Hach.Git" $ do
       injected `shouldBe` False
 
     it "rejects path traversal and flag injection in worktree names" $ do
-      createWorktree "." "../../src" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes."
-      createWorktree "." "--orphan" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes."
-      removeWorktree "." "../escape" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes."
-      removeWorktree "." "-f" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators or leading dashes."
+      createWorktree "." "../../src" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators, leading dashes, or invalid git ref patterns."
+      createWorktree "." "--orphan" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators, leading dashes, or invalid git ref patterns."
+      removeWorktree "." "../escape" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators, leading dashes, or invalid git ref patterns."
+      removeWorktree "." "-f" `shouldReturn` Left "Invalid worktree name: must be alphanumeric and cannot contain path separators, leading dashes, or invalid git ref patterns."
+
+    it "rejects Git-invalid leading/trailing dots and lock suffixes" $ do
+      mapM_ (\name -> isValidWorktreeName name `shouldBe` False)
+        [".", ".hidden", "feat.", "feat.lock"]
+      mapM_ (\name -> isValidWorktreeName name `shouldBe` True)
+        ["release-1.0", "feat.locked"]
 
   describe "isWorktreeDirectory" $ do
     it "returns False for non-worktree directory" $ do
@@ -235,5 +241,4 @@ spec = describe "Hach.Git" $ do
       res <- createWorktree canonicalTempDir "branchcase"
       res `shouldBe` Left "Worktree case collision: git branch 'BranchCase' differs in casing from requested 'branchcase'."
       removeDirectoryRecursive tempDir
-
 
