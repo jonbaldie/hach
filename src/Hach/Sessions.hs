@@ -11,10 +11,22 @@ module Hach.Sessions
   , compactionSystemPrompt
   , estimateCostUsd
   , generateSessionId
+  , defaultSessionsDir
+  , legacySessionsDir
+  , saveWorkspaceSession
+  , loadWorkspaceSession
+  , getLatestWorkspaceSessionId
+  , currentTimestampIso8601
+  , SessionTarget(..)
+  , resolveSessionTarget
+  , resolveSessionLoad
+  , buildSessionHistory
+  , saveRunSession
   ) where
 
 import Hach.Types
 import Control.Exception (SomeException, try)
+import Control.Monad (when)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -23,7 +35,9 @@ import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Ord (Down(..), comparing)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Time.Format.ISO8601 (iso8601Show)
 import Numeric (showHex)
 import System.Directory
   ( createDirectoryIfMissing
@@ -171,3 +185,116 @@ generateSessionId = do
   let nanos = round (posix * 1000000) :: Integer
       hex = showHex nanos ""
   pure ("sess-" <> T.pack hex)
+
+-- | Default sessions directory inside a workspace root.
+defaultSessionsDir :: FilePath -> FilePath
+defaultSessionsDir ws = ws </> ".agents" </> "sessions"
+
+-- | Legacy sessions directory used by earlier versions.
+legacySessionsDir :: FilePath -> FilePath
+legacySessionsDir ws = ws </> ".agent" </> "sessions"
+
+-- | Save session to workspace default sessions directory.
+saveWorkspaceSession :: FilePath -> SessionInfo -> [Message] -> IO ()
+saveWorkspaceSession ws sinfo msgs =
+  saveSession (defaultSessionsDir ws) sinfo msgs
+
+-- | Load session from workspace, checking canonical .agents and falling back to legacy .agent.
+loadWorkspaceSession :: FilePath -> Text -> IO (Maybe (SessionInfo, [Message]))
+loadWorkspaceSession ws sid = do
+  mRes <- loadSession (defaultSessionsDir ws) sid
+  case mRes of
+    Just _  -> pure mRes
+    Nothing -> loadSession (legacySessionsDir ws) sid
+
+-- | Get ID of the most recently created session in the workspace.
+getLatestWorkspaceSessionId :: FilePath -> IO (Maybe Text)
+getLatestWorkspaceSessionId ws = do
+  mLatest <- getLatestSessionId (defaultSessionsDir ws)
+  case mLatest of
+    Just sid -> pure (Just sid)
+    Nothing  -> getLatestSessionId (legacySessionsDir ws)
+
+-- | ISO-8601 formatted current timestamp.
+currentTimestampIso8601 :: IO Text
+currentTimestampIso8601 = do
+  t <- getCurrentTime
+  pure (T.pack (iso8601Show t))
+
+-- | Session target parsed from CLI flags.
+data SessionTarget
+  = SessionNone
+  | SessionContinue
+  | SessionSpecific !Text
+  deriving (Show, Eq)
+
+-- | Determine session target from CLI continuation/resume flags.
+resolveSessionTarget :: Bool -> Bool -> Maybe Text -> SessionTarget
+resolveSessionTarget optContinue optResume optSessionId =
+  case optSessionId of
+    Just sid -> SessionSpecific sid
+    Nothing
+      | optContinue || optResume -> SessionContinue
+      | otherwise                -> SessionNone
+
+-- | Resolve and load session from workspace according to session target.
+resolveSessionLoad
+  :: FilePath
+  -> SessionTarget
+  -> IO (Either String (Maybe (SessionInfo, [Message])))
+resolveSessionLoad workspace = \case
+  SessionNone -> pure (Right Nothing)
+  SessionContinue -> do
+    mLatestId <- getLatestWorkspaceSessionId workspace
+    case mLatestId of
+      Nothing -> pure (Left "No stored session found in workspace.")
+      Just sid -> do
+        mSession <- loadWorkspaceSession workspace sid
+        case mSession of
+          Just sess -> pure (Right (Just sess))
+          Nothing   -> pure (Left ("No stored session found in workspace (failed to load " <> T.unpack sid <> ")."))
+  SessionSpecific sid -> do
+    mSession <- loadWorkspaceSession workspace sid
+    case mSession of
+      Just sess -> pure (Right (Just sess))
+      Nothing   -> pure (Left ("No stored session found for session ID: " <> T.unpack sid))
+
+isSystemMsg :: Message -> Bool
+isSystemMsg (SystemMsg _) = True
+isSystemMsg _             = False
+
+-- | Drop any trailing non-assistant messages (e.g. unanswered user prompts)
+-- to keep history ending at a completed assistant turn.
+dropTrailingNonAssistant :: [Message] -> [Message]
+dropTrailingNonAssistant [] = []
+dropTrailingNonAssistant msgs =
+  let rev = reverse msgs
+      rest = dropWhile (\case AssistantMsg _ _ -> False; _ -> True) rev
+  in reverse rest
+
+-- | Build initial conversation history for a new or resumed session.
+-- Preserves prior dialogue messages while ensuring the current system prompt is at the head.
+buildSessionHistory :: Text -> Maybe [Message] -> Text -> [Message]
+buildSessionHistory sysPrompt mPriorHistory prompt =
+  let priorDialogue = case mPriorHistory of
+        Nothing   -> []
+        Just msgs -> dropTrailingNonAssistant (filter (not . isSystemMsg) msgs)
+  in SystemMsg sysPrompt : priorDialogue ++ [UserMsg prompt]
+
+-- | Persist completed agent dialogue to the workspace session directory.
+saveRunSession :: FilePath -> Text -> Text -> Maybe SessionInfo -> [Message] -> IO ()
+saveRunSession workspace activeSid model mPrevInfo finalHistory = do
+  let cleanHistory = dropTrailingNonAssistant finalHistory
+      totalTurns = length [() | AssistantMsg _ _ <- cleanHistory]
+  when (totalTurns > 0) $ do
+    timestamp <- currentTimestampIso8601
+    let prevCost = maybe 0.0 siCostUsd mPrevInfo
+        sessionInfo = SessionInfo
+          { siId        = activeSid
+          , siCreatedAt = timestamp
+          , siModel     = model
+          , siTurns     = totalTurns
+          , siCostUsd   = prevCost
+          }
+    saveWorkspaceSession workspace sessionInfo cleanHistory
+

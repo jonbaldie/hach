@@ -8,6 +8,7 @@ import Data.Either (isRight)
 import Data.List (isPrefixOf)
 import System.Directory
   ( createDirectory
+  , createDirectoryIfMissing
   , canonicalizePath
   , doesDirectoryExist
   , doesFileExist
@@ -316,6 +317,66 @@ spec = describe "headless CLI prompt acquisition" $ do
         stderrText `shouldBe` ""
         stdoutText `shouldContain` "already exists"
         readFile (workspace </> "CLAUDE.md") `shouldReturn` existing
+
+  describe "session persistence and continuation (Issue #151)" $ do
+    let runWithEnv executable workspace args = do
+          environment <- getEnvironment
+          let testEnvironment =
+                ("OPENROUTER_API_KEY", "test")
+                  : ("OPENROUTER_MODEL", "test-model")
+                  : filter ((`notElem` ["OPENROUTER_API_KEY", "OPENROUTER_MODEL"]) . fst) environment
+              command =
+                (proc executable args)
+                  { cwd = Just workspace
+                  , env = Just testEnvironment
+                  }
+          readCreateProcessWithExitCode command ""
+
+    it "fails with an explicit error when --continue is used without stored sessions" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, _stderrText) <-
+          runWithEnv executable workspace ["--no-tui", "-c", "continue previous task"]
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "No stored session found"
+        stdoutText `shouldNotContain` "Prompting LLM"
+
+    it "fails with an explicit error when --session-id is used with nonexistent id" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, _stderrText) <-
+          runWithEnv executable workspace ["--no-tui", "--session-id", "nonexistent-sess-id", "do task"]
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "No stored session found"
+        stdoutText `shouldNotContain` "Prompting LLM"
+
+    it "restores prior history when continuing a session via -c" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        let sessionsDir = workspace </> ".agents" </> "sessions"
+        createDirectoryIfMissing True sessionsDir
+        writeFile (sessionsDir </> "sess-1.meta.json")
+          "{\"id\":\"sess-1\",\"created_at\":\"2026-09-18T09:00:00Z\",\"model\":\"test-model\",\"turns\":1,\"cost_usd\":0.0}"
+        writeFile (sessionsDir </> "sess-1.jsonl")
+          "{\"role\":\"user\",\"content\":\"Codeword PLATYPUS\"}\n{\"role\":\"assistant\",\"content\":\"Acknowledged.\"}\n"
+
+        (_exitCode, stdoutText, _) <-
+          runWithEnv executable workspace ["--no-tui", "-c", "What was the codeword?"]
+        stdoutText `shouldContain` "Prompting LLM with 4 messages in context"
+
+    it "restores specific prior history when resumed via --session-id" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        let sessionsDir = workspace </> ".agents" </> "sessions"
+        createDirectoryIfMissing True sessionsDir
+        writeFile (sessionsDir </> "sess-specific.meta.json")
+          "{\"id\":\"sess-specific\",\"created_at\":\"2026-09-18T09:00:00Z\",\"model\":\"test-model\",\"turns\":1,\"cost_usd\":0.0}"
+        writeFile (sessionsDir </> "sess-specific.jsonl")
+          "{\"role\":\"user\",\"content\":\"Codeword PLATYPUS\"}\n{\"role\":\"assistant\",\"content\":\"Acknowledged.\"}\n"
+
+        (_exitCode, stdoutText, _) <-
+          runWithEnv executable workspace ["--no-tui", "--session-id", "sess-specific", "What was the codeword?"]
+        stdoutText `shouldContain` "Prompting LLM with 4 messages in context"
 
 hachExecutable :: IO FilePath
 hachExecutable = do

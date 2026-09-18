@@ -87,18 +87,71 @@ spec = describe "Hach.Sessions" $ do
 
   describe "Compaction" $ do
     it "replaces history with summary while preserving system prompt" $ do
-      let orig =
-            [ SystemMsg "System instructions"
-            , UserMsg "Do task 1"
-            , AssistantMsg (Just "Done task 1") []
-            , UserMsg "Do task 2"
-            , AssistantMsg (Just "Done task 2") []
-            ]
-          compacted = makeCompactedHistory (Just "System instructions") "Summary of tasks 1 and 2 completed."
+      let compacted = makeCompactedHistory (Just "System instructions") "Summary of tasks 1 and 2 completed."
       compacted `shouldBe`
         [ SystemMsg "System instructions"
         , UserMsg "[Context summary of earlier turns]:\nSummary of tasks 1 and 2 completed."
         ]
+
+  describe "Workspace session management (Issue #151)" $ do
+    let wsDir = "dist-newstyle/test-workspace-sessions"
+    around_ (\action -> do
+      exists <- doesDirectoryExist wsDir
+      when exists (removeDirectoryRecursive wsDir)
+      createDirectoryIfMissing True wsDir
+      action
+      existsAfter <- doesDirectoryExist wsDir
+      when existsAfter (removeDirectoryRecursive wsDir)) $ do
+
+      it "resolves session target from CLI flags correctly" $ do
+        resolveSessionTarget False False Nothing `shouldBe` SessionNone
+        resolveSessionTarget True False Nothing `shouldBe` SessionContinue
+        resolveSessionTarget False True Nothing `shouldBe` SessionContinue
+        resolveSessionTarget False False (Just "s-1") `shouldBe` SessionSpecific "s-1"
+        resolveSessionTarget True False (Just "s-1") `shouldBe` SessionSpecific "s-1"
+
+      it "reports failure when continuing without stored sessions in workspace" $ do
+        res <- resolveSessionLoad wsDir SessionContinue
+        res `shouldBe` Left "No stored session found in workspace."
+
+      it "reports failure when loading non-existent specific session ID" $ do
+        res <- resolveSessionLoad wsDir (SessionSpecific "ghost")
+        res `shouldBe` Left "No stored session found for session ID: ghost"
+
+      it "saves and loads workspace sessions end-to-end" $ do
+        let sInfo = SessionInfo "ws-sess-1" "2026-09-18T10:00:00Z" "model-x" 1 0.01
+            msgs = [UserMsg "First question", AssistantMsg (Just "First answer") []]
+        saveWorkspaceSession wsDir sInfo msgs
+        latestId <- getLatestWorkspaceSessionId wsDir
+        latestId `shouldBe` Just "ws-sess-1"
+
+        loadRes <- resolveSessionLoad wsDir SessionContinue
+        case loadRes of
+          Left err -> expectationFailure ("Failed to load session: " <> err)
+          Right Nothing -> expectationFailure "Expected Just session"
+          Right (Just (loadedInfo, loadedMsgs)) -> do
+            siId loadedInfo `shouldBe` "ws-sess-1"
+            loadedMsgs `shouldBe` msgs
+
+      it "builds session history combining system prompt, prior turns, and new prompt" $ do
+        let prior = [SystemMsg "old sys", UserMsg "q1", AssistantMsg (Just "a1") []]
+            built = buildSessionHistory "new sys" (Just prior) "q2"
+        built `shouldBe`
+          [ SystemMsg "new sys"
+          , UserMsg "q1"
+          , AssistantMsg (Just "a1") []
+          , UserMsg "q2"
+          ]
+
+      it "drops trailing non-assistant messages from prior history when building new turn" $ do
+        let prior = [SystemMsg "old sys", UserMsg "q1", AssistantMsg (Just "a1") [], UserMsg "unanswered"]
+            built = buildSessionHistory "new sys" (Just prior) "q2"
+        built `shouldBe`
+          [ SystemMsg "new sys"
+          , UserMsg "q1"
+          , AssistantMsg (Just "a1") []
+          , UserMsg "q2"
+          ]
 
   describe "Cost estimation (BUG-7)" $ do
     it "correctly prices gpt-4o-mini without shadowing from gpt-4o" $ do
