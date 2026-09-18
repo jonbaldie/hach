@@ -9,6 +9,7 @@ module Hach.Env
   , parseEnvContent
   , parseLineTwoModel
   , parseCliArgs
+  , cliHelpText
   , StartupIntent(..)
   , startupIntent
   , headlessEmitsBanners
@@ -78,6 +79,7 @@ data CliOptions = CliOptions
   , optPermissionMode       :: !(Maybe PermissionMode)
   , optDangerouslySkipPerms :: !Bool
   , optVersion              :: !Bool
+  , optHelp                 :: !Bool
   } deriving (Show, Eq)
 
 -- | Default empty CLI options.
@@ -101,6 +103,7 @@ defaultCliOptions = CliOptions
   , optPermissionMode       = Nothing
   , optDangerouslySkipPerms = False
   , optVersion              = False
+  , optHelp                 = False
   }
 
 -- | Parse output format string.
@@ -151,18 +154,22 @@ resolveEffortLevel settings =
 -- not a prompt for the headless agent; '--init' initialises the workspace
 -- guidelines file and exits; '--version' outranks both.
 data StartupIntent
-  = IntentVersion
+  = IntentHelp
+  | IntentVersion
   | IntentExec !Text
   | IntentInit
   | IntentTui
   | IntentHeadless
   deriving (Show, Eq)
 
--- | Map parsed options onto a startup intent. '--exec' must not fall through
--- to the headless agent loop just because it also sets 'optNoTui'. '--init'
--- must not fall through to the TUI or headless loop (Issue #118).
+-- | Map parsed options onto a startup intent. '--help' outranks everything
+-- else, including '--version', so it is never masked by another flag on the
+-- same command line. '--exec' must not fall through to the headless agent
+-- loop just because it also sets 'optNoTui'. '--init' must not fall through
+-- to the TUI or headless loop (Issue #118).
 startupIntent :: CliOptions -> StartupIntent
 startupIntent CliOptions{..}
+  | optHelp = IntentHelp
   | optVersion = IntentVersion
   | Just cmd <- optExec = IntentExec cmd
   | optInit = IntentInit
@@ -197,6 +204,46 @@ formatPrintResult fmt result = case fmt of
           ]
       AgentFailed err ->
         Aeson.object ["error" .= err]
+
+-- | Every flag 'parseCliArgs' accepts, paired with a short description.
+-- Kept next to the parser (rather than derived from it) so the two are
+-- reviewed together; 'cliHelpText' and the error-path usage message both
+-- read from this single list, so they can't drift out of sync with each
+-- other again (Issue #153).
+cliFlagHelp :: [(String, String)]
+cliFlagHelp =
+  [ ("--model <name>, -m <name>", "Select the model to use for this run")
+  , ("--no-tui", "Run headlessly instead of launching the TUI")
+  , ("--print, -p", "Headless mode: print only the final answer to stdout")
+  , ("--output-format <text|json>", "Format for --print output (default: text)")
+  , ("--continue, -c", "Continue the most recent session")
+  , ("--resume, -r", "Resume a session interactively")
+  , ("--session-id <id>", "Resume a specific session by id")
+  , ("--max-turns <n>", "Limit the agent loop to at most n turns")
+  , ("--max-budget-usd <amount>", "Stop the agent loop once this budget is spent")
+  , ("--append-system-prompt <text>", "Append extra instructions to the system prompt")
+  , ("--add-dir <path>", "Grant the agent access to an additional directory")
+  , ("--worktree <name>, -w <name>", "Run inside a new git worktree")
+  , ("--init", "Write a starter CLAUDE.md guidelines file and exit")
+  , ("--exec <cmd>", "Run a shell command in the workspace and exit")
+  , ("--permission-mode <mode>", "Set the permission mode (default, acceptEdits, plan, auto, dontAsk, bypassPermissions)")
+  , ("--dangerously-skip-permissions", "Bypass all permission checks (use with care)")
+  , ("--version, -v", "Print the hach version and exit")
+  , ("--help, -h", "Print this help text and exit")
+  ]
+
+-- | Full help text listing every accepted flag, printed by '--help'/'-h'.
+cliHelpText :: String
+cliHelpText = unlines
+  ( "Usage: hach [options] [task prompt...]"
+  : ""
+  : "Options:"
+  : map formatFlagHelp cliFlagHelp
+  )
+  where
+    flagColumnWidth = 34
+    formatFlagHelp (flag, desc) =
+      "  " ++ flag ++ replicate (max 1 (flagColumnWidth - length flag)) ' ' ++ desc
 
 -- | Parse command line arguments into 'CliOptions'.
 parseCliArgs :: [String] -> Either String CliOptions
@@ -241,6 +288,11 @@ parseCliArgs args = go args defaultCliOptions []
       go rest opts { optVersion = True } promptWords
     go ("-v" : rest) opts promptWords =
       go rest opts { optVersion = True } promptWords
+
+    go ("--help" : rest) opts promptWords =
+      go rest opts { optHelp = True } promptWords
+    go ("-h" : rest) opts promptWords =
+      go rest opts { optHelp = True } promptWords
 
     go (arg : rest) opts promptWords
       | arg `elem` ["--model", "-m"] =
