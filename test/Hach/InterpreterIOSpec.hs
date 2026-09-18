@@ -201,6 +201,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
                   { cfgModel = "test-model"
                   , cfgSystemPrompt = Nothing
                   , cfgMaxTurns = Nothing
+                  , cfgMaxBudgetUsd = Nothing
                   }
             _ <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "run the skill"])
             readIORef eventsRef
@@ -227,6 +228,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
               { cfgModel        = "test-model"
               , cfgSystemPrompt = Nothing
               , cfgMaxTurns     = Nothing
+              , cfgMaxBudgetUsd = Nothing
               }
         (_result, hist) <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write it"])
         hist `shouldSatisfy` any (\case
@@ -278,6 +280,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
                   { cfgModel        = "test-model"
                   , cfgSystemPrompt = Nothing
                   , cfgMaxTurns     = Nothing
+                  , cfgMaxBudgetUsd = Nothing
                   }
             result <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write hello.txt"])
             events <- readIORef eventsRef

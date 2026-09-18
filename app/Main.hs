@@ -13,6 +13,7 @@ import Hach.Tools
 import Hach.TUI.App (runTui)
 import Hach.TUI.Types (ProjectInitializationResult(..))
 import Hach.Types
+import Control.Applicative ((<|>))
 import Control.Exception (tryJust)
 import Control.Monad (when)
 import qualified Data.Text as T
@@ -83,6 +84,9 @@ main = do
       exitFailure
     Right e -> pure e
 
+  -- The CLI flag takes precedence over settings.json when both are set.
+  let effectiveMaxBudgetUsd = optMaxBudgetUsd <|> setMaxBudgetUsd envSettings
+
   let perms = defaultIOEnvPermissions
         { iopInitialMode = resolvePermissionMode optPermissionMode optDangerouslySkipPerms envSettings
         , iopRules       = setPermissionRules envSettings
@@ -95,7 +99,7 @@ main = do
     Just _  -> interpEnterWorktree (ioAlgebra ioEnv) activeWorkspace
 
   case intent of
-    IntentTui -> runTui ioEnv optPrompt optMaxTurns optAppendSystemPrompt
+    IntentTui -> runTui ioEnv optPrompt optMaxTurns effectiveMaxBudgetUsd optAppendSystemPrompt
     _ -> do
       currentWorkspace <- currentIOWorkspace ioEnv
       when (headlessEmitsBanners opts) $ do
@@ -147,6 +151,7 @@ main = do
                       { cfgModel        = envModel
                       , cfgSystemPrompt = Just sysPrompt
                       , cfgMaxTurns     = optMaxTurns
+                      , cfgMaxBudgetUsd = effectiveMaxBudgetUsd
                       }
                     initialHistory =
                       [ SystemMsg sysPrompt
@@ -165,6 +170,9 @@ main = do
                     AgentMaxTurnsReached turns -> do
                       putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
                       printGoalSummary goalState
+                    AgentBudgetExceeded spent budget -> do
+                      putStrLn ("\n" <> T.unpack (budgetExceededMessage spent budget))
+                      printGoalSummary goalState
                     AgentFailed err -> do
                       putStrLn ("\nAgent failed with error: " <> T.unpack err)
                       printGoalSummary goalState
@@ -177,6 +185,7 @@ main = do
                 { cfgModel        = envModel
                 , cfgSystemPrompt = Just sysPrompt
                 , cfgMaxTurns     = optMaxTurns
+                , cfgMaxBudgetUsd = effectiveMaxBudgetUsd
                 }
               initialHistory =
                 [ SystemMsg sysPrompt
@@ -195,10 +204,18 @@ main = do
                 putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
               AgentMaxTurnsReached turns -> do
                 putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
+              AgentBudgetExceeded spent budget ->
+                putStrLn ("\n" <> T.unpack (budgetExceededMessage spent budget))
               AgentFailed err -> do
                 putStrLn ("\nAgent failed with error: " <> T.unpack err)
 
           exitOnHeadlessFailure result
+
+-- | Human-readable message reported when a run is stopped for exceeding
+-- '--max-budget-usd' (or the 'max_budget_usd' setting).
+budgetExceededMessage :: Double -> Double -> T.Text
+budgetExceededMessage spent budget = T.pack $
+  "Agent stopped: spend of $" <> show spent <> " reached the maximum budget of $" <> show budget <> "."
 
 -- | Headless failures must be visible to shell callers through the process
 -- status, after the result has been rendered in the requested format.
@@ -206,6 +223,7 @@ exitOnHeadlessFailure :: AgentResult -> IO ()
 exitOnHeadlessFailure result = case result of
   AgentCompleted _         -> pure ()
   AgentMaxTurnsReached _   -> exitFailure
+  AgentBudgetExceeded _ _  -> exitFailure
   AgentFailed _            -> exitFailure
 
 -- | Resolve the workspace selected by the CLI before any task, command, or TUI

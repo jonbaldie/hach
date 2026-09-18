@@ -20,6 +20,7 @@ spec = do
         { cfgModel = "test-model"
         , cfgSystemPrompt = Just "You are an assistant."
         , cfgMaxTurns = Just 20
+        , cfgMaxBudgetUsd = Nothing
         }
 
   describe "agentLoop with Pure Interpreter" $ do
@@ -191,6 +192,53 @@ spec = do
           ((result, _), _) = runPure env (agentLoop unlimitedConfig allToolDefs [UserMsg "Run very long"])
 
       result `shouldNotBe` AgentMaxTurnsReached 100
+      result `shouldBe` AgentCompleted "Done"
+
+    it "terminates with AgentBudgetExceeded before any call when max-budget-usd is 0" $ do
+      let zeroBudgetConfig = baseConfig { cfgMaxBudgetUsd = Just 0 }
+          step1 _ _ = error "no LLM call should be made once the budget is already exhausted"
+          env = emptyMockEnv { mockLLMSteps = [step1] }
+          ((result, finalHist), _) = runPure env (agentLoop zeroBudgetConfig [] [UserMsg "Do work"])
+
+      result `shouldBe` AgentBudgetExceeded 0 0
+      finalHist `shouldBe` [UserMsg "Do work"]
+
+    it "terminates with AgentBudgetExceeded once accumulated turn cost reaches the budget" $ do
+      let budgetConfig = baseConfig { cfgMaxBudgetUsd = Just 1.0 }
+          toolCall = ToolCall
+            { callId = "call_loop"
+            , functionName = "read_file"
+            , callArgsRaw = "{\"path\":\"hello.txt\"}"
+            }
+          costlyUsage = (mkTokenUsage 100 100 200) { tuCost = Just 0.6 }
+          stepLoop _ _ = Right $ AssistantResponse Nothing [toolCall] (Just costlyUsage)
+          env = emptyMockEnv
+            { mockLLMSteps = repeat stepLoop
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          ((result, _), _) = runPure env (agentLoop budgetConfig allToolDefs [UserMsg "Run forever"])
+
+      -- Turn 1 spends $0.60 (total $0.60, under budget); turn 2 spends another
+      -- $0.60 (total $1.20); the guard at the start of turn 3 sees
+      -- spent ($1.20) >= budget ($1.00) and stops before a third call is made.
+      result `shouldBe` AgentBudgetExceeded 1.2 1.0
+
+    it "never terminates with AgentBudgetExceeded when cfgMaxBudgetUsd is Nothing" $ do
+      let toolCall = ToolCall
+            { callId = "call_loop"
+            , functionName = "read_file"
+            , callArgsRaw = "{\"path\":\"hello.txt\"}"
+            }
+          costlyUsage = (mkTokenUsage 100 100 200) { tuCost = Just 1000 }
+          stepLoop _ _ = Right $ AssistantResponse Nothing [toolCall] (Just costlyUsage)
+          stepFinal _ _ = Right $ AssistantResponse (Just "Done") [] Nothing
+          unlimitedBudgetConfig = baseConfig { cfgMaxBudgetUsd = Nothing }
+          env = emptyMockEnv
+            { mockLLMSteps = replicate 5 stepLoop ++ [stepFinal]
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          ((result, _), _) = runPure env (agentLoop unlimitedBudgetConfig allToolDefs [UserMsg "Run long"])
+
       result `shouldBe` AgentCompleted "Done"
 
     it "terminates with AgentFailed when model returns an error" $ do
