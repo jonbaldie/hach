@@ -9,6 +9,7 @@ module Hach.TUI.App
   , dialogueToMessages
   , transcriptToMessages
   , transcriptItemsToMessages
+  , messagesToTranscriptItems
   , cancelledToolCallPlaceholder
   , shouldAutoScroll
   , isTranscriptAppendingEvent
@@ -28,6 +29,7 @@ import Hach.Core
 import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions)
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
+import Hach.Sessions (saveRunSession)
 import Hach.Tools
 import Hach.TUI.State
 import Hach.TUI.Types
@@ -216,9 +218,25 @@ buildTuiSystemPrompt workspace mAppendPrompt = do
   mGuidelines <- loadProjectInstructions workspace
   pure (buildSystemPromptWithAppend mGuidelines mAppendPrompt)
 
+-- | Convert loaded messages into transcript items for displaying past conversation.
+messagesToTranscriptItems :: [Message] -> [TranscriptItem]
+messagesToTranscriptItems msgs = concatMap msgToItems msgs
+  where
+    msgToItems = \case
+      SystemMsg s -> [TiSystem s]
+      UserMsg u   -> [TiUser u]
+      AssistantMsg mText calls ->
+        let textItems = maybe [] (\t -> [TiAssistant t]) mText
+            cardItems = [ TiToolCard (ToolCard (callId c) (functionName c) (callArgsRaw c) (Finished (ToolSuccess "")) False)
+                        | c <- calls
+                        ]
+        in textItems ++ cardItems
+      ToolMsg cid name content ->
+        [TiToolCard (ToolCard cid name "" (Finished (ToolSuccess content)) False)]
+
 -- | Run the full modern TUI application.
-runTui :: IOEnv -> Maybe Text -> Maybe Int -> Maybe Text -> IO ()
-runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt = do
+runTui :: IOEnv -> Maybe Text -> Maybe Int -> Maybe Text -> Text -> Maybe (SessionInfo, [Message]) -> IO ()
+runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt activeSid mLoadedSession = do
   eventChan <- newBChan 100
   workerVar <- newTVarIO (Nothing :: Maybe (Async ()))
   gate <- newPermissionGate
@@ -229,9 +247,17 @@ runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt = do
   sysPrompt <- buildTuiSystemPrompt activeWorkspace mAppendPrompt
   initialMode <- currentIOPermissionMode ioEnv
 
-  let baseState = (initialTuiState (ioModel ioEnv) mMaxTurns)
+  let loadedTranscript = case mLoadedSession of
+        Just (_, msgs) -> messagesToTranscriptItems msgs
+        Nothing        -> []
+      loadedTurns = case mLoadedSession of
+        Just (info, _) -> siTurns info
+        Nothing        -> 0
+      baseState = (initialTuiState (ioModel ioEnv) mMaxTurns)
         { tsSkills = skills
         , tsPermissionMode = initialMode
+        , tsTranscript = loadedTranscript
+        , tsCurrentTurn = loadedTurns
         }
       (startingState, initialActions) = initialTuiLaunch initialPrompt baseState
 
@@ -255,11 +281,14 @@ runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt = do
         Vty.setMode output Vty.Mouse True
         pure vty
   initialVty <- buildVty
-  _ <- customMain initialVty buildVty (Just eventChan) app startingState
+  finalState <- customMain initialVty buildVty (Just eventChan) app startingState
 
   cancelPermissionAsk gate
   mWorker <- atomically $ readTVar workerVar
   mapM_ cancel mWorker
+
+  let finalMsgs = transcriptItemsToMessages (tsTranscript finalState)
+  saveRunSession activeWorkspace activeSid (ioModel ioEnv) (fmap fst mLoadedSession) finalMsgs
 
 -- | Collapse a run of same-role text items with one intercalate so the
 -- copy is linear in the total text rather than quadratic in the run length.

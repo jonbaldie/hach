@@ -7,6 +7,13 @@ import Hach.Core
 import Hach.Env
 import qualified Hach.Git as Git
 import Hach.Interpreter.IO
+import Hach.Sessions
+  ( buildSessionHistory
+  , generateSessionId
+  , resolveSessionLoad
+  , resolveSessionTarget
+  , saveRunSession
+  )
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
 import Hach.Settings (Settings (..))
 import Hach.Tools
@@ -66,7 +73,6 @@ main = do
           exitFailure
     IntentTui -> pure ()
     IntentHeadless -> pure ()
-    IntentInit -> pure ()
     IntentVersion -> pure ()
 
   envRes <- resolveEnvConfig optModel (Just ".env")
@@ -94,8 +100,24 @@ main = do
     Nothing -> pure ()
     Just _  -> interpEnterWorktree (ioAlgebra ioEnv) activeWorkspace
 
+  targetWorkspace <- currentIOWorkspace ioEnv
+  let sessionTarget = resolveSessionTarget optContinue optResume optSessionId
+  sessionRes <- resolveSessionLoad targetWorkspace sessionTarget
+  (activeSid, mLoadedSession) <- case sessionRes of
+    Left err -> do
+      putStrLn err
+      exitFailure
+    Right Nothing -> do
+      sid <- generateSessionId
+      pure (sid, Nothing)
+    Right (Just sess@(info, _)) ->
+      pure (siId info, Just sess)
+
+  let mPrevInfo = fmap fst mLoadedSession
+      mLoadedHistory = fmap snd mLoadedSession
+
   case intent of
-    IntentTui -> runTui ioEnv optPrompt optMaxTurns optAppendSystemPrompt
+    IntentTui -> runTui ioEnv optPrompt optMaxTurns optAppendSystemPrompt activeSid mLoadedSession
     _ -> do
       currentWorkspace <- currentIOWorkspace ioEnv
       when (headlessEmitsBanners opts) $ do
@@ -148,12 +170,10 @@ main = do
                       , cfgSystemPrompt = Just sysPrompt
                       , cfgMaxTurns     = optMaxTurns
                       }
-                    initialHistory =
-                      [ SystemMsg sysPrompt
-                      , UserMsg condition
-                      ]
+                    initialHistory = buildSessionHistory sysPrompt mLoadedHistory condition
                 (result, finalHistory, goalState) <-
                   runIO ioEnv (goalLoop agentConfig allToolDefs condition defaultBlockCap initialHistory)
+                saveRunSession currentWorkspace activeSid envModel mPrevInfo finalHistory
 
                 if optPrint
                   then TIO.putStrLn (formatPrintResult optOutputFormat result)
@@ -178,14 +198,12 @@ main = do
                 , cfgSystemPrompt = Just sysPrompt
                 , cfgMaxTurns     = optMaxTurns
                 }
-              initialHistory =
-                [ SystemMsg sysPrompt
-                , UserMsg finalPrompt
-                ]
+              initialHistory = buildSessionHistory sysPrompt mLoadedHistory finalPrompt
 
           when (not optPrint) $
             putStrLn ("\nStarting agent loop for task: " <> T.unpack taskPrompt)
           (result, finalHistory) <- runIO ioEnv (agentLoop agentConfig allToolDefs initialHistory)
+          saveRunSession currentWorkspace activeSid envModel mPrevInfo finalHistory
 
           if optPrint
             then TIO.putStrLn (formatPrintResult optOutputFormat result)
