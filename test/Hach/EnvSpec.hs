@@ -270,7 +270,39 @@ spec = do
         Left err -> err `shouldContain` "Unknown flag"
         Right _  -> expectationFailure "Expected failure on unknown flag"
 
+    it "parses --help" $ do
+      parseCliArgs ["--help"] `shouldBe` Right defaultCliOptions { optHelp = True }
+
+    it "parses -h" $ do
+      parseCliArgs ["-h"] `shouldBe` Right defaultCliOptions { optHelp = True }
+
+  describe "cliHelpText" $ do
+    it "lists every flag parseCliArgs accepts" $ do
+      let acceptedFlags =
+            [ "--model", "-m", "--no-tui", "--print", "-p", "--output-format"
+            , "--continue", "-c", "--resume", "-r", "--session-id", "--max-turns"
+            , "--max-budget-usd", "--append-system-prompt", "--add-dir"
+            , "--worktree", "-w", "--init", "--exec", "--permission-mode"
+            , "--dangerously-skip-permissions", "--version", "-v", "--help", "-h"
+            ]
+      mapM_ (\flag -> cliHelpText `shouldContain` flag) acceptedFlags
+
   describe "startupIntent" $ do
+    it "maps --help to the help intent" $ do
+      case parseCliArgs ["--help"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentHelp
+
+    it "prefers --help over --version" $ do
+      case parseCliArgs ["--version", "--help"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentHelp
+
+    it "prefers --help over --exec" $ do
+      case parseCliArgs ["--exec", "ls", "--help"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentHelp
+
     it "runs --exec instead of the headless agent loop" $ do
       case parseCliArgs ["--exec", "echo hello"] of
         Left err -> expectationFailure err
