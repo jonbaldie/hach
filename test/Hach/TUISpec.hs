@@ -1234,7 +1234,7 @@ spec = do
               , interpLog      = \_ -> pure ()
               , interpEvaluate = evalAction
               }
-            config = goalAgentConfig mockIOEnv "system prompt" Nothing
+            config = goalAgentConfig mockIOEnv "system prompt" Nothing Nothing
             cFinished = ToolCard "call_g1" "read_file" "{}" (Finished (ToolSuccess "sample goal data")) False
             historyItems =
               [ TiUser "fetch information"
@@ -1581,11 +1581,11 @@ spec = do
     describe "Goal Execution Unlimited Turns in TUI (Bug Repro)" $ do
       it "defaults cfgMaxTurns to Nothing (infinity) in goalAgentConfig" $ do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
-        cfgMaxTurns (goalAgentConfig mockIOEnv "sys" Nothing) `shouldBe` Nothing
+        cfgMaxTurns (goalAgentConfig mockIOEnv "sys" Nothing Nothing) `shouldBe` Nothing
 
       it "respects explicit turn cap when configured in goalAgentConfig" $ do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
-        cfgMaxTurns (goalAgentConfig mockIOEnv "sys" (Just 5)) `shouldBe` Just 5
+        cfgMaxTurns (goalAgentConfig mockIOEnv "sys" (Just 5) Nothing) `shouldBe` Just 5
 
       it "does not terminate with 'Maximum turns reached (20)' on turn 20 when default turn limit is infinity" $ do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
@@ -1603,7 +1603,7 @@ spec = do
               , interpLog      = \_ -> pure ()
               , interpEvaluate = evalAction
               }
-            config = goalAgentConfig mockIOEnv "sys" Nothing
+            config = goalAgentConfig mockIOEnv "sys" Nothing Nothing
         runGoalWorker mockAlgebra config "All tests pass" [] (\ev -> modifyIORef' eventsRef (ev :))
         events <- readIORef eventsRef
         events `shouldNotContain` [EvError "Maximum turns reached (20)"]
@@ -1621,7 +1621,7 @@ spec = do
               , interpLog      = \ev -> modifyIORef' eventsRef (ev :)
               , interpEvaluate = evalAction
               }
-            config = goalAgentConfig mockIOEnv "sys" (Just 5)
+            config = goalAgentConfig mockIOEnv "sys" (Just 5) Nothing
         runGoalWorker mockAlgebra config "reach condition" [] (\ev -> modifyIORef' eventsRef (ev :))
         events <- readIORef eventsRef
         events `shouldNotContain` [EvError "Completed progress."]
@@ -1638,7 +1638,7 @@ spec = do
               , interpLog      = \ev -> modifyIORef' eventsRef (ev :)
               , interpEvaluate = evalAction
               }
-            config = goalAgentConfig mockIOEnv "sys" (Just 5)
+            config = goalAgentConfig mockIOEnv "sys" (Just 5) Nothing
         runGoalWorker mockAlgebra config "impossible condition" [] (\ev -> modifyIORef' eventsRef (ev :))
         events <- readIORef eventsRef
         events `shouldNotContain` [EvError "Goal cannot be met."]
@@ -1678,7 +1678,7 @@ spec = do
         let st0 = initialTuiState (ioModel ioEnv) (Just 10)
             (st1, _) = updateTui (EvSubmit "/model anthropic/claude-3.5-sonnet") st0
             runEnv = runEnvForModel (tsModelName st1) ioEnv
-            cfg = goalAgentConfig runEnv "sys" (Just 10)
+            cfg = goalAgentConfig runEnv "sys" (Just 10) Nothing
         tsModelName st1 `shouldBe` "anthropic/claude-3.5-sonnet"
         cfgModel cfg `shouldBe` "anthropic/claude-3.5-sonnet"
         -- The interpreter builds the wire request from the run env's model, so

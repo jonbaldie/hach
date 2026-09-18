@@ -41,7 +41,7 @@ jobs:
       - name: Build
         run: |
           cabal update
-          cabal build all
+          cabal build all --enable-tests
 
       - name: Run Tests
-        run: cabal test hach:test:hach-test --test-show-details=always
+        run: cabal test hach:test:hach-test --enable-tests --test-show-details=always

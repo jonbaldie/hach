@@ -553,12 +553,17 @@ data AgentConfig = AgentConfig
   , cfgSystemPrompt :: !(Maybe Text)
   -- | Maximum number of agent turns. 'Nothing' means unlimited.
   , cfgMaxTurns     :: !(Maybe Int)
+  -- | Maximum cumulative spend in USD. 'Nothing' means unbounded.
+  , cfgMaxBudgetUsd :: !(Maybe Double)
   } deriving (Show, Eq)
 
 -- | Final result of running the agent harness.
 data AgentResult
   = AgentCompleted !Text
   | AgentMaxTurnsReached !Int
+  -- | Cumulative spend (USD) reached or exceeded the configured budget.
+  -- Carries the amount spent so far and the configured budget.
+  | AgentBudgetExceeded !Double !Double
   | AgentFailed !Text
   deriving (Show, Eq)
 

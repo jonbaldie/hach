@@ -185,6 +185,8 @@ formatPrintResult fmt result = case fmt of
     AgentCompleted ans -> ans
     AgentMaxTurnsReached turns ->
       T.pack ("Agent reached maximum turn limit of " <> show turns <> ".")
+    AgentBudgetExceeded spent budget ->
+      T.pack ("Agent stopped: spend of $" <> show spent <> " reached the maximum budget of $" <> show budget <> ".")
     AgentFailed err -> err
   OutputJson ->
     TE.decodeUtf8 . LBS.toStrict . Aeson.encode $ case result of
@@ -194,6 +196,12 @@ formatPrintResult fmt result = case fmt of
         Aeson.object
           [ "error" .= ("max_turns" :: Text)
           , "turns" .= turns
+          ]
+      AgentBudgetExceeded spent budget ->
+        Aeson.object
+          [ "error"      .= ("max_budget_usd" :: Text)
+          , "spent_usd"  .= spent
+          , "budget_usd" .= budget
           ]
       AgentFailed err ->
         Aeson.object ["error" .= err]

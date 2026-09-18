@@ -260,7 +260,7 @@ spec = do
         let steps = replicate n
               (\_ _ -> Right (AssistantResponse (Just "ok") [] Nothing))
             env = emptyMockEnv { mockLLMSteps = steps }
-            cfg = AgentConfig "m" (Just "sys") (Just maxTurns)
+            cfg = AgentConfig "m" (Just "sys") (Just maxTurns) Nothing
             initHist = [UserMsg "hi"]
             ((_, finalHist), _) = runPure env (agentLoop cfg [] initHist)
         in length finalHist >= length initHist

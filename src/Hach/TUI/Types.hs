@@ -144,6 +144,7 @@ data TuiState = TuiState
   { tsModelName          :: !Text
   , tsCurrentTurn        :: !Int
   , tsMaxTurns           :: !(Maybe Int)
+  , tsMaxBudgetUsd       :: !(Maybe Double)
   , tsStatus             :: !TuiStatus
   , tsFocus              :: !FocusArea
   , tsInputBuffer        :: !Text
@@ -185,6 +186,7 @@ initialTuiState model maxTurns = TuiState
   { tsModelName          = model
   , tsCurrentTurn        = 0
   , tsMaxTurns           = maxTurns
+  , tsMaxBudgetUsd       = Nothing
   , tsStatus             = StatusIdle
   , tsFocus              = FocusInput
   , tsInputBuffer        = ""

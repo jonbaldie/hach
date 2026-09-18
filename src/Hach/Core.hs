@@ -45,6 +45,7 @@ module Hach.Core
   ) where
 
 import Hach.Types
+import Hach.Sessions (estimateCostUsd)
 import Hach.Tools (resolveTool, resolvedToolCanonicalName)
 import Control.Monad (forM)
 import qualified Data.Aeson as Aeson
@@ -285,12 +286,17 @@ agentStep
   :: AgentConfig
   -> [ToolDef]
   -> Int
+  -> Double
+  -- ^ Cumulative spend (USD) across prior turns.
   -> [Message]
-  -> AgentProgram (Either (AgentResult, [Message]) [Message])
-agentStep cfg tools turn currentHistory
+  -> AgentProgram (Either (AgentResult, [Message]) (Double, [Message]))
+agentStep cfg tools turn spent currentHistory
   | maybe False (turn >) (cfgMaxTurns cfg) = do
       logEvent (EvError "Maximum turns exceeded")
       pure $ Left (AgentMaxTurnsReached (turn - 1), currentHistory)
+  | maybe False (spent >=) (cfgMaxBudgetUsd cfg) = do
+      logEvent (EvError "Maximum budget exceeded")
+      pure $ Left (AgentBudgetExceeded spent (fromMaybe 0 (cfgMaxBudgetUsd cfg)), currentHistory)
   | otherwise = do
       logEvent (EvTurnStart turn)
       logEvent (EvPromptingLLM (length currentHistory))
@@ -300,6 +306,7 @@ agentStep cfg tools turn currentHistory
           pure $ Left (AgentFailed err, currentHistory)
         Right resp -> do
           logEvent (EvLLMResponse (respContent resp) (respToolCalls resp) (respUsage resp))
+          let newSpent = spent + turnCostUsd (cfgModel cfg) (respUsage resp)
 
           case respToolCalls resp of
             [] -> do
@@ -369,21 +376,32 @@ agentStep cfg tools turn currentHistory
 
               let updatedHistory = currentHistory ++ [asstMsg] ++ toolMsgs
               logEvent (EvTurnComplete turn)
-              pure $ Right updatedHistory
+              pure $ Right (newSpent, updatedHistory)
+
+-- | Determine the USD cost attributable to a single turn's LLM response.
+-- Prefers the provider-reported cost; falls back to a model-based estimate
+-- from token counts when the provider does not report one. No usage data at
+-- all (e.g. the pure test interpreter) contributes no cost.
+turnCostUsd :: Text -> Maybe TokenUsage -> Double
+turnCostUsd _ Nothing = 0
+turnCostUsd model (Just usage) = case tuCost usage of
+  Just cost -> cost
+  Nothing   -> estimateCostUsd model (tuPromptTokens usage) (tuCompletionTokens usage)
 
 -- | The pure, recursive agent harness loop.
--- Unfolds turns until completion or the maximum turn limit is reached.
+-- Unfolds turns until completion, the maximum turn limit is reached, or the
+-- configured budget is exhausted.
 agentLoop
   :: AgentConfig
   -> [ToolDef]
   -> [Message]
   -> AgentProgram (AgentResult, [Message])
-agentLoop cfg tools initialHistory = loop 1 initialHistory
+agentLoop cfg tools initialHistory = loop 1 0 initialHistory
   where
-    loop turn hist = do
-      agentStep cfg tools turn hist >>= \case
-        Left (result, finalHist) -> pure (result, finalHist)
-        Right nextHist          -> loop (turn + 1) nextHist
+    loop turn spent hist = do
+      agentStep cfg tools turn spent hist >>= \case
+        Left (result, finalHist)       -> pure (result, finalHist)
+        Right (newSpent, nextHist)     -> loop (turn + 1) newSpent nextHist
 
 -- | Default block cap: number of consecutive no-progress turns before the
 -- goal loop stops and returns control to the user.
@@ -411,18 +429,18 @@ goalLoop
   -> AgentProgram (AgentResult, [Message], GoalState)
 goalLoop cfg tools condition blockCap initialHistory = do
   logEvent (EvGoalSet condition)
-  loop 1 (initialGoalState condition) initialHistory
+  loop 1 0 (initialGoalState condition) initialHistory
   where
     -- Clamp to a minimum of 1: a block cap of 0 or less is degenerate because
     -- the block decision is only reached *after* a no-progress turn runs, so
     -- the counter would otherwise exceed the cap.  1 is the smallest value
     -- that lets the invariant 'gsNoProgressCount <= blockCap' hold.
     effectiveCap = max 1 blockCap
-    loop turn gs hist = do
-      agentStep cfg tools turn hist >>= \case
-        Right nextHist ->
+    loop turn spent gs hist = do
+      agentStep cfg tools turn spent hist >>= \case
+        Right (newSpent, nextHist) ->
           -- Tool calls were made: progress.  Reset no-progress counter.
-          loop (turn + 1) gs { gsNoProgressCount = 0 } nextHist
+          loop (turn + 1) newSpent gs { gsNoProgressCount = 0 } nextHist
 
         Left (result, finalHist) -> case result of
           AgentCompleted content ->
@@ -468,9 +486,12 @@ goalLoop cfg tools condition blockCap initialHistory = do
                               ( "Goal not yet met. " <> reason
                               <> " Continue working toward: " <> condition )
                             newHist = finalHist ++ [guidance]
-                        loop (turn + 1) g1 newHist
+                        loop (turn + 1) spent g1 newHist
 
           AgentMaxTurnsReached _n ->
+            pure (result, finalHist, gs)
+
+          AgentBudgetExceeded _spent _budget ->
             pure (result, finalHist, gs)
 
           AgentFailed err ->
