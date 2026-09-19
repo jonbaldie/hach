@@ -6,6 +6,7 @@ module Hach.TUI.State
   , handleUserKey
   , handleAgentEvent
   , applyProjectInitializationResult
+  , applySlashCommandResult
   , toggleToolExpanded
   , shouldAutoScroll
   , isTranscriptAppendingEvent
@@ -35,6 +36,7 @@ import Hach.Types
   , modelContextLimit
   )
 import qualified Data.Map.Strict as Map
+import Data.Maybe (listToMaybe)
 import qualified Data.Text as T
 import Text.Printf (printf)
 
@@ -53,6 +55,41 @@ applyProjectInitializationResult result state =
               { tsStatus = StatusError notice
               , tsFocus = FocusInput
               }
+
+-- | Report the outcome of an IO-backed slash command in the transcript.
+applySlashCommandResult :: SlashCommandResult -> TuiState -> TuiState
+applySlashCommandResult result state =
+  state { tsTranscript = tsTranscript state ++ [DiNotice notice] }
+  where
+    notice = case result of
+      DiffResult (Right diff)
+        | T.null (T.strip diff) -> "Diff: no changes to tracked files against HEAD."
+        | otherwise             -> "Diff against HEAD:\n" <> T.stripEnd diff
+      DiffResult (Left err) ->
+        "Diff unavailable: " <> err
+      TaskListResult tasks ->
+        "Tasks:\n" <> T.stripEnd tasks
+      ClipboardResult (Right chars) ->
+        "Copied last response to clipboard (" <> T.pack (show chars) <> " characters)."
+      ClipboardResult (Left err) ->
+        "Copy failed: " <> err
+
+-- | Text of the most recent non-empty assistant reply, if any.
+lastAssistantText :: TuiState -> Maybe T.Text
+lastAssistantText state =
+  listToMaybe [ t | TiAssistant t <- reverse (tsTranscript state), not (T.null (T.strip t)) ]
+
+-- | Report the theme named in settings; the TUI has one built-in colour scheme.
+themeNotice :: Maybe T.Text -> T.Text
+themeNotice = \case
+  Just theme -> "Theme: " <> theme <> " (from settings; not applied yet, the TUI always uses its built-in colours)."
+  Nothing    -> "Theme: none configured; the TUI uses its built-in colours."
+
+-- | Report which project instructions file reached the system prompt at launch.
+memoryNotice :: Maybe FilePath -> T.Text
+memoryNotice = \case
+  Just file -> "Project memory: " <> T.pack file <> " was loaded into the system prompt at launch."
+  Nothing   -> "Project memory: none loaded; no AGENTS.md, AGENT.md or CLAUDE.md with content was found at launch."
 
 -- | Pure state reducer for the TUI.
 -- Evaluates an incoming 'TuiEvent' against the current 'TuiState',
@@ -249,7 +286,7 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/resume" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice "Session resume initialized."]
+          newTranscript = tsTranscript state ++ [DiNotice "/resume is not available inside the TUI. Restart with hach --continue to resume the latest session in this workspace, or hach --session-id <ID> for a specific one."]
       in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
@@ -272,29 +309,25 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/diff" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice "Git working tree diff inspected."]
-      in ( state { tsTranscript         = newTranscript
-                 , tsInputBuffer        = ""
+      in ( state { tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
                  }
-         , []
+         , [ActionShowDiff]
          )
   | trimmed == "/tasks" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice "Task list: No active background tasks."]
-      in ( state { tsTranscript         = newTranscript
-                 , tsInputBuffer        = ""
+      in ( state { tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
                  }
-         , []
+         , [ActionListTasks]
          )
   | trimmed == "/theme" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice "Theme: dark"]
+          newTranscript = tsTranscript state ++ [DiNotice (themeNotice (tsTheme state))]
       in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
@@ -317,7 +350,7 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/memory" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice "Project memory instructions active."]
+          newTranscript = tsTranscript state ++ [DiNotice (memoryNotice (tsProjectInstructions state))]
       in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
@@ -363,7 +396,7 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/doctor" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice "Doctor: All systems operational."]
+          newTranscript = tsTranscript state ++ [DiNotice "/doctor is not implemented: no health checks were run."]
       in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
@@ -374,15 +407,17 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/copy" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice "Last response copied to clipboard."]
-      in ( state { tsTranscript         = newTranscript
-                 , tsInputBuffer        = ""
-                 , tsPromptHistory      = newPromptHistory
-                 , tsPromptHistoryIndex = Nothing
-                 , tsPromptDraft        = ""
-                 }
-         , []
-         )
+          cleared = state { tsInputBuffer        = ""
+                          , tsPromptHistory      = newPromptHistory
+                          , tsPromptHistoryIndex = Nothing
+                          , tsPromptDraft        = ""
+                          }
+      in case lastAssistantText state of
+           Just reply -> (cleared, [ActionCopyToClipboard reply])
+           Nothing ->
+             ( cleared { tsTranscript = tsTranscript state ++ [DiNotice "Nothing to copy: there is no assistant response yet."] }
+             , []
+             )
   | trimmed == "/reload-skills" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
           newTranscript = tsTranscript state ++ [DiNotice ("Skills reloaded: " <> T.pack (show (Map.size (tsSkills state))) <> " available")]
@@ -396,7 +431,7 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/mcp" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice "MCP: Model Context Protocol servers loaded."]
+          newTranscript = tsTranscript state ++ [DiNotice "/mcp is not implemented: Hach does not connect to MCP servers yet."]
       in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
@@ -407,7 +442,7 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/plugin" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice "Plugins: 0 loaded"]
+          newTranscript = tsTranscript state ++ [DiNotice "/plugin is not implemented: Hach has no plugin system yet."]
       in ( state { tsTranscript         = newTranscript
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory

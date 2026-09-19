@@ -121,6 +121,38 @@ spec = describe "Hach.Git" $ do
       isWorktreeDirectory testDir `shouldReturn` False
       removeDirectoryRecursive testDir
 
+  describe "getGitDiff (issue #155)" $ do
+    it "returns the working tree's real diff against HEAD" $ do
+      let tempDir = "dist-newstyle/test-git-diff"
+      exists <- doesDirectoryExist tempDir
+      when exists (removeDirectoryRecursive tempDir)
+      createDirectoryIfMissing True tempDir
+      root <- canonicalizePath tempDir
+      callProcess "git" ["-C", root, "init", "-q"]
+      callProcess "git" ["-C", root, "config", "user.name", "Test"]
+      callProcess "git" ["-C", root, "config", "user.email", "test@test.com"]
+      writeFile (root ++ "/README.md") "hello\n"
+      callProcess "git" ["-C", root, "add", "README.md"]
+      callProcess "git" ["-C", root, "commit", "-q", "-m", "init"]
+      getGitDiff root `shouldReturn` Right ""
+      appendFile (root ++ "/README.md") "UNCOMMITTED-MARKER\n"
+      diff <- getGitDiff root
+      diff `shouldSatisfy` \case
+        Right d -> "+UNCOMMITTED-MARKER" `T.isInfixOf` d && "README.md" `T.isInfixOf` d
+        Left _ -> False
+      removeDirectoryRecursive tempDir
+
+    it "reports git's error when there is no HEAD to diff against" $ do
+      let tempDir = "dist-newstyle/test-git-diff-nohead"
+      exists <- doesDirectoryExist tempDir
+      when exists (removeDirectoryRecursive tempDir)
+      createDirectoryIfMissing True tempDir
+      root <- canonicalizePath tempDir
+      callProcess "git" ["-C", root, "init", "-q"]
+      diff <- getGitDiff root
+      diff `shouldSatisfy` \case Left e -> not (T.null e); Right _ -> False
+      removeDirectoryRecursive tempDir
+
   describe "createWorktree branch creation (-b)" $ do
     it "reuses an existing worktree instead of force-resetting its branch" $ do
       let tempDir = "dist-newstyle/test-git-branch-exists"

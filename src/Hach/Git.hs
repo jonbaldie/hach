@@ -175,13 +175,13 @@ getGitStatus root = do
     then pure (parsePorcelainStatus "HEAD" (T.pack out))
     else pure (GitStatusInfo "unknown" False [] [])
 
--- | Fetch current git diff.
-getGitDiff :: FilePath -> IO Text
+-- | Fetch the working tree's diff against @HEAD@, or git's error output.
+getGitDiff :: FilePath -> IO (Either Text Text)
 getGitDiff root = do
   (code, out, err) <- runGit root ["diff", "HEAD"]
-  if code == ExitSuccess
-    then pure (T.pack out)
-    else pure ("Git diff error: " <> T.pack err)
+  pure $ if code == ExitSuccess
+    then Right (T.pack out)
+    else Left (T.strip (T.pack err))
 
 -- | Validate that a worktree name is safe (alphanumeric, no traversal, no leading dashes, no path separators, and no invalid Git ref patterns).
 isValidWorktreeName :: Text -> Bool

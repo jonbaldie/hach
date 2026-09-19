@@ -25,6 +25,7 @@ module Hach.Env
   , resolveEnvConfig
   , loadEnvConfig
   , loadProjectInstructions
+  , loadProjectInstructionsFile
   , buildSystemPrompt
   , buildSystemPromptWithAppend
   ) where
@@ -542,13 +543,17 @@ loadEnvConfig path = resolveEnvConfig Nothing (Just path)
 -- | Load project instructions from AGENTS.md, AGENT.md, or CLAUDE.md in the workspace directory.
 -- Precedence: AGENTS.md is preferred; then AGENT.md; then CLAUDE.md.
 loadProjectInstructions :: FilePath -> IO (Maybe Text)
-loadProjectInstructions workspace = firstExisting ["AGENTS.md", "AGENT.md", "CLAUDE.md"]
+loadProjectInstructions = fmap (fmap snd) . loadProjectInstructionsFile
+
+-- | Like 'loadProjectInstructions', also naming the file the instructions came from.
+loadProjectInstructionsFile :: FilePath -> IO (Maybe (FilePath, Text))
+loadProjectInstructionsFile workspace = firstExisting ["AGENTS.md", "AGENT.md", "CLAUDE.md"]
   where
     firstExisting [] = pure Nothing
     firstExisting (name : names) = do
       let fp = workspace </> name
       exists <- doesFileExist fp
-      if exists then readFileUtf8 fp else firstExisting names
+      if exists then fmap ((,) name) <$> readFileUtf8 fp else firstExisting names
 
     readFileUtf8 fp = do
       res <- try (BS.readFile fp) :: IO (Either SomeException BS.ByteString)
