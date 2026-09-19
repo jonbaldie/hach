@@ -1592,9 +1592,10 @@ spec = do
       it "does not terminate with 'Maximum turns reached (20)' on turn 20 when default turn limit is infinity" $ do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
         eventsRef <- newIORef []
-        let mockTool = ToolCall "call_1" "read_file" "{}"
-            promptAction msgs _ = do
+        let promptAction msgs _ = do
               let toolTurns = length [() | ToolMsg{} <- msgs]
+                  mockTool = ToolCall "call_1" "read_file"
+                    ("{\"path\":\"file-" <> T.pack (show toolTurns) <> ".txt\"}")
               if toolTurns < 21
                 then pure $ Right (AssistantResponse Nothing [mockTool] Nothing)
                 else pure $ Right (AssistantResponse (Just "All tests pass.") [] Nothing)

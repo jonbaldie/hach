@@ -38,6 +38,7 @@ module Hach.Core
     -- * Pure Agent Harness Loop
   , agentLoop
   , agentStep
+  , unproductiveRepeatLimit
 
     -- * Goal-Directed Loop
   , goalLoop
@@ -378,7 +379,12 @@ agentStep cfg tools turn currentHistory
 
               let updatedHistory = currentHistory ++ [asstMsg] ++ toolMsgs
               logEvent (EvTurnComplete turn)
-              pure $ Right updatedHistory
+              case unproductiveRepeatedToolCall updatedHistory of
+                Just err -> do
+                  logEvent (EvError err)
+                  pure $ Left (AgentFailed err, updatedHistory)
+                Nothing ->
+                  pure $ Right updatedHistory
 
 -- | The pure, recursive agent harness loop.
 -- Unfolds turns until completion or the maximum turn limit is reached.
@@ -393,6 +399,11 @@ agentLoop cfg tools initialHistory = loop 1 initialHistory
       agentStep cfg tools turn hist >>= \case
         Left (result, finalHist) -> pure (result, finalHist)
         Right nextHist          -> loop (turn + 1) nextHist
+
+-- | Consecutive identical read-only tool calls with no intervening edit
+-- after which the harness fails fast instead of burning the context window.
+unproductiveRepeatLimit :: Int
+unproductiveRepeatLimit = 5
 
 -- | Default block cap: number of consecutive no-progress turns before the
 -- goal loop stops and returns control to the user.
@@ -513,3 +524,58 @@ isMutationTool name =
     Just (_, AuthorityRead) -> False
     Just _ -> True
     Nothing -> True
+
+-- | Fail-fast detector for a stuck model that keeps issuing the same
+-- read-only tool call. A mutation (write/command) resets the streak.
+unproductiveRepeatedToolCall :: [Message] -> Maybe Text
+unproductiveRepeatedToolCall hist =
+  case map toolCallSignature (reverse (assistantToolCalls hist)) of
+    (Just sig@(CallSig name args) : rest) ->
+      let streak = 1 + length (takeWhile (== Just sig) rest)
+      in if streak >= unproductiveRepeatLimit
+           then Just (repeatedToolCallError name args streak)
+           else Nothing
+    _ -> Nothing
+
+assistantToolCalls :: [Message] -> [ToolCall]
+assistantToolCalls = concatMap $ \case
+  AssistantMsg _ calls -> calls
+  _ -> []
+
+data CallSig = CallSig !Text !ArgSig
+  deriving (Eq)
+
+data ArgSig = ParsedArg !Aeson.Value | RawArg !Text
+  deriving (Eq)
+
+toolCallSignature :: ToolCall -> Maybe CallSig
+toolCallSignature call
+  | isMutationTool (functionName call) = Nothing
+  | otherwise =
+      Just (CallSig (canonicalToolName (functionName call)) (argSignature (callArgsRaw call)))
+
+canonicalToolName :: Text -> Text
+canonicalToolName name =
+  case resolveToolIdentity name of
+    Just (canonical, _) -> canonical
+    Nothing -> name
+
+argSignature :: Text -> ArgSig
+argSignature raw =
+  case Aeson.eitherDecodeStrict (TE.encodeUtf8 raw) of
+    Right value -> ParsedArg value
+    Left _ -> RawArg (T.strip raw)
+
+repeatedToolCallError :: Text -> ArgSig -> Int -> Text
+repeatedToolCallError name args streak =
+  "Unproductive repeated tool call: "
+  <> name
+  <> " "
+  <> argSigText args
+  <> " ("
+  <> T.pack (show streak)
+  <> " times with no intervening edit)"
+
+argSigText :: ArgSig -> Text
+argSigText (ParsedArg value) = TE.decodeUtf8 (BSL.toStrict (Aeson.encode value))
+argSigText (RawArg raw) = raw

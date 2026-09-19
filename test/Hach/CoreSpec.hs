@@ -158,12 +158,14 @@ spec = do
       result `shouldBe` AgentMaxTurnsReached 2
 
     it "runs past the old default of 10 turns when cfgMaxTurns is Nothing (unlimited)" $ do
-      let toolCall = ToolCall
-            { callId = "call_loop"
-            , functionName = "read_file"
-            , callArgsRaw = "{\"path\":\"hello.txt\"}"
-            }
-          stepLoop _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
+      let stepLoop hist _ =
+            let n = length hist
+                toolCall = ToolCall
+                  { callId = "call_loop"
+                  , functionName = "read_file"
+                  , callArgsRaw = "{\"path\":\"hello-" <> T.pack (show n) <> ".txt\"}"
+                  }
+            in Right $ AssistantResponse Nothing [toolCall] Nothing
           stepFinal _ _ = Right $ AssistantResponse (Just "Finally done!") [] Nothing
           unlimitedConfig = baseConfig { cfgMaxTurns = Nothing }
           -- 12 tool-calling turns, then a final answer on turn 13.
@@ -176,12 +178,14 @@ spec = do
       result `shouldBe` AgentCompleted "Finally done!"
 
     it "never terminates with AgentMaxTurnsReached when cfgMaxTurns is Nothing" $ do
-      let toolCall = ToolCall
-            { callId = "call_loop"
-            , functionName = "read_file"
-            , callArgsRaw = "{\"path\":\"hello.txt\"}"
-            }
-          stepLoop _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
+      let stepLoop hist _ =
+            let n = length hist
+                toolCall = ToolCall
+                  { callId = "call_loop"
+                  , functionName = "read_file"
+                  , callArgsRaw = "{\"path\":\"hello-" <> T.pack (show n) <> ".txt\"}"
+                  }
+            in Right $ AssistantResponse Nothing [toolCall] Nothing
           stepFinal _ _ = Right $ AssistantResponse (Just "Done") [] Nothing
           unlimitedConfig = baseConfig { cfgMaxTurns = Nothing }
           env = emptyMockEnv
@@ -202,6 +206,91 @@ spec = do
       result `shouldBe` AgentFailed "401 Unauthorized"
       finalHist `shouldBe` initHist
       mockEvents endEnv `shouldContain` [EvError "401 Unauthorized"]
+
+    it "fails fast when the same read-only tool and arguments repeat with no intervening edit" $ do
+      let repeated = ToolCall
+            { callId = "loop_call"
+            , functionName = "grep_search"
+            , callArgsRaw = "{\"query\":\"hach/0.1.9.0\",\"path\":\"src/Hach/Tools.hs\"}"
+            }
+          stepLoop _ _ = Right $ AssistantResponse Nothing [repeated] Nothing
+          stepFinal _ _ = Right $ AssistantResponse (Just "never reached") [] Nothing
+          unlimitedConfig = baseConfig { cfgMaxTurns = Nothing }
+          env = emptyMockEnv
+            { mockLLMSteps = replicate (unproductiveRepeatLimit + 3) stepLoop ++ [stepFinal]
+            , mockFiles = Map.fromList [("src/Hach/Tools.hs", "module Hach.Tools")]
+            }
+          ((result, _), endEnv) =
+            runPure env (agentLoop unlimitedConfig allToolDefs [UserMsg "Bump the version"])
+          promptCount = length [() | EvPromptingLLM _ <- mockEvents endEnv]
+      case result of
+        AgentFailed err -> do
+          T.toLower err `shouldSatisfy` T.isInfixOf "repeated"
+          err `shouldSatisfy` T.isInfixOf "grep_search"
+          mockEvents endEnv `shouldContain` [EvError err]
+        other -> expectationFailure ("expected AgentFailed, got: " <> show other)
+      promptCount `shouldBe` unproductiveRepeatLimit
+      mockEvents endEnv `shouldNotContain` [EvDone "never reached"]
+
+    it "does not flag repeated reads interleaved with edits" $ do
+      let readCall = ToolCall "r" "read_file" "{\"path\":\"hello.txt\"}"
+          writeCall = ToolCall "w" "write_file" "{\"path\":\"hello.txt\",\"content\":\"next\"}"
+          stepRead _ _ = Right $ AssistantResponse Nothing [readCall] Nothing
+          stepWrite _ _ = Right $ AssistantResponse Nothing [writeCall] Nothing
+          stepFinal _ _ = Right $ AssistantResponse (Just "edited") [] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = concat (replicate 4 [stepRead, stepWrite]) ++ [stepFinal]
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          ((result, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Edit foo"])
+      result `shouldBe` AgentCompleted "edited"
+
+    it "does not flag consecutive reads of different files" $ do
+      let stepLoop hist _ =
+            let n = length hist
+                call = ToolCall "r" "read_file" ("{\"path\":\"file-" <> T.pack (show n) <> ".txt\"}")
+            in Right $ AssistantResponse Nothing [call] Nothing
+          stepFinal _ _ = Right $ AssistantResponse (Just "surveyed") [] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = replicate (unproductiveRepeatLimit + 2) stepLoop ++ [stepFinal]
+            }
+          ((result, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Read many"])
+      result `shouldBe` AgentCompleted "surveyed"
+
+    it "treats near-identical JSON arguments as the same call" $ do
+      let stepA _ _ = Right $ AssistantResponse Nothing
+            [ToolCall "a" "grep_search" "{\"query\":\"needle\",\"path\":\"src\"}"] Nothing
+          stepB _ _ = Right $ AssistantResponse Nothing
+            [ToolCall "b" "grep_search" "{\"path\":\"src\",\"query\":\"needle\"}"] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = take unproductiveRepeatLimit (cycle [stepA, stepB])
+            }
+          ((result, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Search"])
+      case result of
+        AgentFailed err -> err `shouldSatisfy` T.isInfixOf "grep_search"
+        other -> expectationFailure ("expected AgentFailed, got: " <> show other)
+
+    it "treats registry aliases of the same read tool as one call" $ do
+      let mk name = \_ _ -> Right $ AssistantResponse Nothing
+            [ToolCall "g" name "{\"query\":\"needle\"}"] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = take unproductiveRepeatLimit [mk "grep_search", mk "Grep", mk "grep", mk "Grep", mk "grep_search"]
+            }
+          ((result, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Search"])
+      case result of
+        AgentFailed err -> err `shouldSatisfy` T.isInfixOf "grep_search"
+        other -> expectationFailure ("expected AgentFailed, got: " <> show other)
+
+    it "allows repeats just under the unproductive limit" $ do
+      let call = ToolCall "r" "read_file" "{\"path\":\"hello.txt\"}"
+          stepLoop _ _ = Right $ AssistantResponse Nothing [call] Nothing
+          stepFinal _ _ = Right $ AssistantResponse (Just "done") [] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = replicate (unproductiveRepeatLimit - 1) stepLoop ++ [stepFinal]
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          ((result, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Read"])
+      result `shouldBe` AgentCompleted "done"
 
   describe "goalLoop with Pure Interpreter" $ do
     let goalConfig = baseConfig { cfgMaxTurns = Just 20 }
@@ -398,12 +487,14 @@ spec = do
         any (\case UserMsg m -> "Run the tests." `T.isInfixOf` m; _ -> False) h
 
     it "runs past the old default of 20 turns when cfgMaxTurns is Nothing (unlimited)" $ do
-      let toolCall = ToolCall
-            { callId = "call_loop"
-            , functionName = "read_file"
-            , callArgsRaw = "{\"path\":\"hello.txt\"}"
-            }
-          stepLoop _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
+      let stepLoop hist _ =
+            let n = length hist
+                toolCall = ToolCall
+                  { callId = "call_loop"
+                  , functionName = "read_file"
+                  , callArgsRaw = "{\"path\":\"hello-" <> T.pack (show n) <> ".txt\"}"
+                  }
+            in Right $ AssistantResponse Nothing [toolCall] Nothing
           stepFinal _ _ = Right $ AssistantResponse (Just "Finally done!") [] Nothing
           evalFinal _ _ = GoalEvaluation GoalMet "Done."
           unlimitedConfig = baseConfig { cfgMaxTurns = Nothing }
@@ -420,12 +511,14 @@ spec = do
       gsStatus gs `shouldBe` GoalAchieved
 
     it "never terminates with AgentMaxTurnsReached when cfgMaxTurns is Nothing in goalLoop" $ do
-      let toolCall = ToolCall
-            { callId = "call_loop"
-            , functionName = "read_file"
-            , callArgsRaw = "{\"path\":\"hello.txt\"}"
-            }
-          stepLoop _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
+      let stepLoop hist _ =
+            let n = length hist
+                toolCall = ToolCall
+                  { callId = "call_loop"
+                  , functionName = "read_file"
+                  , callArgsRaw = "{\"path\":\"hello-" <> T.pack (show n) <> ".txt\"}"
+                  }
+            in Right $ AssistantResponse Nothing [toolCall] Nothing
           stepFinal _ _ = Right $ AssistantResponse (Just "Done") [] Nothing
           evalFinal _ _ = GoalEvaluation GoalMet "Done."
           unlimitedConfig = baseConfig { cfgMaxTurns = Nothing }
@@ -439,6 +532,20 @@ spec = do
 
       result `shouldNotBe` AgentMaxTurnsReached 50
       result `shouldBe` AgentCompleted "Done"
+
+    it "fails fast on unproductive repeated tool calls" $ do
+      let repeated = ToolCall "g" "grep_search" "{\"query\":\"needle\"}"
+          stepLoop _ _ = Right $ AssistantResponse Nothing [repeated] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = replicate (unproductiveRepeatLimit + 2) stepLoop
+            }
+          ((result, _, gs), endEnv) =
+            runPure env (goalLoop goalConfig allToolDefs condition defaultBlockCap [UserMsg condition])
+      case result of
+        AgentFailed err -> err `shouldSatisfy` T.isInfixOf "grep_search"
+        other -> expectationFailure ("expected AgentFailed, got: " <> show other)
+      gsStatus gs `shouldBe` GoalActive
+      length [() | EvPromptingLLM _ <- mockEvents endEnv] `shouldBe` unproductiveRepeatLimit
 
   describe "GoalEvaluation JSON Parsing" $ do
     it "parses a valid met verdict" $ do

@@ -131,16 +131,16 @@ genUnrecoverableErrorScenario = do
 -- * Harness: turn a Scenario into a MockEnv and run goalLoop
 -- ---------------------------------------------------------------------------
 
-readCall :: ToolCall
-readCall = ToolCall
-  { callId       = "call_1"
-  , functionName = "read_file"
-  , callArgsRaw  = "{\"path\":\"hello.txt\"}"
-  }
-
 -- | Convert a 'TurnSpec' into a pure interpreter step function.
 specToStep :: TurnSpec -> ([Message] -> [ToolDef] -> Either Text AssistantResponse)
-specToStep TProgress     _ _ = Right (AssistantResponse Nothing [readCall] Nothing)
+specToStep TProgress hist _ =
+  let n = length hist
+      readCall = ToolCall
+        { callId       = "call_1"
+        , functionName = "read_file"
+        , callArgsRaw  = "{\"path\":\"hello-" <> T.pack (show n) <> ".txt\"}"
+        }
+  in Right (AssistantResponse Nothing [readCall] Nothing)
 specToStep (TComplete t) _ _ = Right (AssistantResponse (Just t) [] Nothing)
 specToStep (TError t)    _ _ = Left t
 
