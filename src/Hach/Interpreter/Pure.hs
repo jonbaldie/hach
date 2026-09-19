@@ -212,7 +212,9 @@ pureAlgebra = AgentAlgebra
 
   , interpCheckPermission = \tool args -> do
       env <- getEnv
-      pure (mockPermissions env tool args)
+      pure $ if mockPermissions env tool args
+        then Nothing
+        else Just interactiveAskDeniedReason
 
   , interpRunHook = \ev payload -> do
       env <- getEnv

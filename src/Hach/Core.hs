@@ -45,12 +45,13 @@ module Hach.Core
   ) where
 
 import Hach.Types
-import Hach.Tools (resolveTool, resolvedToolCanonicalName)
+import Hach.Tools (resolveTool, resolveToolIdentity, resolvedToolCanonicalName)
 import Control.Monad (forM)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BSL
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 
 -- | The core signature of interaction steps for an autonomous agent.
@@ -64,7 +65,7 @@ data AgentF next
   | ExecuteTool !ToolCall (ToolResult -> next)
   | LogEvent !AgentEvent next
   | EvaluateGoal !Text ![Message] (GoalEvaluation -> next)
-  | CheckPermission !Text !Text (Bool -> next)
+  | CheckPermission !Text !Text (Maybe Text -> next)
   | RunHook !HookEvent !Text (HookResult -> next)
   | SaveSession !SessionInfo (Text -> next)
   | LoadSession !SessionId (Maybe SessionInfo -> next)
@@ -118,7 +119,8 @@ logEvent ev = Free (LogEvent ev (Pure ()))
 evaluateGoal :: Text -> [Message] -> AgentProgram GoalEvaluation
 evaluateGoal condition transcript = Free (EvaluateGoal condition transcript Pure)
 
-checkPermission :: Text -> Text -> AgentProgram Bool
+-- | 'Nothing' allows the tool; 'Just reason' denies it with that message.
+checkPermission :: Text -> Text -> AgentProgram (Maybe Text)
 checkPermission tool args = Free (CheckPermission tool args Pure)
 
 runHook :: HookEvent -> Text -> AgentProgram HookResult
@@ -181,7 +183,7 @@ data AgentAlgebra m = AgentAlgebra
   , interpTool             :: ToolCall -> m ToolResult
   , interpLog              :: AgentEvent -> m ()
   , interpEvaluate         :: Text -> [Message] -> m GoalEvaluation
-  , interpCheckPermission  :: Text -> Text -> m Bool
+  , interpCheckPermission  :: Text -> Text -> m (Maybe Text)
   , interpRunHook          :: HookEvent -> Text -> m HookResult
   , interpSaveSession      :: SessionInfo -> m Text
   , interpLoadSession      :: SessionId -> m (Maybe SessionInfo)
@@ -220,8 +222,8 @@ foldAgentProgram alg = \case
       eval <- interpEvaluate alg cond msgs
       foldAgentProgram alg (k eval)
     CheckPermission tool args k -> do
-      b <- interpCheckPermission alg tool args
-      foldAgentProgram alg (k b)
+      decision <- interpCheckPermission alg tool args
+      foldAgentProgram alg (k decision)
     RunHook ev payload k -> do
       res <- interpRunHook alg ev payload
       foldAgentProgram alg (k res)
@@ -306,8 +308,15 @@ agentStep cfg tools turn currentHistory
               -- The assistant did not call any tools; return its final message.
               let content = fromMaybe "" (respContent resp)
                   finalHistory = currentHistory ++ [AssistantMsg (respContent resp) []]
-              logEvent (EvDone content)
-              pure $ Left (AgentCompleted content, finalHistory)
+                  result
+                    | historyBlockedByHeadlessAsks finalHistory =
+                        AgentFailed headlessAskBlockedMessage
+                    | otherwise = AgentCompleted content
+              case result of
+                AgentCompleted answer -> logEvent (EvDone answer)
+                AgentFailed err -> logEvent (EvError err)
+                _ -> pure ()
+              pure $ Left (result, finalHistory)
 
             calls -> do
               -- The assistant invoked one or more tools.
@@ -336,12 +345,12 @@ agentStep cfg tools turn currentHistory
                           Just (Right tool) -> do
                             -- Registry aliases are authorized under their canonical name.
                             let permissionTool = resolvedToolCanonicalName tool
-                            allowed <- checkPermission permissionTool (callArgsRaw effectiveCall)
-                            if not allowed
-                              then do
-                                logEvent (EvPermissionDenied permissionTool "Permission denied by policy")
-                                pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) "Execution denied by permission policy."
-                              else do
+                            mDenied <- checkPermission permissionTool (callArgsRaw effectiveCall)
+                            case mDenied of
+                              Just reason -> do
+                                logEvent (EvPermissionDenied permissionTool reason)
+                                pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) reason
+                              Nothing -> do
                                 res <- executeTool effectiveCall
                                 logEvent (EvToolResult (functionName effectiveCall) res)
                                 postHook <- runHook HookPostToolUse (functionName effectiveCall <> " " <> toolResultToText res)
@@ -481,3 +490,26 @@ goalLoop cfg tools condition blockCap initialHistory = do
                 pure (result, finalHist, g')
               _ ->
                 pure (result, finalHist, gs)
+
+-- | True when the run requested at least one write/command that was denied
+-- because headless mode cannot prompt, and no such mutation actually ran.
+historyBlockedByHeadlessAsks :: [Message] -> Bool
+historyBlockedByHeadlessAsks hist =
+  let mutationMsgs = [ content | ToolMsg _ name content <- hist, isMutationTool name ]
+      headlessDenies = filter (T.isInfixOf headlessAskDeniedReason) mutationMsgs
+      successes = filter (not . isDeniedToolOutput) mutationMsgs
+  in not (null headlessDenies) && null successes
+
+isDeniedToolOutput :: Text -> Bool
+isDeniedToolOutput content =
+  let lower = T.toLower content
+  in T.isInfixOf headlessAskDeniedReason content
+     || T.isInfixOf "denied" lower
+     || T.isInfixOf "blocked" lower
+
+isMutationTool :: Text -> Bool
+isMutationTool name =
+  case resolveToolIdentity name of
+    Just (_, AuthorityRead) -> False
+    Just _ -> True
+    Nothing -> True

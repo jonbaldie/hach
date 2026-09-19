@@ -25,6 +25,7 @@ import Control.Monad (when)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
+import Data.Maybe (isJust)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -103,66 +104,67 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
         let alg = ioAlgebra env
         interpCheckPermission alg "write_file" "{\"path\":\"out.txt\"}"
-          `shouldReturn` False
+          `shouldReturn` Just "Plan mode is read-only. Tool execution denied."
         interpCheckPermission alg "read_file" "{\"path\":\"out.txt\"}"
-          `shouldReturn` True
+          `shouldReturn` Nothing
 
       it "authorizes Edit aliases as workspace writes" $ do
         env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
         let alg = ioAlgebra env
             args = "{\"path\":\"out.txt\",\"old_content\":\"old\",\"new_content\":\"new\"}"
-        interpCheckPermission alg "Edit" args `shouldReturn` False
+        interpCheckPermission alg "Edit" args
+          `shouldReturn` Just "Plan mode is read-only. Tool execution denied."
         setIOPermissionMode env ModeAcceptEdits
-        interpCheckPermission alg "edit" args `shouldReturn` True
+        interpCheckPermission alg "edit" args `shouldReturn` Nothing
 
       it "denies writes to protected paths in default mode" $ do
         isProtectedPath ".git/config" `shouldBe` True
         env <- newIOEnv "k" "test-model" testDir False
         let alg = ioAlgebra env
         interpCheckPermission alg "write_file" "{\"path\":\".git/config\"}"
-          `shouldReturn` False
+          `shouldReturn` Just "Protected path: access denied to .git/config"
 
       it "honours deny rules from settings" $ do
         env <- newIOEnvWithPermissions denyBashPerms "k" "test-model" testDir False
         let alg = ioAlgebra env
         interpCheckPermission alg "Bash" "{\"command\":\"ls\"}"
-          `shouldReturn` False
+          >>= (`shouldSatisfy` isJust)
 
       it "allows everything under bypassPermissions" $ do
         env <- newIOEnvWithPermissions bypassPerms "k" "test-model" testDir False
         let alg = ioAlgebra env
         interpCheckPermission alg "write_file" "{\"path\":\".git/config\"}"
-          `shouldReturn` True
+          `shouldReturn` Nothing
 
       it "switches enforcement live via setIOPermissionMode" $ do
         env <- newIOEnvWithPermissions bypassPerms "k" "test-model" testDir False
         let alg = ioAlgebra env
         interpCheckPermission alg "write_file" "{\"path\":\"out.txt\"}"
-          `shouldReturn` True
+          `shouldReturn` Nothing
         setIOPermissionMode env ModePlan
         currentIOPermissionMode env `shouldReturn` ModePlan
         interpCheckPermission alg "write_file" "{\"path\":\"out.txt\"}"
-          `shouldReturn` False
+          `shouldReturn` Just "Plan mode is read-only. Tool execution denied."
         interpCheckPermission alg "read_file" "{\"path\":\"out.txt\"}"
-          `shouldReturn` True
+          `shouldReturn` Nothing
 
       it "does not auto-deny default-mode write_file when the ask resolver approves (Issue #91)" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
-        let env = env0 { ioResolveAsk = \_ _ _ -> pure True }
+        let env = env0 { ioResolveAsk = \_ _ _ -> pure Nothing }
             alg = ioAlgebra env
         interpCheckPermission alg "write_file" "{\"path\":\"hello.txt\",\"content\":\"hello\"}"
-          `shouldReturn` True
+          `shouldReturn` Nothing
 
       it "keeps headless unresolved asks denied" $ do
         env <- newIOEnv "k" "test-model" testDir False
         interpCheckPermission (ioAlgebra env) "write_file" "{\"path\":\"hello.txt\"}"
-          `shouldReturn` False
+          `shouldReturn` Just headlessAskDeniedReason
 
       it "does not consult the ask resolver for explicit policy denies" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
-        let env = env0 { ioResolveAsk = \_ _ _ -> pure True }
+        let env = env0 { ioResolveAsk = \_ _ _ -> pure Nothing }
         interpCheckPermission (ioAlgebra env) "write_file" "{\"path\":\".git/config\"}"
-          `shouldReturn` False
+          `shouldReturn` Just "Protected path: access denied to .git/config"
 
     describe "interpRunHook" $ do
       it "runs configured PreToolUse command hooks and blocks on exit code 2" $ do
@@ -243,7 +245,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
         events <- runSkillLoop env
         doesFileExist marker `shouldReturn` False
-        events `shouldContain` [EvPermissionDenied "Skill" "Permission denied by policy"]
+        events `shouldContain` [EvPermissionDenied "Skill" "Plan mode is read-only. Tool execution denied."]
 
       it "expands a skill command after normal command approval" $ do
         let skillDir = testDir </> ".claude" </> "skills" </> "plan-command-guard"
@@ -251,10 +253,12 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         createDirectoryIfMissing True skillDir
         TIO.writeFile (skillDir </> "SKILL.md") "---\nname: plan-command-guard\n---\n!touch dynamic-command-ran\n"
         env0 <- newIOEnv "k" "test-model" testDir False
-        let env = env0 { ioResolveAsk = \tool _ _ -> pure (tool == "Skill") }
+        let env = env0 { ioResolveAsk = \tool _ _ ->
+              if tool == "Skill" then pure Nothing else pure (Just headlessAskDeniedReason)
+            }
         events <- runSkillLoop env
         doesFileExist marker `shouldReturn` True
-        events `shouldNotContain` [EvPermissionDenied "Skill" "Permission denied by policy"]
+        events `shouldNotContain` [EvPermissionDenied "Skill" headlessAskDeniedReason]
 
     describe "permission-to-TUI ask path (Issue #91)" $ do
       let writeCall = ToolCall "c1" "write_file" "{\"path\":\"hello.txt\",\"content\":\"hello\"}"
@@ -285,17 +289,18 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
 
       it "executes the pending write once when the ask is approved" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
-        let env = env0 { ioResolveAsk = \_ _ _ -> pure True }
+        let env = env0 { ioResolveAsk = \_ _ _ -> pure Nothing }
         (_result, events) <- runWriteLoop env
         doesFileExist (testDir </> "hello.txt") `shouldReturn` True
-        events `shouldNotContain` [EvPermissionDenied "write_file" "Permission denied by policy"]
+        events `shouldNotContain` [EvPermissionDenied "write_file" headlessAskDeniedReason]
+        events `shouldNotContain` [EvPermissionDenied "write_file" interactiveAskDeniedReason]
 
       it "leaves the write unapplied when the ask is denied" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
-        let env = env0 { ioResolveAsk = \_ _ _ -> pure False }
+        let env = env0 { ioResolveAsk = \_ _ _ -> pure (Just headlessAskDeniedReason) }
         (_result, events) <- runWriteLoop env
         doesFileExist (testDir </> "hello.txt") `shouldReturn` False
-        events `shouldContain` [EvPermissionDenied "write_file" "Permission denied by policy"]
+        events `shouldContain` [EvPermissionDenied "write_file" headlessAskDeniedReason]
 
       it "pauses on PermAsk until the TUI gate answers, then approves" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
@@ -335,9 +340,10 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         outcome <- takeMVar done
         case outcome of
           Left ex -> expectationFailure ("worker failed: " <> show ex)
-          Right (_, events) -> do
+          Right ((result, _), events) -> do
             doesFileExist (testDir </> "hello.txt") `shouldReturn` False
-            events `shouldContain` [EvPermissionDenied "write_file" "Permission denied by policy"]
+            events `shouldContain` [EvPermissionDenied "write_file" interactiveAskDeniedReason]
+            result `shouldBe` AgentCompleted "done"
 
       it "releases a waiting worker on cancel and ignores a stale approval" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
@@ -373,6 +379,90 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         case outcome2 of
           Left ex -> expectationFailure ("second worker failed: " <> show ex)
           Right _ -> doesFileExist (testDir </> "hello.txt") `shouldReturn` False
+
+    describe "headless default permission asks (Issue #154)" $ do
+      let writeCall = ToolCall "c1" "write_file" "{\"path\":\"hello.txt\",\"content\":\"hi\"}"
+          runHeadlessWrite env = do
+            stepsRef <- newIORef
+              [ \_ _ -> Right (AssistantResponse Nothing [writeCall] Nothing)
+              , \_ _ -> Right (AssistantResponse (Just "done") [] Nothing)
+              ] :: IO (IORef [[Message] -> [ToolDef] -> Either Text AssistantResponse])
+            eventsRef <- newIORef [] :: IO (IORef [AgentEvent])
+            let alg = (ioAlgebra env)
+                  { interpPrompt = \msgs tools -> do
+                      steps <- readIORef stepsRef
+                      case steps of
+                        (step : rest) -> do
+                          writeIORef stepsRef rest
+                          pure (step msgs tools)
+                        [] -> pure (Right (AssistantResponse (Just "done") [] Nothing))
+                  , interpLog = \ev -> modifyIORef' eventsRef (ev :)
+                  }
+                cfg = AgentConfig
+                  { cfgModel        = "test-model"
+                  , cfgSystemPrompt = Nothing
+                  , cfgMaxTurns     = Nothing
+                  }
+            result <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write hello.txt"])
+            events <- readIORef eventsRef
+            pure (result, events)
+          namesHeadlessFlag msg =
+            T.isInfixOf "--no-tui" msg && T.isInfixOf "--permission-mode" msg
+
+      it "explains that --no-tui cannot prompt and names --permission-mode on deny" $ do
+        env <- newIOEnv "k" "test-model" testDir False
+        ((_result, hist), events) <- runHeadlessWrite env
+        doesFileExist (testDir </> "hello.txt") `shouldReturn` False
+        events `shouldSatisfy` any (\case
+          EvPermissionDenied "write_file" reason -> namesHeadlessFlag reason
+          _ -> False)
+        hist `shouldSatisfy` any (\case
+          ToolMsg _ "write_file" content -> namesHeadlessFlag content
+          _ -> False)
+
+      it "does not complete successfully when every write was denied without a prompt" $ do
+        env <- newIOEnv "k" "test-model" testDir False
+        ((result, _), _) <- runHeadlessWrite env
+        case result of
+          AgentCompleted _ -> expectationFailure
+            "headless default-mode denials must not report AgentCompleted"
+          AgentMaxTurnsReached _ -> expectationFailure
+            "headless default-mode denials must not look like a turn-limit abort"
+          AgentFailed err ->
+            err `shouldBe` headlessAskBlockedMessage
+
+      it "still completes writes under acceptEdits" $ do
+        env <- newIOEnvWithPermissions
+          (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
+          "k" "test-model" testDir False
+        ((result, _), _) <- runHeadlessWrite env
+        doesFileExist (testDir </> "hello.txt") `shouldReturn` True
+        result `shouldBe` AgentCompleted "done"
+
+      it "keeps --max-turns aborts distinct from permission blocks" $ do
+        env <- newIOEnv "k" "test-model" testDir False
+        stepsRef <- newIORef
+          [ \_ _ -> Right (AssistantResponse Nothing [writeCall] Nothing)
+          ] :: IO (IORef [[Message] -> [ToolDef] -> Either Text AssistantResponse])
+        eventsRef <- newIORef [] :: IO (IORef [AgentEvent])
+        let alg = (ioAlgebra env)
+              { interpPrompt = \msgs tools -> do
+                  steps <- readIORef stepsRef
+                  case steps of
+                    (step : rest) -> do
+                      writeIORef stepsRef rest
+                      pure (step msgs tools)
+                    [] -> pure (Right (AssistantResponse (Just "done") [] Nothing))
+              , interpLog = \ev -> modifyIORef' eventsRef (ev :)
+              }
+            cfg = AgentConfig
+              { cfgModel        = "test-model"
+              , cfgSystemPrompt = Nothing
+              , cfgMaxTurns     = Just 1
+              }
+        (result, _) <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write hello.txt"])
+        result `shouldBe` AgentMaxTurnsReached 1
+        doesFileExist (testDir </> "hello.txt") `shouldReturn` False
 
     describe "executeWriteFile (tool layer)" $ do
       it "refuses to write into protected paths" $ do
