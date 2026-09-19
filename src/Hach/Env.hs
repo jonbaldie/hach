@@ -20,6 +20,8 @@ module Hach.Env
   , formatPrintResult
   , resolvePermissionMode
   , resolveEffortLevel
+  , resolveMaxBudgetUsd
+  , budgetExceededMessage
   , resolveConfigWith
   , resolveConfigWithSettings
   , resolveEnvConfig
@@ -39,7 +41,7 @@ import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isSpace, toLower)
-import Data.List (intercalate, isPrefixOf, stripPrefix)
+import Data.List (dropWhileEnd, intercalate, isPrefixOf, stripPrefix)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -49,6 +51,7 @@ import qualified Data.Text.IO as TIO
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.FilePath ((</>))
+import Text.Printf (printf)
 import Text.Read (readMaybe)
 
 -- | Parsed environment configuration for running the agent harness.
@@ -153,6 +156,30 @@ resolveEffortLevel settings =
     Nothing -> Right Nothing
     Just raw -> Just <$> parseEffortLevel raw
 
+-- | Effective spending budget for a run: the @--max-budget-usd@ flag, else
+-- @max_budget_usd@ from layered settings. A negative settings value is an
+-- error, matching the flag's own validation.
+resolveMaxBudgetUsd :: Maybe Double -> Settings -> Either String (Maybe Double)
+resolveMaxBudgetUsd mFlag settings =
+  case mFlag <|> setMaxBudgetUsd settings of
+    Just budget | not (budget >= 0) ->
+      Left "max_budget_usd must be a non-negative number"
+    mBudget -> Right mBudget
+
+-- | Why a run stopped at its budget, given the spend and the budget.
+budgetExceededMessage :: Double -> Double -> Text
+budgetExceededMessage spent budget = T.pack $
+  "Agent stopped: reached the spending budget of " <> formatUsd budget
+    <> " (spent " <> formatUsd spent <> ")."
+
+-- | Dollars with at least cents and up to six decimals, e.g. @$0.50@ or
+-- @$0.000008@, so sub-cent budgets and spends stay visible.
+formatUsd :: Double -> String
+formatUsd amount =
+  let (whole, fraction) = break (== '.') (printf "%.6f" amount :: String)
+      digits = drop 1 fraction
+  in "$" <> whole <> "." <> take 2 digits <> dropWhileEnd (== '0') (drop 2 digits)
+
 -- | What the CLI should do after parsing. '--exec' is a real command to run,
 -- not a prompt for the headless agent; '--init' initialises the workspace
 -- guidelines file and exits; '--version' outranks both, and '--help'
@@ -194,6 +221,7 @@ formatPrintResult fmt result = case fmt of
     AgentCompleted ans -> ans
     AgentMaxTurnsReached turns ->
       T.pack ("Agent reached maximum turn limit of " <> show turns <> ".")
+    AgentBudgetExceeded spent budget -> budgetExceededMessage spent budget
     AgentFailed err -> err
   OutputJson ->
     TE.decodeUtf8 . LBS.toStrict . Aeson.encode $ case result of
@@ -203,6 +231,12 @@ formatPrintResult fmt result = case fmt of
         Aeson.object
           [ "error" .= ("max_turns" :: Text)
           , "turns" .= turns
+          ]
+      AgentBudgetExceeded spent budget ->
+        Aeson.object
+          [ "error" .= ("max_budget" :: Text)
+          , "spent_usd" .= spent
+          , "budget_usd" .= budget
           ]
       AgentFailed err ->
         Aeson.object ["error" .= err]
@@ -229,7 +263,7 @@ cliFlags =
   , CliFlag ["-r", "--resume"] Nothing "Resume the most recent session in this workspace"
   , CliFlag ["--session-id"] (Just "ID") "Resume the session with this ID"
   , CliFlag ["--max-turns"] (Just "N") "Stop the agent after N turns"
-  , CliFlag ["--max-budget-usd"] (Just "USD") "Spending limit in US dollars (not yet enforced)"
+  , CliFlag ["--max-budget-usd"] (Just "USD") "Stop a headless run once reported spend reaches USD"
   , CliFlag ["--append-system-prompt"] (Just "TEXT") "Append TEXT to the system prompt"
   , CliFlag ["--add-dir"] (Just "DIR") "Add a working directory (repeatable; not yet applied)"
   , CliFlag ["-w", "--worktree"] (Just "NAME") "Work in the git worktree NAME, creating it if needed"
@@ -368,13 +402,13 @@ parseCliArgs args = go args defaultCliOptions []
           case rest of
             (val : rest') -> case readMaybe val of
               Just d | d >= 0 -> go rest' opts { optMaxBudgetUsd = Just d } promptWords
-              _               -> Left "--max-budget-usd requires a positive number"
+              _               -> Left "--max-budget-usd requires a non-negative number"
             [] -> Left "--max-budget-usd requires an argument"
 
       | Just val <- stripPrefix "--max-budget-usd=" arg =
           case readMaybe val of
             Just d | d >= 0 -> go rest opts { optMaxBudgetUsd = Just d } promptWords
-            _               -> Left "--max-budget-usd= requires a positive number"
+            _               -> Left "--max-budget-usd= requires a non-negative number"
 
       | arg == "--append-system-prompt" =
           case rest of

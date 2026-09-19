@@ -20,6 +20,7 @@ spec = do
         { cfgModel = "test-model"
         , cfgSystemPrompt = Just "You are an assistant."
         , cfgMaxTurns = Just 20
+        , cfgMaxBudgetUsd= Nothing
         }
 
   describe "agentLoop with Pure Interpreter" $ do
@@ -156,6 +157,72 @@ spec = do
           ((result, _), _) = runPure env (agentLoop loopConfig allToolDefs [UserMsg "Run forever"])
 
       result `shouldBe` AgentMaxTurnsReached 2
+
+    describe "spending budget (Issue #150)" $ do
+      let costlyCall = ToolCall
+            { callId = "budget_call"
+            , functionName = "read_file"
+            , callArgsRaw = "{\"path\":\"hello.txt\"}"
+            }
+          costing cost = Just (TokenUsage 10 5 15 0 (Just cost))
+          costlyStep _ _ = Right $ AssistantResponse Nothing [costlyCall] (costing 0.25)
+          budgetEnv = emptyMockEnv
+            { mockLLMSteps = repeat costlyStep
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          promptCount = length . filter isPrompt . mockEvents
+          isPrompt (EvPromptingLLM _) = True
+          isPrompt _ = False
+
+      it "makes no model request when the budget is zero" $ do
+        let cfg = baseConfig { cfgMaxBudgetUsd = Just 0 }
+            ((result, finalHist), endEnv) = runPure budgetEnv (agentLoop cfg allToolDefs [UserMsg "Go"])
+
+        result `shouldBe` AgentBudgetExceeded 0 0
+        finalHist `shouldBe` [UserMsg "Go"]
+        promptCount endEnv `shouldBe` 0
+
+      it "stops before the next request once reported spend reaches the budget" $ do
+        let cfg = baseConfig { cfgMaxBudgetUsd = Just 0.5 }
+            ((result, _), endEnv) = runPure budgetEnv (agentLoop cfg allToolDefs [UserMsg "Go"])
+
+        result `shouldBe` AgentBudgetExceeded 0.5 0.5
+        promptCount endEnv `shouldBe` 2
+
+      it "keeps prompting while reported spend stays under the budget" $ do
+        let cfg = baseConfig { cfgMaxBudgetUsd = Just 0.6 }
+            ((result, _), endEnv) = runPure budgetEnv (agentLoop cfg allToolDefs [UserMsg "Go"])
+
+        result `shouldBe` AgentBudgetExceeded 0.75 0.6
+        promptCount endEnv `shouldBe` 3
+
+      it "leaves the turn cap in charge when it is reached first" $ do
+        let cfg = baseConfig { cfgMaxTurns = Just 1, cfgMaxBudgetUsd = Just 10 }
+            ((result, _), _) = runPure budgetEnv (agentLoop cfg allToolDefs [UserMsg "Go"])
+
+        result `shouldBe` AgentMaxTurnsReached 1
+
+      it "stops a goal loop at the budget and keeps the goal active" $ do
+        let cfg = baseConfig { cfgMaxBudgetUsd = Just 0.5 }
+            ((result, _, goalState), endEnv) =
+              runPure budgetEnv (goalLoop cfg allToolDefs "never" defaultBlockCap [UserMsg "never"])
+
+        result `shouldBe` AgentBudgetExceeded 0.5 0.5
+        gsStatus goalState `shouldBe` GoalActive
+        promptCount endEnv `shouldBe` 2
+
+      it "counts goal turns that answer without tool calls toward the budget" $ do
+        let answerStep _ _ = Right $ AssistantResponse (Just "Still going.") [] (costing 0.25)
+            env = emptyMockEnv
+              { mockLLMSteps = repeat answerStep
+              , mockGoalEvaluations = repeat (\_ _ -> GoalEvaluation GoalNotYetMet "Not yet.")
+              }
+            cfg = baseConfig { cfgMaxBudgetUsd = Just 0.5 }
+            ((result, _, _), endEnv) =
+              runPure env (goalLoop cfg [] "never" 10 [UserMsg "never"])
+
+        result `shouldBe` AgentBudgetExceeded 0.5 0.5
+        promptCount endEnv `shouldBe` 2
 
     it "runs past the old default of 10 turns when cfgMaxTurns is Nothing (unlimited)" $ do
       let toolCall = ToolCall

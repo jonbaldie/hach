@@ -26,7 +26,7 @@ module Hach.TUI.App
   ) where
 
 import Hach.Core
-import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions)
+import Hach.Env (budgetExceededMessage, buildSystemPromptWithAppend, loadProjectInstructions)
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
 import Hach.Sessions (saveRunSession)
@@ -454,6 +454,8 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
           writeBChan eventChan (EvDone ans)
         Right (AgentMaxTurnsReached n, _) ->
           writeBChan eventChan (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
+        Right (AgentBudgetExceeded spent budget, _) ->
+          writeBChan eventChan (EvError (budgetExceededMessage spent budget))
         Right (AgentFailed err, _) ->
           writeBChan eventChan (EvError err)
 
@@ -467,6 +469,7 @@ goalAgentConfig ioEnv sysPrompt mMaxTurns = AgentConfig
   { cfgModel        = ioModel ioEnv
   , cfgSystemPrompt = Just sysPrompt
   , cfgMaxTurns     = mMaxTurns
+  , cfgMaxBudgetUsd = Nothing
   }
 
 -- | Execute a goal-directed agent run using the given algebra and emit events.
@@ -489,6 +492,8 @@ runGoalWorker algebra agentConfig condition historyItems emitEvent = do
       emitEvent (EvDone ans)
     Right (AgentMaxTurnsReached n, _, _) ->
       emitEvent (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
+    Right (AgentBudgetExceeded spent budget, _, _) ->
+      emitEvent (EvError (budgetExceededMessage spent budget))
     Right (AgentFailed err, _, _) ->
       emitEvent (EvError err)
 
