@@ -138,7 +138,7 @@ data IOEnv = IOEnv
   , ioVerbose          :: !Bool
   , ioPerms            :: !PermissionRuntime
   , ioEffortLevel      :: !(Maybe EffortLevel)
-  , ioResolveAsk       :: Text -> Text -> Text -> IO Bool
+  , ioResolveAsk       :: Text -> Text -> Text -> IO (Maybe Text)
   }
 
 -- | Initialize a new 'IOEnv' with a TLS manager and open permission defaults.
@@ -163,7 +163,7 @@ newIOEnvWithPermissions perms apiKey model workspace verbose = do
     , ioVerbose          = verbose
     , ioPerms            = PermissionRuntime modeRef (iopRules perms) (iopHooks perms)
     , ioEffortLevel      = Nothing
-    , ioResolveAsk       = \_ _ _ -> pure False
+    , ioResolveAsk       = \_ _ _ -> pure (Just headlessAskDeniedReason)
     }
 
 -- | Switch the live permission mode; subsequent tool calls are checked
@@ -396,8 +396,8 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
             Just (Right resolved) -> evalPermissionForAuthority mode prtRules (resolvedToolCanonicalName resolved) argsVal (resolvedToolAuthority resolved)
             _ -> evalPermission mode prtRules tool argsVal
       case decision of
-        PermAllow      -> pure True
-        PermDeny _     -> pure False
+        PermAllow      -> pure Nothing
+        PermDeny reason -> pure (Just reason)
         PermAsk reason -> ioResolveAsk tool args reason
 
   , interpRunHook = \ev payload -> do

@@ -113,7 +113,7 @@ newPermissionGate = do
   reply <- newEmptyTMVarIO
   pure (PermissionGate nextId pending reply)
 
-resolveAskWithGate :: PermissionGate -> (AgentEvent -> IO ()) -> Text -> Text -> Text -> IO Bool
+resolveAskWithGate :: PermissionGate -> (AgentEvent -> IO ()) -> Text -> Text -> Text -> IO (Maybe Text)
 resolveAskWithGate gate emit tool args reason = do
   askId <- atomically $ do
     i <- readTVar (pgNextId gate)
@@ -124,7 +124,9 @@ resolveAskWithGate gate emit tool args reason = do
   emit (EvPermissionAsk askId tool args reason)
   (replyId, approved) <- atomically (takeTMVar (pgReply gate))
   atomically $ writeTVar (pgPending gate) Nothing
-  pure (replyId == askId && approved)
+  pure $ if replyId == askId && approved
+    then Nothing
+    else Just interactiveAskDeniedReason
 
 respondPermission :: PermissionGate -> Int -> Bool -> IO Bool
 respondPermission gate expectedId approved = atomically $ do

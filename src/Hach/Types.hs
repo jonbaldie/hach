@@ -48,6 +48,9 @@ module Hach.Types
   , ToolAuthority(..)
   , permissionModeName
   , PermissionDecision(..)
+  , interactiveAskDeniedReason
+  , headlessAskDeniedReason
+  , headlessAskBlockedMessage
   , RuleAction(..)
   , PermissionRule(..)
 
@@ -647,6 +650,20 @@ instance FromJSON PermissionDecision where
       "ask"   -> PermAsk <$> (o .:? "reason" .!= "")
       "deny"  -> PermDeny <$> (o .:? "reason" .!= "")
       other   -> fail ("Unknown permission decision: " <> T.unpack other)
+
+-- | Denial reason when an interactive (TUI) PermAsk is refused.
+interactiveAskDeniedReason :: Text
+interactiveAskDeniedReason = "Permission denied by policy"
+
+-- | Denial reason when headless mode cannot prompt for a PermAsk.
+headlessAskDeniedReason :: Text
+headlessAskDeniedReason =
+  "No interactive approval available in --no-tui. Re-run with --permission-mode acceptEdits to allow writes and commands."
+
+-- | Final result text when every write/command in a run was a headless PermAsk deny.
+headlessAskBlockedMessage :: Text
+headlessAskBlockedMessage =
+  "Task blocked: every write and command was denied because --no-tui cannot prompt for approval. Re-run with --permission-mode acceptEdits."
 
 -- | Action in a permission rule.
 data RuleAction = RuleAllow | RuleAsk | RuleDeny
