@@ -16,15 +16,16 @@ module Hach.Git
 
 import Hach.Types
 import Control.Exception (SomeException, try)
+import Control.Monad (unless, when)
 import qualified Data.ByteString as BS
 import Data.Char (digitToInt, isAlphaNum, isOctDigit, isSpace)
 import Data.List (find, isInfixOf)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory)
 import System.Exit (ExitCode(..))
-import System.FilePath ((</>))
+import System.FilePath (isAbsolute, takeDirectory, (</>))
 import System.Process (CreateProcess(cwd), proc, readCreateProcessWithExitCode)
 
 -- | Unquote git C-style quoted path and decode escape sequences.
@@ -202,12 +203,33 @@ invalidWorktreeNameError :: Text
 invalidWorktreeNameError =
   "Invalid worktree name: must be alphanumeric and cannot contain path separators, leading dashes, or invalid git ref patterns."
 
+worktreeExcludePattern :: String
+worktreeExcludePattern = "/.agents/worktrees/"
+
+ensureWorktreesExcluded :: FilePath -> IO ()
+ensureWorktreesExcluded root = do
+  (code, out, _) <- runGit root ["rev-parse", "--git-path", "info/exclude"]
+  when (code == ExitSuccess) $ do
+    let rel = T.unpack (T.strip (T.pack out))
+        excludePath = if isAbsolute rel then rel else root </> rel
+    createDirectoryIfMissing True (takeDirectory excludePath)
+    existing <- try (BS.readFile excludePath) :: IO (Either SomeException BS.ByteString)
+    let content = case existing of
+          Left _ -> ""
+          Right bs -> case TE.decodeUtf8' bs of
+            Right txt -> T.unpack txt
+            Left _ -> ""
+    unless (worktreeExcludePattern `isInfixOf` content) $ do
+      let prefix = if null content || last content == '\n' then "" else "\n"
+      appendFile excludePath (prefix <> worktreeExcludePattern <> "\n")
+
 -- | Create or reuse a git worktree for a branch or feature name.
 createWorktree :: FilePath -> Text -> IO (Either Text FilePath)
 createWorktree root name
   | not (isValidWorktreeName name) =
       pure (Left invalidWorktreeNameError)
   | otherwise = do
+      ensureWorktreesExcluded root
       let wtBaseDir = root </> ".agents" </> "worktrees"
           targetPath = worktreePath root name
       wtBaseExists <- doesDirectoryExist wtBaseDir
