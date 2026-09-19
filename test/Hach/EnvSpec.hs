@@ -270,6 +270,49 @@ spec = do
         Left err -> err `shouldContain` "Unknown flag"
         Right _  -> expectationFailure "Expected failure on unknown flag"
 
+  describe "--help / -h (Issue #153)" $ do
+    let everyAcceptedFlag =
+          [ "-h", "--help", "-v", "--version", "-m", "--model", "--no-tui"
+          , "-p", "--print", "--output-format", "-c", "--continue"
+          , "-r", "--resume", "--session-id", "--max-turns", "--max-budget-usd"
+          , "--append-system-prompt", "--add-dir", "-w", "--worktree"
+          , "--init", "--exec", "--permission-mode"
+          , "--dangerously-skip-permissions", "--"
+          ]
+        documentedFlags = concatMap cliFlagNames cliFlags
+
+    it "parses --help and -h without a prompt" $ do
+      parseCliArgs ["--help"] `shouldBe` Right defaultCliOptions { optHelp = True }
+      parseCliArgs ["-h"] `shouldBe` Right defaultCliOptions { optHelp = True }
+
+    it "maps --help to the help intent, ahead of --version and --exec" $ do
+      fmap startupIntent (parseCliArgs ["-h"]) `shouldBe` Right IntentHelp
+      fmap startupIntent (parseCliArgs ["--exec", "ls", "--version", "--help"])
+        `shouldBe` Right IntentHelp
+
+    it "short-circuits so later arguments cannot turn help into an error" $ do
+      fmap startupIntent (parseCliArgs ["--help", "--some-bogus-flag"])
+        `shouldBe` Right IntentHelp
+      fmap startupIntent (parseCliArgs ["--help", "--max-turns"])
+        `shouldBe` Right IntentHelp
+
+    it "treats --help after -- as prompt text" $ do
+      parseCliArgs ["--", "--help"] `shouldBe` Right defaultCliOptions
+        { optPrompt = Just "--help" }
+
+    it "documents every flag the parser accepts" $ do
+      mapM_ (\flag -> documentedFlags `shouldContain` [flag]) everyAcceptedFlag
+      mapM_ (\flag -> cliHelpText `shouldContain` flag) everyAcceptedFlag
+
+    it "documents only flags the parser accepts" $ do
+      let unknown flag = case parseCliArgs [flag] of
+            Left err -> "Unknown flag" `T.isInfixOf` T.pack err
+            Right _  -> False
+      filter unknown documentedFlags `shouldBe` []
+
+    it "points the error-path usage line at --help" $ do
+      cliUsageHint `shouldContain` "--help"
+
   describe "startupIntent" $ do
     it "runs --exec instead of the headless agent loop" $ do
       case parseCliArgs ["--exec", "echo hello"] of

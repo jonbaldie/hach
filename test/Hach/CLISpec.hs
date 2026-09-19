@@ -318,6 +318,37 @@ spec = describe "headless CLI prompt acquisition" $ do
         stdoutText `shouldContain` "already exists"
         readFile (workspace </> "CLAUDE.md") `shouldReturn` existing
 
+  describe "--help (Issue #153)" $ do
+    let runHelp executable workspace args = do
+          environment <- getEnvironment
+          let command =
+                (proc executable args)
+                  { cwd = Just workspace
+                  , env = Just (filter ((/= "OPENROUTER_API_KEY") . fst) environment)
+                  }
+          readCreateProcessWithExitCode command ""
+
+    forM_ ["--help", "-h"] $ \flag ->
+      it ("prints every option and exits 0 for " <> flag) $ do
+        executable <- hachExecutable
+        withTemporaryWorkspace $ \workspace -> do
+          (exitCode, stdoutText, stderrText) <- runHelp executable workspace [flag]
+
+          exitCode `shouldBe` ExitSuccess
+          stderrText `shouldBe` ""
+          forM_ ["--model", "--print", "--max-budget-usd", "--add-dir", "--session-id", "--permission-mode"] $
+            \option -> stdoutText `shouldContain` option
+          listDirectory workspace `shouldReturn` []
+
+    it "points at --help after an argument error" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, _) <- runHelp executable workspace ["--bogus"]
+
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "Unknown flag: --bogus"
+        stdoutText `shouldContain` "hach --help"
+
   describe "session persistence and continuation (Issue #151)" $ do
     let runWithEnv executable workspace args = do
           environment <- getEnvironment

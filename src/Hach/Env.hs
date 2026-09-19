@@ -9,6 +9,10 @@ module Hach.Env
   , parseEnvContent
   , parseLineTwoModel
   , parseCliArgs
+  , CliFlag(..)
+  , cliFlags
+  , cliHelpText
+  , cliUsageHint
   , StartupIntent(..)
   , startupIntent
   , headlessEmitsBanners
@@ -35,7 +39,7 @@ import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isSpace, toLower)
-import Data.List (isPrefixOf, stripPrefix)
+import Data.List (intercalate, isPrefixOf, stripPrefix)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -78,6 +82,7 @@ data CliOptions = CliOptions
   , optPermissionMode       :: !(Maybe PermissionMode)
   , optDangerouslySkipPerms :: !Bool
   , optVersion              :: !Bool
+  , optHelp                 :: !Bool
   } deriving (Show, Eq)
 
 -- | Default empty CLI options.
@@ -101,6 +106,7 @@ defaultCliOptions = CliOptions
   , optPermissionMode       = Nothing
   , optDangerouslySkipPerms = False
   , optVersion              = False
+  , optHelp                 = False
   }
 
 -- | Parse output format string.
@@ -149,9 +155,11 @@ resolveEffortLevel settings =
 
 -- | What the CLI should do after parsing. '--exec' is a real command to run,
 -- not a prompt for the headless agent; '--init' initialises the workspace
--- guidelines file and exits; '--version' outranks both.
+-- guidelines file and exits; '--version' outranks both, and '--help'
+-- outranks everything.
 data StartupIntent
-  = IntentVersion
+  = IntentHelp
+  | IntentVersion
   | IntentExec !Text
   | IntentInit
   | IntentTui
@@ -163,6 +171,7 @@ data StartupIntent
 -- must not fall through to the TUI or headless loop (Issue #118).
 startupIntent :: CliOptions -> StartupIntent
 startupIntent CliOptions{..}
+  | optHelp = IntentHelp
   | optVersion = IntentVersion
   | Just cmd <- optExec = IntentExec cmd
   | optInit = IntentInit
@@ -198,6 +207,58 @@ formatPrintResult fmt result = case fmt of
       AgentFailed err ->
         Aeson.object ["error" .= err]
 
+-- | One documented command-line option. 'cliFlags' sits beside
+-- 'parseCliArgs' so the help text and the parser are kept in step; the test
+-- suite checks each direction (Issue #153).
+data CliFlag = CliFlag
+  { cliFlagNames   :: ![String]
+  , cliFlagMetavar :: !(Maybe String)
+  , cliFlagSummary :: !String
+  } deriving (Show, Eq)
+
+-- | Every option 'parseCliArgs' accepts, in help-text order.
+cliFlags :: [CliFlag]
+cliFlags =
+  [ CliFlag ["-h", "--help"] Nothing "Show this help and exit"
+  , CliFlag ["-v", "--version"] Nothing "Print the version and exit"
+  , CliFlag ["-m", "--model"] (Just "MODEL") "OpenRouter model to use (overrides .env)"
+  , CliFlag ["--no-tui"] Nothing "Run the agent headless instead of the terminal UI"
+  , CliFlag ["-p", "--print"] Nothing "Run headless and print only the final answer"
+  , CliFlag ["--output-format"] (Just "text|json") "Format of the --print answer (default: text)"
+  , CliFlag ["-c", "--continue"] Nothing "Continue the most recent session in this workspace"
+  , CliFlag ["-r", "--resume"] Nothing "Resume the most recent session in this workspace"
+  , CliFlag ["--session-id"] (Just "ID") "Resume the session with this ID"
+  , CliFlag ["--max-turns"] (Just "N") "Stop the agent after N turns"
+  , CliFlag ["--max-budget-usd"] (Just "USD") "Spending limit in US dollars (not yet enforced)"
+  , CliFlag ["--append-system-prompt"] (Just "TEXT") "Append TEXT to the system prompt"
+  , CliFlag ["--add-dir"] (Just "DIR") "Add a working directory (repeatable; not yet applied)"
+  , CliFlag ["-w", "--worktree"] (Just "NAME") "Work in the git worktree NAME, creating it if needed"
+  , CliFlag ["--init"] Nothing "Create a CLAUDE.md guidelines template and exit"
+  , CliFlag ["--exec"] (Just "CMD") "Run the shell command CMD in the workspace and exit"
+  , CliFlag ["--permission-mode"] (Just "MODE")
+      "default, acceptEdits, plan, auto, dontAsk or bypassPermissions"
+  , CliFlag ["--dangerously-skip-permissions"] Nothing "Skip all permission prompts"
+  , CliFlag ["--"] Nothing "Treat every remaining argument as prompt text"
+  ]
+
+-- | Full '--help' output: a usage line and one aligned row per 'CliFlag'.
+cliHelpText :: String
+cliHelpText = unlines $
+  [ "Usage: hach [options] [task prompt...]"
+  , ""
+  , "Options:"
+  ] ++ map row cliFlags
+  where
+    label CliFlag{..} =
+      intercalate ", " cliFlagNames ++ maybe "" (' ' :) cliFlagMetavar
+    width = maximum (map (length . label) cliFlags)
+    row flag = "  " ++ padRight width (label flag) ++ "  " ++ cliFlagSummary flag
+    padRight n s = s ++ replicate (n - length s) ' '
+
+-- | Usage shown after an argument error.
+cliUsageHint :: String
+cliUsageHint = "Usage: hach [options] [task prompt...]\nRun 'hach --help' to list every option."
+
 -- | Parse command line arguments into 'CliOptions'.
 parseCliArgs :: [String] -> Either String CliOptions
 parseCliArgs args = go args defaultCliOptions []
@@ -212,6 +273,10 @@ parseCliArgs args = go args defaultCliOptions []
 
     go ("--" : rest) opts promptWords =
       go [] opts (promptWords ++ rest)
+
+    -- '--help' short-circuits: whatever follows cannot turn it into an error.
+    go (arg : _) opts _
+      | arg `elem` ["--help", "-h"] = Right opts { optHelp = True }
 
     go ("--no-tui" : rest) opts promptWords =
       go rest opts { optNoTui = True } promptWords
