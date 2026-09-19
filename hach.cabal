@@ -50,6 +50,7 @@ library
         Hach.Git
         Hach.Tasks
         Hach.Notifications
+        Hach.Clipboard
     build-depends:
         base >= 4.18 && < 5,
         text,

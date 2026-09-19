@@ -19,6 +19,7 @@ import Hach.TUI.App
   , vtyToUserKey
   )
 import Test.QuickCheck
+import Hach.Tools (TaskCreateArgs(..), executeTaskCreate, executeTaskList)
 import Hach.TUI.State
 import Hach.TUI.Types
 import Hach.TUI.UI (drawUI, formatCompactLimit, formatToolTarget, formatTokens, renderMaxTurns, tuiAttrMap)
@@ -40,6 +41,7 @@ import Hach.Types
   , initialSessionTokenUsage
   , mkTokenUsage
   , modelContextLimit
+  , toolResultToText
   )
 import qualified Brick.Main as M
 import Brick.Types (BrickEvent(..), Location(..))
@@ -1697,17 +1699,42 @@ spec = do
         let (s, _) = updateTui (EvSubmit "/plan") baseState
         tsHistory s `shouldContain` [DiNotice "Plan mode activated. Read-only actions allowed."]
 
-      it "handles /diff" $ do
-        let (s, _) = updateTui (EvSubmit "/diff") baseState
-        tsHistory s `shouldContain` [DiNotice "Git working tree diff inspected."]
+      it "runs git for /diff instead of reporting a fabricated result (Issue #155)" $ do
+        let (s, actions) = updateTui (EvSubmit "/diff") baseState
+        actions `shouldBe` [ActionShowDiff]
+        tsHistory s `shouldBe` []
 
-      it "handles /tasks" $ do
-        let (s, _) = updateTui (EvSubmit "/tasks") baseState
-        tsHistory s `shouldContain` [DiNotice "Task list: No active background tasks."]
+        let shown = applySlashCommandResult (DiffResult (Right "diff --git a/f b/f\n+added\n")) s
+        tsHistory shown `shouldBe` [DiNotice "Diff against HEAD:\ndiff --git a/f b/f\n+added"]
 
-      it "handles /theme" $ do
-        let (s, _) = updateTui (EvSubmit "/theme") baseState
-        tsHistory s `shouldContain` [DiNotice "Theme: dark"]
+        let clean = applySlashCommandResult (DiffResult (Right "")) s
+        tsHistory clean `shouldBe` [DiNotice "Diff: no changes to tracked files against HEAD."]
+
+        let failed = applySlashCommandResult (DiffResult (Left "fatal: not a git repository")) s
+        tsHistory failed `shouldBe` [DiNotice "Diff unavailable: fatal: not a git repository"]
+
+      it "reports the task_list tool's output for /tasks (Issue #155)" $ do
+        let (s, actions) = updateTui (EvSubmit "/tasks") baseState
+        actions `shouldBe` [ActionListTasks]
+        tsHistory s `shouldBe` []
+
+        _ <- executeTaskCreate "/tmp" (TaskCreateArgs "issue-155-task" Nothing)
+        listed <- executeTaskList
+        let shown = applySlashCommandResult (TaskListResult (toolResultToText listed)) s
+        toolResultToText listed `shouldSatisfy` T.isInfixOf "issue-155-task"
+        tsHistory shown `shouldBe` [DiNotice ("Tasks:\n" <> T.stripEnd (toolResultToText listed))]
+
+      it "reports the configured theme for /theme (Issue #155)" $ do
+        let (sNone, _) = updateTui (EvSubmit "/theme") baseState
+        tsHistory sNone `shouldBe` [DiNotice "Theme: none configured; the TUI uses its built-in colours."]
+
+        let (sLight, _) = updateTui (EvSubmit "/theme") baseState { tsTheme = Just "light" }
+        tsHistory sLight `shouldBe` [DiNotice "Theme: light (from settings; not applied yet, the TUI always uses its built-in colours)."]
+
+      it "points /resume at the CLI flags that actually resume a session (Issue #155)" $ do
+        let (s, actions) = updateTui (EvSubmit "/resume") baseState
+        actions `shouldBe` []
+        tsHistory s `shouldSatisfy` \h -> any (\case DiNotice n -> "--continue" `T.isInfixOf` n && "--session-id" `T.isInfixOf` n; _ -> False) h
 
       it "handles /status" $ do
         let (s, _) = updateTui (EvSubmit "/status") baseState
@@ -1715,7 +1742,10 @@ spec = do
 
       it "handles /memory and /init" $ do
         let (sMem, _) = updateTui (EvSubmit "/memory") baseState
-        tsHistory sMem `shouldContain` [DiNotice "Project memory instructions active."]
+        tsHistory sMem `shouldContain` [DiNotice "Project memory: none loaded; no AGENTS.md, AGENT.md or CLAUDE.md with content was found at launch."]
+
+        let (sLoaded, _) = updateTui (EvSubmit "/memory") baseState { tsProjectInstructions = Just "CLAUDE.md" }
+        tsHistory sLoaded `shouldContain` [DiNotice "Project memory: CLAUDE.md was loaded into the system prompt at launch."]
 
         let (sInit, initActions) = updateTui (EvSubmit "/init") baseState
         tsHistory sInit `shouldBe` []
@@ -1741,19 +1771,36 @@ spec = do
 
       it "handles /doctor, /copy, /reload-skills, /mcp, and /plugin" $ do
         let (sDoc, _) = updateTui (EvSubmit "/doctor") baseState
-        tsHistory sDoc `shouldContain` [DiNotice "Doctor: All systems operational."]
+        tsHistory sDoc `shouldContain` [DiNotice "/doctor is not implemented: no health checks were run."]
 
-        let (sCopy, _) = updateTui (EvSubmit "/copy") baseState
-        tsHistory sCopy `shouldContain` [DiNotice "Last response copied to clipboard."]
+        let (sCopy, copyActions) = updateTui (EvSubmit "/copy") baseState
+        copyActions `shouldBe` []
+        tsHistory sCopy `shouldContain` [DiNotice "Nothing to copy: there is no assistant response yet."]
 
         let (sReload, _) = updateTui (EvSubmit "/reload-skills") baseState
         tsHistory sReload `shouldSatisfy` \h -> any (\case DiNotice n -> "Skills reloaded:" `T.isInfixOf` n; _ -> False) h
 
         let (sMcp, _) = updateTui (EvSubmit "/mcp") baseState
-        tsHistory sMcp `shouldContain` [DiNotice "MCP: Model Context Protocol servers loaded."]
+        tsHistory sMcp `shouldContain` [DiNotice "/mcp is not implemented: Hach does not connect to MCP servers yet."]
 
         let (sPlug, _) = updateTui (EvSubmit "/plugin") baseState
-        tsHistory sPlug `shouldContain` [DiNotice "Plugins: 0 loaded"]
+        tsHistory sPlug `shouldContain` [DiNotice "/plugin is not implemented: Hach has no plugin system yet."]
+
+      it "copies the last assistant response with /copy (Issue #155)" $ do
+        let withReply = baseState
+              { tsTranscript =
+                  [ DiUser "first", DiAssistant "old reply"
+                  , DiUser "second", DiAssistant "latest reply", DiNotice "done"
+                  ]
+              }
+            (s, actions) = updateTui (EvSubmit "/copy") withReply
+        actions `shouldBe` [ActionCopyToClipboard "latest reply"]
+        tsHistory s `shouldBe` tsHistory withReply
+
+        tsHistory (applySlashCommandResult (ClipboardResult (Right 12)) s)
+          `shouldContain` [DiNotice "Copied last response to clipboard (12 characters)."]
+        tsHistory (applySlashCommandResult (ClipboardResult (Left "no clipboard tool found")) s)
+          `shouldContain` [DiNotice "Copy failed: no clipboard tool found"]
 
     describe "CLI Initial Prompt Launch (initialTuiLaunch)" $ do
       it "dispatches ActionRunGoal when CLI initial prompt is /goal" $ do

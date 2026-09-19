@@ -25,8 +25,10 @@ module Hach.TUI.App
   , awaitPermissionAsk
   ) where
 
+import Hach.Clipboard (copyToClipboard)
 import Hach.Core
-import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions)
+import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions, loadProjectInstructionsFile)
+import Hach.Git (getGitDiff)
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
 import Hach.Sessions (saveRunSession)
@@ -55,7 +57,7 @@ import Control.Exception (SomeException, try)
 import Control.Monad (forM_, void, when)
 import System.Timeout (timeout)
 import Control.Monad.IO.Class (liftIO)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Graphics.Vty as Vty
@@ -181,6 +183,15 @@ runTuiAction eventChan workerVar gate ioEnv sysPrompt = \case
   ActionInitializeProject -> do
     result <- liftIO (initializeProjectWorkspace ioEnv)
     modify (applyProjectInitializationResult result)
+  ActionShowDiff -> do
+    diff <- liftIO (currentIOWorkspace ioEnv >>= getGitDiff)
+    modify (applySlashCommandResult (DiffResult diff))
+  ActionListTasks -> do
+    tasks <- liftIO executeTaskList
+    modify (applySlashCommandResult (TaskListResult (toolResultToText tasks)))
+  ActionCopyToClipboard text -> do
+    copied <- liftIO (copyToClipboard text)
+    modify (applySlashCommandResult (ClipboardResult (T.length text <$ copied)))
   ActionQuit -> do
     liftIO $ do
       cancelPermissionAsk gate
@@ -237,8 +248,8 @@ messagesToTranscriptItems msgs = concatMap msgToItems msgs
         [TiToolCard (ToolCard cid name "" (Finished (ToolSuccess content)) False)]
 
 -- | Run the full modern TUI application.
-runTui :: IOEnv -> Maybe Text -> Maybe Int -> Maybe Text -> Text -> Maybe (SessionInfo, [Message]) -> IO ()
-runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt activeSid mLoadedSession = do
+runTui :: IOEnv -> Maybe Text -> Maybe Int -> Maybe Text -> Maybe Text -> Text -> Maybe (SessionInfo, [Message]) -> IO ()
+runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt mTheme activeSid mLoadedSession = do
   eventChan <- newBChan 100
   workerVar <- newTVarIO (Nothing :: Maybe (Async ()))
   gate <- newPermissionGate
@@ -246,7 +257,11 @@ runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt activeSid mLoadedSession = d
 
   activeWorkspace <- currentIOWorkspace ioEnv
   skills <- discoverSkills activeWorkspace
-  sysPrompt <- buildTuiSystemPrompt activeWorkspace mAppendPrompt
+  mInstructions <- loadProjectInstructionsFile activeWorkspace
+  let sysPrompt = buildSystemPromptWithAppend (fmap snd mInstructions) mAppendPrompt
+      -- Blank instructions files are left out of the system prompt.
+      loadedInstructions =
+        [ file | Just (file, content) <- [mInstructions], not (T.null (T.strip content)) ]
   initialMode <- currentIOPermissionMode ioEnv
 
   let loadedTranscript = case mLoadedSession of
@@ -260,6 +275,8 @@ runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt activeSid mLoadedSession = d
         , tsPermissionMode = initialMode
         , tsTranscript = loadedTranscript
         , tsCurrentTurn = loadedTurns
+        , tsTheme = mTheme
+        , tsProjectInstructions = listToMaybe loadedInstructions
         }
       (startingState, initialActions) = initialTuiLaunch initialPrompt baseState
 

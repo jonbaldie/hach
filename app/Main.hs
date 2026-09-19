@@ -121,7 +121,7 @@ main = do
       mLoadedHistory = fmap snd mLoadedSession
 
   case intent of
-    IntentTui -> runTui ioEnv optPrompt optMaxTurns optAppendSystemPrompt activeSid mLoadedSession
+    IntentTui -> runTui ioEnv optPrompt optMaxTurns optAppendSystemPrompt (setTheme envSettings) activeSid mLoadedSession
     _ -> do
       currentWorkspace <- currentIOWorkspace ioEnv
       when (headlessEmitsBanners opts) $ do

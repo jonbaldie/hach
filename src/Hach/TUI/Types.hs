@@ -34,6 +34,7 @@ module Hach.TUI.Types
   , UserKey(..)
   , TuiEvent(..)
   , ProjectInitializationResult(..)
+  , SlashCommandResult(..)
   , TuiAction(..)
   , pattern ActionScrollHistory
 
@@ -165,6 +166,10 @@ data TuiState = TuiState
   , tsGoalState          :: !(Maybe GoalState)
   , tsPermissionMode     :: !PermissionMode
   , tsPendingAsk         :: !(Maybe PermissionPrompt)
+  , tsTheme              :: !(Maybe Text)
+    -- ^ Theme named in settings; reported by @/theme@, not yet applied.
+  , tsProjectInstructions :: !(Maybe FilePath)
+    -- ^ Instructions file loaded into the system prompt at launch.
   } deriving (Show, Eq)
 
 -- | Project tool cards from the transcript for the Tool Activity pane.
@@ -206,6 +211,8 @@ initialTuiState model maxTurns = TuiState
   , tsGoalState          = Nothing
   , tsPermissionMode     = ModeDefault
   , tsPendingAsk         = Nothing
+  , tsTheme              = Nothing
+  , tsProjectInstructions = Nothing
   }
 
 -- | Simplified user keystroke events abstracted from Vty.
@@ -241,9 +248,22 @@ data ProjectInitializationResult
   | ProjectInitializationFailed !Text
   deriving (Show, Eq)
 
+-- | Outcome of an IO-backed slash command, reported back into the transcript.
+data SlashCommandResult
+  = DiffResult !(Either Text Text)
+    -- ^ @git diff HEAD@ output, or the reason it could not be read.
+  | TaskListResult !Text
+    -- ^ The task list exactly as the @task_list@ tool reports it.
+  | ClipboardResult !(Either Text Int)
+    -- ^ Characters copied to the clipboard, or why the copy failed.
+  deriving (Show, Eq)
+
 -- | Actions requested by the reducer for the external environment to perform.
 data TuiAction
   = ActionInitializeProject
+  | ActionShowDiff
+  | ActionListTasks
+  | ActionCopyToClipboard !Text
   | ActionRunAgent !Text
   | ActionRunGoal !Text
   | ActionCancelAgent
@@ -287,5 +307,5 @@ builtinCommands =
 pattern ActionScrollHistory :: Int -> TuiAction
 pattern ActionScrollHistory delta = ActionScrollTranscript delta
 
-{-# COMPLETE ActionInitializeProject, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}
-{-# COMPLETE ActionInitializeProject, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}
+{-# COMPLETE ActionInitializeProject, ActionShowDiff, ActionListTasks, ActionCopyToClipboard, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}
+{-# COMPLETE ActionInitializeProject, ActionShowDiff, ActionListTasks, ActionCopyToClipboard, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}
