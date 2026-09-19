@@ -93,6 +93,12 @@ main = do
       exitFailure
     Right e -> pure e
 
+  maxBudgetUsd <- case resolveMaxBudgetUsd optMaxBudgetUsd envSettings of
+    Left err -> do
+      putStrLn ("Configuration error: " <> err)
+      exitFailure
+    Right b -> pure b
+
   let perms = defaultIOEnvPermissions
         { iopInitialMode = resolvePermissionMode optPermissionMode optDangerouslySkipPerms envSettings
         , iopRules       = setPermissionRules envSettings
@@ -173,6 +179,7 @@ main = do
                       { cfgModel        = envModel
                       , cfgSystemPrompt = Just sysPrompt
                       , cfgMaxTurns     = optMaxTurns
+                      , cfgMaxBudgetUsd = maxBudgetUsd
                       }
                     initialHistory = buildSessionHistory sysPrompt mLoadedHistory condition
                 (result, finalHistory, goalState) <-
@@ -189,6 +196,9 @@ main = do
                     AgentMaxTurnsReached turns -> do
                       putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
                       printGoalSummary goalState
+                    AgentBudgetExceeded spent budget -> do
+                      TIO.putStrLn ("\n" <> budgetExceededMessage spent budget)
+                      printGoalSummary goalState
                     AgentFailed err -> do
                       putStrLn ("\nAgent failed with error: " <> T.unpack err)
                       printGoalSummary goalState
@@ -201,6 +211,7 @@ main = do
                 { cfgModel        = envModel
                 , cfgSystemPrompt = Just sysPrompt
                 , cfgMaxTurns     = optMaxTurns
+                , cfgMaxBudgetUsd = maxBudgetUsd
                 }
               initialHistory = buildSessionHistory sysPrompt mLoadedHistory finalPrompt
 
@@ -217,6 +228,8 @@ main = do
                 putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
               AgentMaxTurnsReached turns -> do
                 putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
+              AgentBudgetExceeded spent budget ->
+                TIO.putStrLn ("\n" <> budgetExceededMessage spent budget)
               AgentFailed err -> do
                 putStrLn ("\nAgent failed with error: " <> T.unpack err)
 
@@ -228,6 +241,7 @@ exitOnHeadlessFailure :: AgentResult -> IO ()
 exitOnHeadlessFailure result = case result of
   AgentCompleted _         -> pure ()
   AgentMaxTurnsReached _   -> exitFailure
+  AgentBudgetExceeded _ _  -> exitFailure
   AgentFailed _            -> exitFailure
 
 -- | Resolve the workspace selected by the CLI before any task, command, or TUI

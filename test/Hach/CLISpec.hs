@@ -349,6 +349,63 @@ spec = describe "headless CLI prompt acquisition" $ do
         stdoutText `shouldContain` "Unknown flag: --bogus"
         stdoutText `shouldContain` "hach --help"
 
+  describe "--max-budget-usd enforcement (Issue #150)" $ do
+    -- A zero budget must stop the run before any request, so these runs never
+    -- reach the network even with a fake key.
+    let runBudgeted workspace args = do
+          executable <- hachExecutable
+          environment <- getEnvironment
+          let testEnvironment =
+                ("OPENROUTER_API_KEY", "test")
+                  : ("OPENROUTER_MODEL", "test-model")
+                  : filter ((`notElem` ["OPENROUTER_API_KEY", "OPENROUTER_MODEL"]) . fst) environment
+              command =
+                (proc executable args)
+                  { cwd = Just workspace
+                  , env = Just testEnvironment
+                  }
+          readCreateProcessWithExitCode command ""
+
+    it "refuses every billable request under a zero budget and exits non-zero" $
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, _) <- runBudgeted workspace ["-p", "--max-budget-usd", "0", "say hi"]
+
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "spending budget of $0.00"
+        stdoutText `shouldNotContain` "HTTP"
+
+    it "reports the budget stop as JSON under --output-format json" $
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, _) <-
+          runBudgeted workspace ["-p", "--output-format", "json", "--max-budget-usd=0", "say hi"]
+
+        exitCode `shouldBe` ExitFailure 1
+        Aeson.decode (LBS.pack stdoutText)
+          `shouldBe` Just (Aeson.object
+            [ ("error", Aeson.String "max_budget")
+            , ("budget_usd", Aeson.Number 0)
+            , ("spent_usd", Aeson.Number 0)
+            ])
+
+    it "enforces max_budget_usd from settings.json like the flag" $
+      withTemporaryWorkspace $ \workspace -> do
+        createDirectoryIfMissing True (workspace </> ".claude")
+        writeFile (workspace </> ".claude" </> "settings.json") "{\"max_budget_usd\": 0}"
+        (exitCode, stdoutText, _) <- runBudgeted workspace ["--no-tui", "say hi"]
+
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "spending budget of $0.00"
+        stdoutText `shouldNotContain` "Prompting LLM"
+
+    it "rejects a negative max_budget_usd in settings.json" $
+      withTemporaryWorkspace $ \workspace -> do
+        createDirectoryIfMissing True (workspace </> ".claude")
+        writeFile (workspace </> ".claude" </> "settings.json") "{\"max_budget_usd\": -1}"
+        (exitCode, stdoutText, _) <- runBudgeted workspace ["-p", "say hi"]
+
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "max_budget_usd"
+
   describe "session persistence and continuation (Issue #151)" $ do
     let runWithEnv executable workspace args = do
           environment <- getEnvironment

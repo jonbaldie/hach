@@ -556,12 +556,18 @@ data AgentConfig = AgentConfig
   , cfgSystemPrompt :: !(Maybe Text)
   -- | Maximum number of agent turns. 'Nothing' means unlimited.
   , cfgMaxTurns     :: !(Maybe Int)
+  -- | Spending ceiling in US dollars, measured against the cost each model
+  -- response reports. 'Nothing' means unlimited.
+  , cfgMaxBudgetUsd :: !(Maybe Double)
   } deriving (Show, Eq)
 
 -- | Final result of running the agent harness.
 data AgentResult
   = AgentCompleted !Text
   | AgentMaxTurnsReached !Int
+  -- | Stopped before a model request because reported spend (first field)
+  -- had reached the budget (second field), both in US dollars.
+  | AgentBudgetExceeded !Double !Double
   | AgentFailed !Text
   deriving (Show, Eq)
 
