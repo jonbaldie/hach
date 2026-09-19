@@ -130,6 +130,18 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         interpCheckPermission alg "Bash" "{\"command\":\"ls\"}"
           >>= (`shouldSatisfy` isJust)
 
+      it "denies write_file path spellings that resolve to a denied glob" $ do
+        let denySecrets = defaultIOEnvPermissions
+              { iopInitialMode = ModeAcceptEdits
+              , iopRules = [PermissionRule RuleDeny (Just "write_file") (Just "secrets.txt")]
+              }
+        env <- newIOEnvWithPermissions denySecrets "k" "test-model" testDir False
+        let alg = ioAlgebra env
+        interpCheckPermission alg "write_file" "{\"path\":\"./secrets.txt\",\"content\":\"x\"}"
+          >>= (`shouldSatisfy` isJust)
+        interpCheckPermission alg "write_file" "{\"path\":\"SECRETS.TXT\",\"content\":\"x\"}"
+          >>= (`shouldSatisfy` isJust)
+
       it "allows everything under bypassPermissions" $ do
         env <- newIOEnvWithPermissions bypassPerms "k" "test-model" testDir False
         let alg = ioAlgebra env

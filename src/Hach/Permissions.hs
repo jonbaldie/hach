@@ -13,7 +13,7 @@ module Hach.Permissions
   ) where
 
 import Hach.Types
-import Hach.Paths (isProtectedPath, matchStarGlob)
+import Hach.Paths (collapseLogicalPath, isProtectedPath, matchStarGlob)
 import Hach.Tools (resolveTool, resolveToolIdentity, resolvedToolAuthority, resolvedToolCanonicalName)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KM
@@ -118,7 +118,8 @@ matchRule PermissionRule{..} tool mPath =
         Just t  -> t == "*" || T.toLower t == T.toLower tool
       pathMatches = case (prPathGlob, mPath) of
         (Nothing, _)        -> True
-        (Just glob, Just p) -> matchGlob glob p
+        (Just glob, Just p) ->
+          matchGlob (T.toLower glob) (T.unpack (T.toLower (T.pack (collapseLogicalPath p))))
         (Just _, Nothing)   -> False
   in if toolMatches && pathMatches
        then case prAction of

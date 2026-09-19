@@ -170,6 +170,33 @@ spec = describe "Hach.Permissions" $ do
         PermDeny _ -> pure ()
         other      -> expectationFailure ("Expected PermDeny, got " <> show other)
 
+    it "deny glob secrets.txt denies ./secrets.txt" $ do
+      let rule = PermissionRule RuleDeny (Just "write_file") (Just "secrets.txt")
+          args = object ["path" .= ("./secrets.txt" :: String), "content" .= ("" :: String)]
+      case evalPermission ModeAcceptEdits [rule] "write_file" args of
+        PermDeny _ -> pure ()
+        other      -> expectationFailure ("Expected PermDeny for ./secrets.txt, got " <> show other)
+
+    it "deny glob **/secrets.txt denies SECRETS.TXT" $ do
+      let rule = PermissionRule RuleDeny (Just "write_file") (Just "**/secrets.txt")
+          args = object ["path" .= ("SECRETS.TXT" :: String), "content" .= ("" :: String)]
+      case evalPermission ModeAcceptEdits [rule] "write_file" args of
+        PermDeny _ -> pure ()
+        other      -> expectationFailure ("Expected PermDeny for SECRETS.TXT, got " <> show other)
+
+    it "deny glob **/secrets.txt still denies sub/../secrets.txt" $ do
+      let rule = PermissionRule RuleDeny (Just "write_file") (Just "**/secrets.txt")
+          args = object ["path" .= ("sub/../secrets.txt" :: String), "content" .= ("" :: String)]
+      case evalPermission ModeAcceptEdits [rule] "write_file" args of
+        PermDeny _ -> pure ()
+        other      -> expectationFailure ("Expected PermDeny for sub/../secrets.txt, got " <> show other)
+
+    it "allow glob secrets.txt matches ./secrets.txt and SECRETS.TXT" $ do
+      let rule = PermissionRule RuleAllow (Just "write_file") (Just "secrets.txt")
+          writeArgs path = object ["path" .= (path :: String), "content" .= ("" :: String)]
+      evalPermission ModeDefault [rule] "write_file" (writeArgs "./secrets.txt") `shouldBe` PermAllow
+      evalPermission ModeDefault [rule] "write_file" (writeArgs "SECRETS.TXT") `shouldBe` PermAllow
+
   describe "registry-backed command and web authorization" $ do
     it "uses the canonical command name for every command alias" $ do
       let args = object ["command" .= ("cabal test" :: String)]
