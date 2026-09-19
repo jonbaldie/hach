@@ -184,6 +184,26 @@ spec = describe "headless CLI prompt acquisition" $ do
       exitCode2 `shouldBe` ExitFailure 1
       stdoutText2 `shouldContain` "Worktree error: Worktree case collision:"
 
+  it "leaves the primary repository git status clean after -w (issue #156)" $ do
+    executable <- hachExecutable
+    withTemporaryGitWorkspace $ \workspace -> do
+      let worktree = workspace </> ".agents" </> "worktrees" </> "feat-clean"
+          command =
+            (proc executable ["--worktree", "feat-clean", "--exec", "true"])
+              { cwd = Just workspace
+              }
+      (exitCode, _stdoutText, stderrText) <- readCreateProcessWithExitCode command ""
+      exitCode `shouldBe` ExitSuccess
+      stderrText `shouldBe` ""
+      doesDirectoryExist worktree `shouldReturn` True
+      (statusCode, statusOut, _) <-
+        readCreateProcessWithExitCode (proc "git" ["-C", workspace, "status", "--porcelain"]) ""
+      statusCode `shouldBe` ExitSuccess
+      statusOut `shouldBe` ""
+      (addCode, _, addErr) <-
+        readCreateProcessWithExitCode (proc "git" ["-C", workspace, "add", "-A"]) ""
+      addCode `shouldBe` ExitSuccess
+      addErr `shouldNotContain` "embedded git repository"
 
   describe "--print stdout contract (Issue #116)" $ do
     -- An invalid key makes the agent fail on its first request, which drives

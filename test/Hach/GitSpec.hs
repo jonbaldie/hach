@@ -14,7 +14,8 @@ import System.Directory
   , removeDirectoryRecursive
   , removeFile
   )
-import System.Process (callProcess)
+import System.Exit (ExitCode (..))
+import System.Process (callProcess, proc, readCreateProcessWithExitCode)
 import Test.Hspec
 
 spec :: Spec
@@ -272,5 +273,26 @@ spec = describe "Hach.Git" $ do
       callProcess "git" ["-C", canonicalTempDir, "branch", "BranchCase"]
       res <- createWorktree canonicalTempDir "branchcase"
       res `shouldBe` Left "Worktree case collision: git branch 'BranchCase' differs in casing from requested 'branchcase'."
+      removeDirectoryRecursive tempDir
+
+    it "leaves the primary repository git status clean after creating a worktree (issue #156)" $ do
+      let tempDir = "dist-newstyle/test-git-worktree-status-clean"
+      exists <- doesDirectoryExist tempDir
+      when exists (removeDirectoryRecursive tempDir)
+      createDirectoryIfMissing True tempDir
+      canonicalTempDir <- canonicalizePath tempDir
+      callProcess "git" ["-C", canonicalTempDir, "init"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.name", "Test"]
+      callProcess "git" ["-C", canonicalTempDir, "config", "user.email", "test@test.com"]
+      callProcess "git" ["-C", canonicalTempDir, "commit", "--allow-empty", "-m", "init"]
+      res <- createWorktree canonicalTempDir "feat-clean"
+      res `shouldBe` Right (worktreePath canonicalTempDir "feat-clean")
+      status <- getGitStatus canonicalTempDir
+      gsiClean status `shouldBe` True
+      gsiUntracked status `shouldBe` []
+      (addCode, _, addErr) <- readCreateProcessWithExitCode
+        (proc "git" ["-C", canonicalTempDir, "add", "-A"]) ""
+      addCode `shouldBe` ExitSuccess
+      addErr `shouldNotContain` "embedded git repository"
       removeDirectoryRecursive tempDir
 
