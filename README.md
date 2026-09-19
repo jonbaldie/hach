@@ -83,6 +83,8 @@ To run without the terminal user interface, add the --no-tui flag:
 hach --no-tui "Run the test suite and fix any errors"
 ```
 
+To list every command-line option, run `hach --help`.
+
 ## Configuration
 
 Hach connects to the OpenRouter API. You must set your API key and model before running the harness.

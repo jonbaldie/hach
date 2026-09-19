@@ -40,12 +40,15 @@ main = do
   opts@CliOptions{..} <- case parseCliArgs rawArgs of
     Left err -> do
       putStrLn ("Argument error: " <> err)
-      putStrLn "Usage: hach [--model <model_name>] [--no-tui] [--exec <cmd>] [task prompt...]"
+      putStrLn cliUsageHint
       exitFailure
     Right parsed -> pure parsed
 
   let intent = startupIntent opts
   case intent of
+    IntentHelp -> do
+      putStr cliHelpText
+      exitSuccess
     IntentVersion -> do
       putStrLn ("hach " <> showVersion Paths.version)
       exitSuccess
@@ -73,6 +76,7 @@ main = do
           exitFailure
     IntentTui -> pure ()
     IntentHeadless -> pure ()
+    IntentHelp -> pure ()
     IntentVersion -> pure ()
 
   envRes <- resolveEnvConfig optModel (Just ".env")
