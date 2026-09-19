@@ -14,7 +14,8 @@ line, and the TUI driven through a real pty (Python `pty.fork()` + `TIOCSWINSZ` 
 rendered with `pyte`). Source was read to *explain* confirmed failures, never to substitute for
 driving the interface. Workspaces were throwaway git repositories under `/tmp` with their own `.env`
 and `.claude/settings.json`; `CLAUDE_CONFIG_DIR` pointed at a throwaway home so the real user
-configuration was never read or modified.
+configuration was never read or modified. (Correction, 2026-09-19: true for settings only. User-level
+skills are always read from `$HOME/.claude/skills`; see #169.)
 
 ---
 
@@ -150,8 +151,10 @@ Observations, with suggested improvements marked as such:
 
 ## Blocked / unexplored areas
 
-- **Hooks** (`setHooks`) — not exercised.
-- **MCP servers, plugins, skills discovery beyond `/goal`** — not exercised.
+- **Hooks** (`setHooks`) — not exercised. Covered by the
+  [2026-09-19 pass](2026-09-19-sessions-hooks-skills.md) (#165–#168).
+- **MCP servers, plugins, skills discovery beyond `/goal`** — not exercised. Skills are covered by the
+  [2026-09-19 pass](2026-09-19-sessions-hooks-skills.md) (#169, #170).
 - **Docker paths** in the README — not exercised (host-only pass).
 - **Auto-compaction and long-context behaviour** — not exercised; would need a long, expensive session.
 - **Multi-turn goal loop (`/goal`)** — invoked only far enough to confirm argument handling.
