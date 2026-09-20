@@ -223,6 +223,13 @@ spec = do
           injected <- expandSlashInvokedPrompt sandbox cat "plain prompt"
           injected `shouldBe` "plain prompt"
 
+        it "expands slash-invoked skills even when disable-model-invocation is true" $ do
+          let sk = (mkSkill "deploy-prod" "d" "SECRET-DEPLOY-STEPS: run ./deploy.sh --prod" "/p" SkillGlobal)
+                    { skillDisableModelInvocation = True }
+              cat = Map.singleton "deploy-prod" sk
+          injected <- expandSlashInvokedPrompt sandbox cat "/deploy-prod"
+          injected `shouldBe` "<skill name=\"deploy-prod\">\nSECRET-DEPLOY-STEPS: run ./deploy.sh --prod\n</skill>"
+
     describe "skillInvocationCompletion" $ do
       let goal  = mkSkill "goal"  "Goal skill"  "body" "/p" SkillGlobal
           goals = mkSkill "goals" "Goals skill" "body" "/p" SkillGlobal

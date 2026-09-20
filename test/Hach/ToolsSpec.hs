@@ -333,6 +333,34 @@ spec = do
               && "Second: first\n  !touch " `T.isInfixOf` out
           ToolError _ -> False
 
+      it "refuses Skill tool invocation when disable-model-invocation is true" $ do
+        sandboxRoot <- canonicalizePath testSandbox
+        let skillDir = testSandbox </> ".claude" </> "skills" </> "deploy-prod"
+            secret = "SECRET-DEPLOY-STEPS: run ./deploy.sh --prod"
+            marker = sandboxRoot </> "disabled-skill-command-ran"
+        markerExists <- doesFileExist marker
+        if markerExists then removeFile marker else pure ()
+        createDirectoryIfMissing True skillDir
+        TIO.writeFile (skillDir </> "SKILL.md")
+          ("---\nname: deploy-prod\ndescription: Deploys to production. Only a human may run this.\ndisable-model-invocation: true\n---\n" <> secret <> "\n!touch " <> T.pack marker)
+        result <- executeSkill testSandbox (SkillToolArgs "deploy-prod" Nothing)
+        doesFileExist marker `shouldReturn` False
+        case result of
+          ToolError err -> do
+            err `shouldBe` "Model invocation is disabled for skill 'deploy-prod'."
+            err `shouldNotSatisfy` (secret `T.isInfixOf`)
+          ToolSuccess out -> expectationFailure ("Expected ToolError, got success revealing: " ++ T.unpack out)
+
+      it "invokes the Skill tool when disable-model-invocation is false" $ do
+        let skillDir = testSandbox </> ".claude" </> "skills" </> "review"
+        createDirectoryIfMissing True skillDir
+        TIO.writeFile (skillDir </> "SKILL.md")
+          "---\nname: review\ndescription: Review code.\ndisable-model-invocation: false\n---\nReview the diff."
+        result <- executeSkill testSandbox (SkillToolArgs "review" Nothing)
+        result `shouldSatisfy` \case
+          ToolSuccess out -> "Skill 'review' content:\nReview the diff." `T.isInfixOf` out
+          ToolError _ -> False
+
       it "fails to replace text when target content is not found" $ do
         let targetFile = testSandbox </> "sample.txt"
         _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs targetFile "foo bar baz")
