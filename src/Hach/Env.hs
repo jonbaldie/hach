@@ -23,6 +23,7 @@ module Hach.Env
   , formatUsd
   , resolvePermissionMode
   , resolveMaxBudgetUsd
+  , resolveWorkingDirs
   , resolveEffortLevel
   , resolveConfigWith
   , resolveConfigWithSettings
@@ -54,6 +55,7 @@ import Data.Char (isSpace, toLower)
 import Data.List (intercalate, isPrefixOf, stripPrefix)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -172,6 +174,25 @@ finiteNonNegativeUsd d
   | d >= 0 && not (isNaN d) && not (isInfinite d) = Just d
   | otherwise = Nothing
 
+-- | Additional directories tools may reach, beyond the primary workspace
+-- root. @--add-dir@ flags and the @working_directories@ setting accumulate
+-- rather than override: a repeated directory is kept once, flags first.
+resolveWorkingDirs
+  :: [FilePath]             -- ^ @--add-dir@ flags, in command-line order
+  -> Settings               -- ^ Layered settings
+  -> [FilePath]
+resolveWorkingDirs flagDirs settings =
+  ordNubPaths (filter (not . null) (flagDirs ++ setWorkingDirs settings))
+
+-- | Order-preserving unique: first occurrence wins.
+ordNubPaths :: [FilePath] -> [FilePath]
+ordNubPaths = go Set.empty
+  where
+    go _ [] = []
+    go seen (x:xs)
+      | x `Set.member` seen = go seen xs
+      | otherwise           = x : go (Set.insert x seen) xs
+
 formatUsd :: Double -> Text
 formatUsd d = T.pack (printf "$%.2f" d)
 
@@ -273,7 +294,7 @@ cliFlags =
   , CliFlag ["--max-turns"] (Just "N") "Stop the agent after N turns"
   , CliFlag ["--max-budget-usd"] (Just "USD") "Stop the agent after spending this many US dollars"
   , CliFlag ["--append-system-prompt"] (Just "TEXT") "Append TEXT to the system prompt"
-  , CliFlag ["--add-dir"] (Just "DIR") "Add a working directory (repeatable; not yet applied)"
+  , CliFlag ["--add-dir"] (Just "DIR") "Add a working directory tools may reach (repeatable)"
   , CliFlag ["-w", "--worktree"] (Just "NAME") "Work in the git worktree NAME, creating it if needed"
   , CliFlag ["--init"] Nothing "Create a CLAUDE.md guidelines template and exit"
   , CliFlag ["--exec"] (Just "CMD") "Run the shell command CMD in the workspace and exit"

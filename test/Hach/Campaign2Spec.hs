@@ -320,15 +320,15 @@ spec = do
 
       it "resolveWorkspacePath rejects absolute and escaping relative paths" $ do
         root <- canonicalizePath sandbox
-        absRes <- resolveWorkspacePath root "/etc/passwd"
+        absRes <- resolveWorkspacePath (workspaceAt root) "/etc/passwd"
         case absRes of
           Left _  -> pure ()
           Right p -> expectationFailure ("absolute path allowed: " <> p)
-        escRes <- resolveWorkspacePath root "../../test/Hach/Campaign2Spec.hs"
+        escRes <- resolveWorkspacePath (workspaceAt root) "../../test/Hach/Campaign2Spec.hs"
         case escRes of
           Left _  -> pure ()
           Right p -> expectationFailure ("escaping path allowed: " <> p)
-        okRes <- resolveWorkspacePath root "note.txt"
+        okRes <- resolveWorkspacePath (workspaceAt root) "note.txt"
         case okRes of
           Right _ -> pure ()
           Left err -> expectationFailure err

@@ -134,7 +134,13 @@ module Hach.Tools
 
 import Hach.Git (createWorktree, isWorktreeDirectory)
 import Hach.Notifications (sendDesktopNotification)
-import Hach.Paths (isProtectedPath, matchStarGlob, resolveWorkspacePath)
+import Hach.Paths
+  ( Workspace(..)
+  , isProtectedPath
+  , matchStarGlob
+  , relativeToWorkspace
+  , resolveWorkspacePath
+  )
 import Hach.Skills (discoverSkills, expandSkillContent, skillContent)
 import Hach.Tasks
   ( Task(..)
@@ -175,8 +181,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import Network.HTTP.Client (Manager, Request(..), Response(..), httpLbs, newManager, parseRequest)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import System.Directory
-  ( canonicalizePath
-  , createDirectoryIfMissing
+  ( createDirectoryIfMissing
   , doesDirectoryExist
   , doesFileExist
   , listDirectory
@@ -186,7 +191,6 @@ import System.Exit (ExitCode(..))
 import System.FilePath
   ( (</>)
   , isAbsolute
-  , makeRelative
   , takeDirectory
   , takeFileName
   )
@@ -964,14 +968,14 @@ data ToolRegistration = ToolRegistration
   , toolDefinitions :: ![ToolDef]
   , toolResolve :: ToolCall -> Either Text (ToolAuthority, Maybe Text)
   , toolPartialTarget :: ToolCall -> Maybe Text
-  , toolExecute :: FilePath -> ToolCall -> IO ToolResult
+  , toolExecute :: Workspace -> ToolCall -> IO ToolResult
   }
 
 data ResolvedTool = ResolvedTool
   { resolvedToolCanonicalName :: !Text
   , resolvedToolAuthority :: !ToolAuthority
   , resolvedToolTarget :: !(Maybe Text)
-  , resolvedToolExecute :: FilePath -> ToolCall -> IO ToolResult
+  , resolvedToolExecute :: Workspace -> ToolCall -> IO ToolResult
   }
 
 -- | The sole registration point for supported tool definitions, aliases,
@@ -980,28 +984,28 @@ toolRegistry :: [ToolRegistration]
 toolRegistry =
   [ registration "read_file" ["read_file"] AuthorityRead [readFileToolDef] (target parseReadFileArgs (T.pack . readFilePath)) noTarget (run parseReadFileArgs executeReadFile)
   , registration "write_file" ["write_file"] AuthorityWorkspaceWrite [writeFileToolDef] (target parseWriteFileArgs (T.pack . writeFilePath)) pathTarget (run parseWriteFileArgs executeWriteFile)
-  , registration "replace_file_content" ["replace_file_content", "Edit", "edit"] AuthorityWorkspaceWrite [replaceFileContentToolDef, editToolDef] (target parseEditArgs (T.pack . editPath)) pathTarget (run parseEditArgs (\root args -> executeReplaceFileContent root (ReplaceFileContentArgs (editPath args) (editOldContent args) (editNewContent args))))
-  , registration "run_command" ["run_command", "Bash", "bash"] AuthorityCommand [runCommandToolDef, bashToolDef] (target parseRunCommandArgs runCommandCmd) noTarget (run parseRunCommandArgs executeRunCommand)
+  , registration "replace_file_content" ["replace_file_content", "Edit", "edit"] AuthorityWorkspaceWrite [replaceFileContentToolDef, editToolDef] (target parseEditArgs (T.pack . editPath)) pathTarget (run parseEditArgs (\ws args -> executeReplaceFileContent ws (ReplaceFileContentArgs (editPath args) (editOldContent args) (editNewContent args))))
+  , registration "run_command" ["run_command", "Bash", "bash"] AuthorityCommand [runCommandToolDef, bashToolDef] (target parseRunCommandArgs runCommandCmd) noTarget (run parseRunCommandArgs (executeRunCommand . wsRoot))
   , registration "list_dir" ["list_dir", "ListDir", "listdir"] AuthorityRead [listDirToolDef] (target parseListDirArgs (T.pack . listDirPath)) noTarget (run parseListDirArgs executeListDir)
-  , registration "find_files" ["find_files", "Glob", "glob"] AuthorityRead [findFilesToolDef, globToolDef] (target parseGlobArgs globPattern) noTarget (run parseGlobArgs (\root args -> executeFindFiles root (FindFilesArgs (globPattern args) (globPath args))))
-  , registration "grep_search" ["grep_search", "Grep", "grep"] AuthorityRead [grepSearchToolDef, grepToolDef] (target parseGrepArgs grepQueryText) noTarget (run parseGrepArgs (\root args -> executeGrepSearch root (GrepSearchArgs (grepQueryText args) (grepPathText args) (grepArgCaseSensitive args))))
+  , registration "find_files" ["find_files", "Glob", "glob"] AuthorityRead [findFilesToolDef, globToolDef] (target parseGlobArgs globPattern) noTarget (run parseGlobArgs (\ws args -> executeFindFiles ws (FindFilesArgs (globPattern args) (globPath args))))
+  , registration "grep_search" ["grep_search", "Grep", "grep"] AuthorityRead [grepSearchToolDef, grepToolDef] (target parseGrepArgs grepQueryText) noTarget (run parseGrepArgs (\ws args -> executeGrepSearch ws (GrepSearchArgs (grepQueryText args) (grepPathText args) (grepArgCaseSensitive args))))
   , registration "WebFetch" ["WebFetch", "web_fetch", "webfetch"] AuthorityRead [webFetchToolDef] (target parseWebFetchArgs webFetchUrl) noTarget (run parseWebFetchArgs (\_ -> executeWebFetch))
   , registration "WebSearch" ["WebSearch", "web_search", "websearch"] AuthorityRead [webSearchToolDef] (target parseWebSearchArgs webSearchQuery) noTarget (run parseWebSearchArgs (\_ -> executeWebSearch))
   , registration "Agent" ["Agent", "agent"] AuthorityInteraction [agentToolDef] (target parseAgentArgs agentArgName) noTarget (run parseAgentArgs (\_ args -> pure (ToolSuccess ("Spawned subagent '" <> agentArgName args <> "' with prompt: " <> agentArgPrompt args))))
-  , registration "TodoWrite" ["TodoWrite", "todo_write", "todowrite"] AuthorityWorkspaceWrite [todoWriteToolDef] (noArgs parseTodoWriteArgs) noTarget (run parseTodoWriteArgs executeTodoWrite)
-  , registration "Skill" ["Skill", "skill"] AuthorityCommand [skillToolDef] (target parseSkillToolArgs skillToolName) noTarget (run parseSkillToolArgs executeSkill)
+  , registration "TodoWrite" ["TodoWrite", "todo_write", "todowrite"] AuthorityWorkspaceWrite [todoWriteToolDef] (noArgs parseTodoWriteArgs) noTarget (run parseTodoWriteArgs (executeTodoWrite . wsRoot))
+  , registration "Skill" ["Skill", "skill"] AuthorityCommand [skillToolDef] (target parseSkillToolArgs skillToolName) noTarget (run parseSkillToolArgs (executeSkill . wsRoot))
   , registration "ListAgents" ["ListAgents", "list_agents", "listagents"] AuthorityRead [listAgentsToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Available subagents: explore, plan."))))
   , registration "SendMessage" ["SendMessage", "send_message"] AuthorityInteraction [sendMessageToolDef] (target parseSendMessageArgs (unAgentId . sendMsgRecipient)) noTarget (run parseSendMessageArgs (\_ args -> pure (ToolSuccess ("Message sent to agent " <> unAgentId (sendMsgRecipient args) <> ": " <> sendMsgContent args))))
   , registration "AskUserQuestion" ["AskUserQuestion", "ask_user_question"] AuthorityInteraction [askUserQuestionToolDef] (target parseAskUserQuestionArgs askQuestionText) noTarget (run parseAskUserQuestionArgs (\_ -> executeAskUserQuestion))
   , registration "PushNotification" ["PushNotification", "push_notification"] AuthorityInteraction [pushNotificationToolDef] (target parsePushNotificationArgs pushMessage) noTarget (run parsePushNotificationArgs (\_ -> executePushNotification))
   , registration "Monitor" ["Monitor", "monitor"] AuthorityRead [monitorToolDef] (target parseMonitorArgs (unTaskId . monitorTaskId)) noTarget (run parseMonitorArgs (\_ -> executeMonitor))
-  , ToolRegistration "TaskCreate" ["TaskCreate", "task_create", "taskcreate"] AuthorityWorkspaceWrite [taskCreateToolDef] taskCreateTarget noTarget (run parseTaskCreateArgs executeTaskCreate)
+  , ToolRegistration "TaskCreate" ["TaskCreate", "task_create", "taskcreate"] AuthorityWorkspaceWrite [taskCreateToolDef] taskCreateTarget noTarget (run parseTaskCreateArgs (executeTaskCreate . wsRoot))
   , registration "TaskGet" ["TaskGet", "task_get", "taskget"] AuthorityRead [taskGetToolDef] (target parseTaskGetArgs (unTaskId . taskGetId)) noTarget (run parseTaskGetArgs (\_ -> executeTaskGet))
   , registration "TaskList" ["TaskList", "task_list", "tasklist"] AuthorityRead [taskListToolDef] (noArgs (const (Right ()))) noTarget (const (const executeTaskList))
   , registration "TaskUpdate" ["TaskUpdate", "task_update", "taskupdate"] AuthorityWorkspaceWrite [taskUpdateToolDef] (target parseTaskUpdateArgs (unTaskId . taskUpdateId)) noTarget (run parseTaskUpdateArgs (\_ -> executeTaskUpdate))
   , registration "TaskStop" ["TaskStop", "task_stop", "taskstop"] AuthorityCommand [taskStopToolDef] (target parseTaskStopArgs (unTaskId . taskStopId)) noTarget (run parseTaskStopArgs (\_ -> executeTaskStop))
-  , registration "EnterWorktree" ["EnterWorktree", "enter_worktree", "enterworktree"] AuthorityCommand [enterWorktreeToolDef] (target parseEnterWorktreeArgs worktreeName) noTarget (run parseEnterWorktreeArgs executeEnterWorktree)
-  , registration "ExitWorktree" ["ExitWorktree", "exit_worktree", "exitworktree"] AuthorityCommand [exitWorktreeToolDef] (noArgs (const (Right ()))) noTarget (\root _ -> executeExitWorktree root)
+  , registration "EnterWorktree" ["EnterWorktree", "enter_worktree", "enterworktree"] AuthorityCommand [enterWorktreeToolDef] (target parseEnterWorktreeArgs worktreeName) noTarget (run parseEnterWorktreeArgs (executeEnterWorktree . wsRoot))
+  , registration "ExitWorktree" ["ExitWorktree", "exit_worktree", "exitworktree"] AuthorityCommand [exitWorktreeToolDef] (noArgs (const (Right ()))) noTarget (\ws _ -> executeExitWorktree (wsRoot ws))
   , registration "EnterPlanMode" ["EnterPlanMode", "enter_plan_mode"] AuthorityInteraction [enterPlanModeToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Entered plan mode. The agent is now in read-only planning mode."))))
   , registration "ExitPlanMode" ["ExitPlanMode", "exit_plan_mode"] AuthorityInteraction [exitPlanModeToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Exited plan mode. The agent is now in standard execution mode."))))
   , registration "EndConversation" ["EndConversation", "end_conversation"] AuthorityInteraction [endConversationToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Conversation completed by agent."))))
@@ -1027,9 +1031,9 @@ toolRegistry =
     pathTarget call = do
       Aeson.Object argsObject <- either (const Nothing) Just (parseCallArgs call)
       AesonTypes.parseMaybe (.: "path") argsObject
-    run parser action root call = case parser call of
+    run parser action ws call = case parser call of
       Left err -> pure (ToolError (T.pack err))
-      Right args -> action root args
+      Right args -> action ws args
 
 resolveTool :: ToolCall -> Maybe (Either Text ResolvedTool)
 resolveTool call = do
@@ -1063,8 +1067,8 @@ toolDefinitionForName name = do
 findToolRegistration :: Text -> Maybe ToolRegistration
 findToolRegistration name = find (\registration -> name `elem` toolAliases registration) toolRegistry
 
-executeResolvedTool :: FilePath -> ToolCall -> ResolvedTool -> IO ToolResult
-executeResolvedTool root call ResolvedTool{..} = resolvedToolExecute root call
+executeResolvedTool :: Workspace -> ToolCall -> ResolvedTool -> IO ToolResult
+executeResolvedTool ws call ResolvedTool{..} = resolvedToolExecute ws call
 
 --------------------------------------------------------------------------------
 -- Output Truncation
@@ -1109,34 +1113,32 @@ countOccurrencesUpToTwo needle haystack
 -- | Check a canonical target for protected components below the workspace root.
 -- The root is stripped first so a workspace whose own path contains a
 -- protected directory name can still be modified normally.
-isProtectedResolvedPath :: FilePath -> FilePath -> IO Bool
-isProtectedResolvedPath root fullPath = do
-  rootCanon <- canonicalizePath root
-  pure (isProtectedPath (makeRelative rootCanon fullPath))
+isProtectedResolvedPath :: Workspace -> FilePath -> IO Bool
+isProtectedResolvedPath ws fullPath =
+  isProtectedPath <$> relativeToWorkspace ws fullPath
 
 -- | Check the caller's spelling for protected components below the workspace
 -- root. Absolute spellings must be made relative first so the root itself is
 -- not treated as a protected target.
-isProtectedRawPath :: FilePath -> FilePath -> IO Bool
-isProtectedRawPath root rawPath = do
-  rootCanon <- canonicalizePath root
-  let pathBelowRoot = if isAbsolute rawPath then makeRelative rootCanon rawPath else rawPath
-  pure (isProtectedPath pathBelowRoot)
+isProtectedRawPath :: Workspace -> FilePath -> IO Bool
+isProtectedRawPath ws rawPath
+  | isAbsolute rawPath = isProtectedPath <$> relativeToWorkspace ws rawPath
+  | otherwise          = pure (isProtectedPath rawPath)
 
 -- | Execute any supported tool within the given workspace directory.
-executeCodingTool :: FilePath -> ToolCall -> IO ToolResult
-executeCodingTool root call = fmap truncateResult $ case resolveTool call of
+executeCodingTool :: Workspace -> ToolCall -> IO ToolResult
+executeCodingTool ws call = fmap truncateResult $ case resolveTool call of
   Just (Left err) -> pure (ToolError err)
-  Just (Right resolved) -> executeResolvedTool root call resolved
+  Just (Right resolved) -> executeResolvedTool ws call resolved
   Nothing -> pure (ToolError ("Unknown tool function: " <> functionName call))
   where
     truncateResult = \case
       ToolSuccess out -> ToolSuccess (truncateToolOutput out)
       err             -> err
 
-executeReadFile :: FilePath -> ReadFileArgs -> IO ToolResult
-executeReadFile root (ReadFileArgs path) = do
-  pathRes <- resolveWorkspacePath root path
+executeReadFile :: Workspace -> ReadFileArgs -> IO ToolResult
+executeReadFile ws (ReadFileArgs path) = do
+  pathRes <- resolveWorkspacePath ws path
   case pathRes of
     Left err -> pure $ ToolError (T.pack err)
     Right fullPath -> do
@@ -1151,17 +1153,17 @@ executeReadFile root (ReadFileArgs path) = do
               let txt = TE.decodeUtf8With TE.lenientDecode bytes
               in pure $ ToolSuccess txt
 
-executeWriteFile :: FilePath -> WriteFileArgs -> IO ToolResult
-executeWriteFile root (WriteFileArgs path content) = do
-  rawProtected <- isProtectedRawPath root path
+executeWriteFile :: Workspace -> WriteFileArgs -> IO ToolResult
+executeWriteFile ws (WriteFileArgs path content) = do
+  rawProtected <- isProtectedRawPath ws path
   if rawProtected
     then pure $ ToolError ("Protected path: write denied to " <> T.pack path)
     else do
-      pathRes <- resolveWorkspacePath root path
+      pathRes <- resolveWorkspacePath ws path
       case pathRes of
         Left err -> pure $ ToolError (T.pack err)
         Right fullPath -> do
-          protected <- isProtectedResolvedPath root fullPath
+          protected <- isProtectedResolvedPath ws fullPath
           if protected
             then pure $ ToolError ("Protected path: write denied to " <> T.pack path)
             else do
@@ -1174,19 +1176,19 @@ executeWriteFile root (WriteFileArgs path content) = do
                 Right () ->
                   pure $ ToolSuccess ("Successfully wrote " <> T.pack (show (T.length content)) <> " characters to " <> T.pack path)
 
-executeReplaceFileContent :: FilePath -> ReplaceFileContentArgs -> IO ToolResult
-executeReplaceFileContent root (ReplaceFileContentArgs path oldContent newContent)
+executeReplaceFileContent :: Workspace -> ReplaceFileContentArgs -> IO ToolResult
+executeReplaceFileContent ws (ReplaceFileContentArgs path oldContent newContent)
   | T.null oldContent = pure $ ToolError "The 'old_content' parameter cannot be empty."
   | otherwise = do
-      rawProtected <- isProtectedRawPath root path
+      rawProtected <- isProtectedRawPath ws path
       if rawProtected
         then pure $ ToolError ("Protected path: edit denied to " <> T.pack path)
         else do
-          pathRes <- resolveWorkspacePath root path
+          pathRes <- resolveWorkspacePath ws path
           case pathRes of
             Left err -> pure $ ToolError (T.pack err)
             Right fullPath -> do
-              protected <- isProtectedResolvedPath root fullPath
+              protected <- isProtectedResolvedPath ws fullPath
               if protected
                 then pure $ ToolError ("Protected path: edit denied to " <> T.pack path)
                 else do
@@ -1283,9 +1285,9 @@ runExecCommand root cmd = do
     Left err -> pure (ExitFailure 1, T.empty, err)
     Right (code, out, err) -> pure (code, T.pack out, T.pack err)
 
-executeListDir :: FilePath -> ListDirArgs -> IO ToolResult
-executeListDir root (ListDirArgs path) = do
-  pathRes <- resolveWorkspacePath root path
+executeListDir :: Workspace -> ListDirArgs -> IO ToolResult
+executeListDir ws (ListDirArgs path) = do
+  pathRes <- resolveWorkspacePath ws path
   case pathRes of
     Left err -> pure $ ToolError (T.pack err)
     Right fullPath -> do
@@ -1299,9 +1301,9 @@ executeListDir root (ListDirArgs path) = do
             Right entries ->
               pure $ ToolSuccess (T.unlines (map T.pack entries))
 
-executeFindFiles :: FilePath -> FindFilesArgs -> IO ToolResult
-executeFindFiles root (FindFilesArgs pat searchPath) = do
-  pathRes <- resolveWorkspacePath root searchPath
+executeFindFiles :: Workspace -> FindFilesArgs -> IO ToolResult
+executeFindFiles ws (FindFilesArgs pat searchPath) = do
+  pathRes <- resolveWorkspacePath ws searchPath
   case pathRes of
     Left err -> pure $ ToolError (T.pack err)
     Right startDir -> do
@@ -1309,8 +1311,7 @@ executeFindFiles root (FindFilesArgs pat searchPath) = do
       if not dirExists
         then pure $ ToolError ("Directory not found: " <> T.pack searchPath)
         else do
-          canonRoot <- canonicalizePath root
-          files <- traverseDir canonRoot startDir
+          files <- traverseDir startDir
           let matches = filter (matchPattern pat) files
               limited = take 100 matches
               resText = if null limited
@@ -1320,7 +1321,7 @@ executeFindFiles root (FindFilesArgs pat searchPath) = do
   where
     ignoredDirs = [".git", "dist-newstyle", ".env", ".cabal-sandbox", "node_modules"]
 
-    traverseDir canonRoot current = do
+    traverseDir current = do
       entriesRes <- try (listDirectory current) :: IO (Either SomeException [FilePath])
       case entriesRes of
         Left _ -> pure []
@@ -1334,9 +1335,9 @@ executeFindFiles root (FindFilesArgs pat searchPath) = do
               else do
                 isDir <- doesDirectoryExist full
                 if isDir
-                  then traverseDir canonRoot full
+                  then traverseDir full
                   else do
-                    let rel = makeRelative canonRoot full
+                    rel <- relativeToWorkspace ws full
                     pure [rel]
           pure (concat subResults)
 
@@ -1351,23 +1352,22 @@ matchPattern p fp =
        then matchStarGlob p name || matchStarGlob p full
        else p `T.isInfixOf` name || p `T.isInfixOf` full
 
-executeGrepSearch :: FilePath -> GrepSearchArgs -> IO ToolResult
-executeGrepSearch root (GrepSearchArgs query searchPath caseSensitive) = do
-  pathRes <- resolveWorkspacePath root searchPath
+executeGrepSearch :: Workspace -> GrepSearchArgs -> IO ToolResult
+executeGrepSearch ws (GrepSearchArgs query searchPath caseSensitive) = do
+  pathRes <- resolveWorkspacePath ws searchPath
   case pathRes of
     Left err -> pure $ ToolError (T.pack err)
     Right startPath -> do
       isDir <- doesDirectoryExist startPath
       isFile <- doesFileExist startPath
-      canonRoot <- canonicalizePath root
       if isFile
         then do
-          let rel = makeRelative canonRoot startPath
+          rel <- relativeToWorkspace ws startPath
           matches <- grepInFile rel startPath
           pure $ ToolSuccess (if null matches then "No matches found." else T.unlines matches)
         else if isDir
           then do
-            files <- collectFiles canonRoot startPath
+            files <- collectFiles startPath
             matches <- forM files $ \(rel, full) -> grepInFile rel full
             let allMatches = concat matches
                 limited = take 100 allMatches
@@ -1377,7 +1377,7 @@ executeGrepSearch root (GrepSearchArgs query searchPath caseSensitive) = do
   where
     ignoredDirs = [".git", "dist-newstyle", ".env", ".cabal-sandbox", "node_modules"]
 
-    collectFiles canonRoot current = do
+    collectFiles current = do
       entriesRes <- try (listDirectory current) :: IO (Either SomeException [FilePath])
       case entriesRes of
         Left _ -> pure []
@@ -1391,9 +1391,9 @@ executeGrepSearch root (GrepSearchArgs query searchPath caseSensitive) = do
               else do
                 isDir <- doesDirectoryExist full
                 if isDir
-                  then collectFiles canonRoot full
+                  then collectFiles full
                   else do
-                    let rel = makeRelative canonRoot full
+                    rel <- relativeToWorkspace ws full
                     pure [(rel, full)]
           pure (concat subResults)
 

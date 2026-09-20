@@ -141,6 +141,7 @@ test-suite hach-test
         Hach.TasksSpec
         Hach.NotificationsSpec
         Hach.InterpreterIOSpec
+        Hach.WorkingDirsSpec
         Hach.CLISpec
         Hach.TypesSpec
     build-tool-depends:

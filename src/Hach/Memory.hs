@@ -11,7 +11,7 @@ module Hach.Memory
   , loadFullMemory
   ) where
 
-import Hach.Paths (resolveWorkspacePath)
+import Hach.Paths (resolveWorkspacePath, workspaceAt)
 import Hach.Permissions (matchGlob)
 import Control.Exception (SomeException, try)
 import qualified Data.ByteString as BS
@@ -86,7 +86,7 @@ resolveMemoryImports :: FilePath -> Int -> FilePath -> IO Text
 resolveMemoryImports baseDir maxDepth path = do
   absBase <- makeAbsolute baseDir
   absPath <- makeAbsolute path
-  pathRes <- resolveWorkspacePath absBase absPath
+  pathRes <- resolveWorkspacePath (workspaceAt absBase) absPath
   case pathRes of
     Left _       -> pure ""
     Right safeFp -> readAndExpand absBase maxDepth safeFp
@@ -115,7 +115,7 @@ resolveMemoryImports baseDir maxDepth path = do
               let rawRel = T.strip (T.drop (T.length ("@import " :: T.Text)) (T.strip line))
                   cleanRel = T.unpack (T.dropAround (\c -> c == '"' || c == '\'' || isSpace c) rawRel)
                   targetFp = if isAbsolute cleanRel then cleanRel else dir </> cleanRel
-              pathRes <- resolveWorkspacePath base targetFp
+              pathRes <- resolveWorkspacePath (workspaceAt base) targetFp
               case pathRes of
                 Left _ ->
                   pure ["[Import denied: path escapes workspace]"]
