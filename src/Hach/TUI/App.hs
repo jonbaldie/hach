@@ -27,7 +27,7 @@ module Hach.TUI.App
 
 import Hach.Clipboard (copyToClipboard)
 import Hach.Core
-import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions, loadProjectInstructionsFile)
+import Hach.Env (buildSystemPromptWithAppend, formatUsd, loadProjectInstructions, loadProjectInstructionsFile)
 import Hach.Git (getGitDiff)
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
@@ -177,9 +177,10 @@ runTuiAction
   -> PermissionGate
   -> IOEnv
   -> Text
+  -> Maybe Double
   -> TuiAction
   -> EventM Name TuiState ()
-runTuiAction eventChan workerVar gate ioEnv sysPrompt = \case
+runTuiAction eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd = \case
   ActionInitializeProject -> do
     result <- liftIO (initializeProjectWorkspace ioEnv)
     modify (applyProjectInitializationResult result)
@@ -214,11 +215,11 @@ runTuiAction eventChan workerVar gate ioEnv sysPrompt = \case
     mapM_ cancel mWorker
   ActionRunAgent prompt -> do
     currentState <- get
-    triggerAgentRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) prompt (tsHistory currentState)
+    triggerAgentRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) mMaxBudgetUsd prompt (tsHistory currentState)
     vScrollToEnd (viewportScroll VpTranscript)
   ActionRunGoal condition -> do
     currentState <- get
-    triggerGoalRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) condition (tsHistory currentState)
+    triggerGoalRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) mMaxBudgetUsd condition (tsHistory currentState)
     vScrollToEnd (viewportScroll VpTranscript)
   ActionScrollTranscript delta ->
     vScrollBy (viewportScroll VpTranscript) delta
@@ -248,8 +249,8 @@ messagesToTranscriptItems msgs = concatMap msgToItems msgs
         [TiToolCard (ToolCard cid name "" (Finished (ToolSuccess content)) False)]
 
 -- | Run the full modern TUI application.
-runTui :: IOEnv -> Maybe Text -> Maybe Int -> Maybe Text -> Maybe Text -> Text -> Maybe (SessionInfo, [Message]) -> IO ()
-runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt mTheme activeSid mLoadedSession = do
+runTui :: IOEnv -> Maybe Text -> Maybe Int -> Maybe Double -> Maybe Text -> Maybe Text -> Text -> Maybe (SessionInfo, [Message]) -> IO ()
+runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeSid mLoadedSession = do
   eventChan <- newBChan 100
   workerVar <- newTVarIO (Nothing :: Maybe (Async ()))
   gate <- newPermissionGate
@@ -284,9 +285,9 @@ runTui ioEnv0 initialPrompt mMaxTurns mAppendPrompt mTheme activeSid mLoadedSess
       app = App
         { appDraw         = drawUI
         , appChooseCursor = showFirstCursor
-        , appHandleEvent  = handleBrickEvent eventChan workerVar gate ioEnv sysPrompt
+        , appHandleEvent  = handleBrickEvent eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd
         , appStartEvent   = do
-            forM_ initialActions (runTuiAction eventChan workerVar gate ioEnv sysPrompt)
+            forM_ initialActions (runTuiAction eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd)
         , appAttrMap      = const tuiAttrMap
         }
 
@@ -443,10 +444,11 @@ triggerAgentRun
   -> Text         -- ^ model currently selected in the TUI
   -> Text
   -> Maybe Int
+  -> Maybe Double
   -> Text
   -> [DialogueItem]
   -> EventM Name TuiState ()
-triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns currentPrompt historyItems = do
+triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd currentPrompt historyItems = do
   st <- get
   liftIO $ do
     cancelPermissionAsk gate
@@ -461,7 +463,7 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
 
     newWorker <- async $ do
       let runEnv = runEnvForModel selectedModel ioEnv
-          agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns
+          agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns mMaxBudgetUsd
           initHistory = dialogueToMessages sysPrompt finalPrompt historyItems
       res <- try (foldAgentProgram (tuiAlgebra eventChan runEnv) (agentLoop agentConfig allToolDefs initHistory))
       case res of
@@ -471,6 +473,8 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
           writeBChan eventChan (EvDone ans)
         Right (AgentMaxTurnsReached n, _) ->
           writeBChan eventChan (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
+        Right (AgentBudgetExceeded spent budget, _) ->
+          writeBChan eventChan (EvError ("Budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"))
         Right (AgentFailed err, _) ->
           writeBChan eventChan (EvError err)
 
@@ -479,11 +483,12 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
 -- | Construct the 'AgentConfig' for a goal-directed run in the TUI. The model
 -- comes from the run environment, so callers route it through 'runEnvForModel'
 -- to honour the TUI's live @/model@ selection.
-goalAgentConfig :: IOEnv -> Text -> Maybe Int -> AgentConfig
-goalAgentConfig ioEnv sysPrompt mMaxTurns = AgentConfig
+goalAgentConfig :: IOEnv -> Text -> Maybe Int -> Maybe Double -> AgentConfig
+goalAgentConfig ioEnv sysPrompt mMaxTurns mMaxBudgetUsd = AgentConfig
   { cfgModel        = ioModel ioEnv
   , cfgSystemPrompt = Just sysPrompt
   , cfgMaxTurns     = mMaxTurns
+  , cfgMaxBudgetUsd = mMaxBudgetUsd
   }
 
 -- | Execute a goal-directed agent run using the given algebra and emit events.
@@ -506,6 +511,8 @@ runGoalWorker algebra agentConfig condition historyItems emitEvent = do
       emitEvent (EvDone ans)
     Right (AgentMaxTurnsReached n, _, _) ->
       emitEvent (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
+    Right (AgentBudgetExceeded spent budget, _, _) ->
+      emitEvent (EvError ("Budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"))
     Right (AgentFailed err, _, _) ->
       emitEvent (EvError err)
 
@@ -518,10 +525,11 @@ triggerGoalRun
   -> Text         -- ^ model currently selected in the TUI
   -> Text
   -> Maybe Int
+  -> Maybe Double
   -> Text          -- ^ goal condition (also used as the first-turn directive)
   -> [DialogueItem]
   -> EventM Name TuiState ()
-triggerGoalRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns condition historyItems = liftIO $ do
+triggerGoalRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd condition historyItems = liftIO $ do
   cancelPermissionAsk gate
   mOldWorker <- atomically $ do
     w <- readTVar workerVar
@@ -531,7 +539,7 @@ triggerGoalRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns 
 
   newWorker <- async $ do
     let runEnv = runEnvForModel selectedModel ioEnv
-        agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns
+        agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns mMaxBudgetUsd
     runGoalWorker (tuiAlgebra eventChan runEnv) agentConfig condition historyItems (writeBChan eventChan)
 
   atomically $ writeTVar workerVar (Just newWorker)
@@ -543,9 +551,10 @@ handleBrickEvent
   -> PermissionGate
   -> IOEnv
   -> Text
+  -> Maybe Double
   -> BrickEvent Name AgentEvent
   -> EventM Name TuiState ()
-handleBrickEvent eventChan workerVar gate ioEnv sysPrompt = \case
+handleBrickEvent eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd = \case
   AppEvent agentEv -> do
     currentState <- get
     modify (handleAgentEvent agentEv)
@@ -558,6 +567,6 @@ handleBrickEvent eventChan workerVar gate ioEnv sysPrompt = \case
         currentState <- get
         let (nextState, actions) = updateTui (EvUserKey key) currentState
         put nextState
-        forM_ actions (runTuiAction eventChan workerVar gate ioEnv sysPrompt)
+        forM_ actions (runTuiAction eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd)
       Nothing ->
         pure ()

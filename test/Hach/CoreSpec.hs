@@ -20,6 +20,7 @@ spec = do
         { cfgModel = "test-model"
         , cfgSystemPrompt = Just "You are an assistant."
         , cfgMaxTurns = Just 20
+        , cfgMaxBudgetUsd = Nothing
         }
 
   describe "agentLoop with Pure Interpreter" $ do
@@ -156,6 +157,57 @@ spec = do
           ((result, _), _) = runPure env (agentLoop loopConfig allToolDefs [UserMsg "Run forever"])
 
       result `shouldBe` AgentMaxTurnsReached 2
+
+    it "aborts before any LLM call when the spending budget is 0" $ do
+      let cfg = baseConfig { cfgMaxBudgetUsd = Just 0 }
+          env = emptyMockEnv
+            { mockLLMSteps =
+                [\_ _ -> Right (AssistantResponse (Just "should not run") [] Nothing)]
+            }
+          ((result, _), endEnv) = runPure env (agentLoop cfg [] [UserMsg "Hi"])
+      result `shouldBe` AgentBudgetExceeded 0 0
+      mockEvents endEnv `shouldContain` [EvError "Budget exceeded"]
+      mockEvents endEnv `shouldNotContain` [EvPromptingLLM 1]
+
+    it "stops before the next billable turn once reported spend meets the budget" $ do
+      let cfg = baseConfig { cfgMaxBudgetUsd = Just 0.5 }
+          usage = (mkTokenUsage 10 5 15) { tuCost = Just 0.6 }
+          toolCall = ToolCall
+            { callId = "call_1"
+            , functionName = "read_file"
+            , callArgsRaw = "{\"path\":\"hello.txt\"}"
+            }
+          step1 _ _ = Right $ AssistantResponse Nothing [toolCall] (Just usage)
+          step2 _ _ = Right $ AssistantResponse (Just "should not run") [] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          ((result, _), endEnv) = runPure env (agentLoop cfg allToolDefs [UserMsg "Go"])
+      result `shouldBe` AgentBudgetExceeded 0.6 0.5
+      mockEvents endEnv `shouldNotContain` [EvDone "should not run"]
+
+    it "does not enforce a budget when cfgMaxBudgetUsd is Nothing" $ do
+      let usage = (mkTokenUsage 10 5 15) { tuCost = Just 9.99 }
+          step1 _ _ = Right $ AssistantResponse (Just "done") [] (Just usage)
+          env = emptyMockEnv { mockLLMSteps = [step1] }
+          ((result, _), _) = runPure env (agentLoop baseConfig [] [UserMsg "Hi"])
+      result `shouldBe` AgentCompleted "done"
+
+    it "still stops on max turns when a budget is also configured" $ do
+      let cfg = baseConfig { cfgMaxTurns = Just 1, cfgMaxBudgetUsd = Just 100 }
+          toolCall = ToolCall
+            { callId = "loop_call"
+            , functionName = "read_file"
+            , callArgsRaw = "{\"path\":\"hello.txt\"}"
+            }
+          stepLoop _ _ = Right $ AssistantResponse Nothing [toolCall] Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = repeat stepLoop
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          ((result, _), _) = runPure env (agentLoop cfg allToolDefs [UserMsg "Run"])
+      result `shouldBe` AgentMaxTurnsReached 1
 
     it "runs past the old default of 10 turns when cfgMaxTurns is Nothing (unlimited)" $ do
       let stepLoop hist _ =

@@ -215,6 +215,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
                   { cfgModel = "test-model"
                   , cfgSystemPrompt = Nothing
                   , cfgMaxTurns = Nothing
+                  , cfgMaxBudgetUsd = Nothing
                   }
             _ <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "run the skill"])
             readIORef eventsRef
@@ -241,6 +242,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
               { cfgModel        = "test-model"
               , cfgSystemPrompt = Nothing
               , cfgMaxTurns     = Nothing
+              , cfgMaxBudgetUsd = Nothing
               }
         (_result, hist) <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write it"])
         hist `shouldSatisfy` any (\case
@@ -294,6 +296,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
                   { cfgModel        = "test-model"
                   , cfgSystemPrompt = Nothing
                   , cfgMaxTurns     = Nothing
+                  , cfgMaxBudgetUsd = Nothing
                   }
             result <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write hello.txt"])
             events <- readIORef eventsRef
@@ -414,6 +417,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
                   { cfgModel        = "test-model"
                   , cfgSystemPrompt = Nothing
                   , cfgMaxTurns     = Nothing
+                  , cfgMaxBudgetUsd = Nothing
                   }
             result <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write hello.txt"])
             events <- readIORef eventsRef
@@ -440,6 +444,8 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
             "headless default-mode denials must not report AgentCompleted"
           AgentMaxTurnsReached _ -> expectationFailure
             "headless default-mode denials must not look like a turn-limit abort"
+          AgentBudgetExceeded _ _ -> expectationFailure
+            "headless default-mode denials must not look like a budget abort"
           AgentFailed err ->
             err `shouldBe` headlessAskBlockedMessage
 
@@ -471,6 +477,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
               { cfgModel        = "test-model"
               , cfgSystemPrompt = Nothing
               , cfgMaxTurns     = Just 1
+              , cfgMaxBudgetUsd = Nothing
               }
         (result, _) <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write hello.txt"])
         result `shouldBe` AgentMaxTurnsReached 1

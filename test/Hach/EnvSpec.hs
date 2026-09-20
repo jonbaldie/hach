@@ -396,6 +396,32 @@ spec = do
       out `shouldBe` "boom"
       out `shouldNotSatisfy` T.isInfixOf "Agent failed with error"
 
+    it "prints a budget exceeded message naming the ceiling" $ do
+      let out = formatPrintResult OutputText (AgentBudgetExceeded 0 0)
+      out `shouldBe` "Agent reached the spending budget of $0.00 (spent $0.00)."
+
+    it "emits JSON containing max_budget when the spending ceiling is hit" $ do
+      let out = formatPrintResult OutputJson (AgentBudgetExceeded 0.6 0.5)
+          decoded = Aeson.decode (LBS.fromStrict (TE.encodeUtf8 out))
+      decoded `shouldBe` Just (Aeson.object
+        [ "error" .= ("max_budget" :: T.Text)
+        , "spent" .= (0.6 :: Double)
+        , "budget" .= (0.5 :: Double)
+        ])
+
+  describe "resolveMaxBudgetUsd" $ do
+    it "prefers the CLI flag over settings" $ do
+      resolveMaxBudgetUsd (Just 1.5) defaultSettings { setMaxBudgetUsd = Just 9 }
+        `shouldBe` Just 1.5
+
+    it "uses settings when the flag is absent" $ do
+      resolveMaxBudgetUsd Nothing defaultSettings { setMaxBudgetUsd = Just 0 }
+        `shouldBe` Just 0
+
+    it "ignores negative settings values" $ do
+      resolveMaxBudgetUsd Nothing defaultSettings { setMaxBudgetUsd = Just (-1) }
+        `shouldBe` Nothing
+
   describe "resolveConfigWith" $ do
     let dotEnvSample = "OPENROUTER_API_KEY=sk-dotenv\nOPENROUTER_MODEL=meta/muse-glimmer-30b\n"
 

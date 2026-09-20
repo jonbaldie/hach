@@ -556,12 +556,15 @@ data AgentConfig = AgentConfig
   , cfgSystemPrompt :: !(Maybe Text)
   -- | Maximum number of agent turns. 'Nothing' means unlimited.
   , cfgMaxTurns     :: !(Maybe Int)
+  -- | Spending ceiling in USD. 'Nothing' means unlimited.
+  , cfgMaxBudgetUsd :: !(Maybe Double)
   } deriving (Show, Eq)
 
 -- | Final result of running the agent harness.
 data AgentResult
   = AgentCompleted !Text
   | AgentMaxTurnsReached !Int
+  | AgentBudgetExceeded !Double !Double
   | AgentFailed !Text
   deriving (Show, Eq)
 
