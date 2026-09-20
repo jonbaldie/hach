@@ -649,8 +649,9 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
             action `finally` case orig of
               Just v  -> setEnv "CLAUDE_CONFIG_DIR" v
               Nothing -> unsetEnv "CLAUDE_CONFIG_DIR"
+          loadSettingsOrFail = loadLayeredSettings testDir >>= either (fail . show) pure
           envFromLoadedSettings = do
-            settings <- loadLayeredSettings testDir
+            settings <- loadSettingsOrFail
             effort <- case resolveEffortLevel settings of
               Left err -> fail err
               Right e  -> pure e
@@ -692,7 +693,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
 
       it "rejects unsupported effort from loaded settings" $ withUserConfig $ do
         writeSettings (".agents" </> "settings.json") "{\"effort_level\":\"turbo\"}"
-        settings <- loadLayeredSettings testDir
+        settings <- loadSettingsOrFail
         case resolveEffortLevel settings of
           Left err -> err `shouldContain` "Unsupported effort_level: turbo"
           Right v  -> expectationFailure ("expected Left, got " <> show v)

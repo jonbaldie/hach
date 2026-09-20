@@ -82,8 +82,7 @@ main = do
   envRes <- resolveEnvConfig optModel (Just ".env")
   EnvConfig{..} <- case envRes of
     Left err -> do
-      putStrLn ("Configuration error: " <> err)
-      putStrLn "Please set OPENROUTER_API_KEY in the environment or in .env."
+      putStrLn (renderEnvError err)
       exitFailure
     Right cfg -> pure cfg
 
