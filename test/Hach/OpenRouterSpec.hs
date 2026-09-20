@@ -105,6 +105,18 @@ spec = do
         Left err -> err `shouldBe` "OpenRouter API error: Service unavailable"
         Right _  -> expectationFailure "Expected parseChatResponse to fail on API error"
 
+    it "surfaces metadata.raw when the provider message is generic" $ do
+      let rawJson = LBS.concat
+            [ "{\"error\":{\"message\":\"Provider returned error\",\"code\":400,"
+            , "\"metadata\":{\"raw\":\"{\\n  \\\"error\\\": {\\n    \\\"message\\\":"
+            , " \\\"No tool output found for function call call_abc.\\\"\\n  }\\n}\"}}}"
+            ]
+      case parseChatResponse rawJson of
+        Left err -> do
+          ("OpenRouter API error:" `T.isPrefixOf` err) `shouldBe` True
+          T.isInfixOf "No tool output found" err `shouldBe` True
+        Right _ -> expectationFailure "Expected parseChatResponse to fail on API error"
+
 
     it "parses token usage metadata from response envelope" $ do
       let rawJson = LBS.concat
