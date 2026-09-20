@@ -281,28 +281,33 @@ foldAgentProgram alg = \case
       foldAgentProgram alg (k content)
 
 -- | Execute a single turn of the agent harness.
--- Returns either 'Left (finalResult, updatedHistory)' if the interaction
--- has terminated (either with an answer, an error, or max turns reached),
--- or 'Right updatedHistory' if another turn should be taken.
+-- Returns either 'Left (finalResult, updatedHistory, spent)' if the interaction
+-- has terminated (either with an answer, an error, max turns, or budget),
+-- or 'Right (updatedHistory, spent)' if another turn should be taken.
 agentStep
   :: AgentConfig
   -> [ToolDef]
   -> Int
+  -> Double
   -> [Message]
-  -> AgentProgram (Either (AgentResult, [Message]) [Message])
-agentStep cfg tools turn currentHistory
+  -> AgentProgram (Either (AgentResult, [Message], Double) ([Message], Double))
+agentStep cfg tools turn spent currentHistory
   | maybe False (turn >) (cfgMaxTurns cfg) = do
       logEvent (EvError "Maximum turns exceeded")
-      pure $ Left (AgentMaxTurnsReached (turn - 1), currentHistory)
+      pure $ Left (AgentMaxTurnsReached (turn - 1), currentHistory, spent)
+  | Just budget <- cfgMaxBudgetUsd cfg, spent >= budget = do
+      logEvent (EvError "Budget exceeded")
+      pure $ Left (AgentBudgetExceeded spent budget, currentHistory, spent)
   | otherwise = do
       logEvent (EvTurnStart turn)
       logEvent (EvPromptingLLM (length currentHistory))
       promptLLM currentHistory tools >>= \case
         Left err -> do
           logEvent (EvError err)
-          pure $ Left (AgentFailed err, currentHistory)
+          pure $ Left (AgentFailed err, currentHistory, spent)
         Right resp -> do
           logEvent (EvLLMResponse (respContent resp) (respToolCalls resp) (respUsage resp))
+          let spent' = spent + responseCostUsd resp
 
           case respToolCalls resp of
             [] -> do
@@ -317,7 +322,7 @@ agentStep cfg tools turn currentHistory
                 AgentCompleted answer -> logEvent (EvDone answer)
                 AgentFailed err -> logEvent (EvError err)
                 _ -> pure ()
-              pure $ Left (result, finalHistory)
+              pure $ Left (result, finalHistory, spent')
 
             calls -> do
               -- The assistant invoked one or more tools.
@@ -382,9 +387,12 @@ agentStep cfg tools turn currentHistory
               case unproductiveRepeatedToolCall updatedHistory of
                 Just err -> do
                   logEvent (EvError err)
-                  pure $ Left (AgentFailed err, updatedHistory)
+                  pure $ Left (AgentFailed err, updatedHistory, spent')
                 Nothing ->
-                  pure $ Right updatedHistory
+                  pure $ Right (updatedHistory, spent')
+
+responseCostUsd :: AssistantResponse -> Double
+responseCostUsd resp = fromMaybe 0 (respUsage resp >>= tuCost)
 
 -- | The pure, recursive agent harness loop.
 -- Unfolds turns until completion or the maximum turn limit is reached.
@@ -393,12 +401,12 @@ agentLoop
   -> [ToolDef]
   -> [Message]
   -> AgentProgram (AgentResult, [Message])
-agentLoop cfg tools initialHistory = loop 1 initialHistory
+agentLoop cfg tools initialHistory = loop 1 0 initialHistory
   where
-    loop turn hist = do
-      agentStep cfg tools turn hist >>= \case
-        Left (result, finalHist) -> pure (result, finalHist)
-        Right nextHist          -> loop (turn + 1) nextHist
+    loop turn spent hist = do
+      agentStep cfg tools turn spent hist >>= \case
+        Left (result, finalHist, _) -> pure (result, finalHist)
+        Right (nextHist, spent')    -> loop (turn + 1) spent' nextHist
 
 -- | Consecutive identical read-only tool calls with no intervening edit
 -- after which the harness fails fast instead of burning the context window.
@@ -431,20 +439,20 @@ goalLoop
   -> AgentProgram (AgentResult, [Message], GoalState)
 goalLoop cfg tools condition blockCap initialHistory = do
   logEvent (EvGoalSet condition)
-  loop 1 (initialGoalState condition) initialHistory
+  loop 1 0 (initialGoalState condition) initialHistory
   where
     -- Clamp to a minimum of 1: a block cap of 0 or less is degenerate because
     -- the block decision is only reached *after* a no-progress turn runs, so
     -- the counter would otherwise exceed the cap.  1 is the smallest value
     -- that lets the invariant 'gsNoProgressCount <= blockCap' hold.
     effectiveCap = max 1 blockCap
-    loop turn gs hist = do
-      agentStep cfg tools turn hist >>= \case
-        Right nextHist ->
+    loop turn spent gs hist = do
+      agentStep cfg tools turn spent hist >>= \case
+        Right (nextHist, spent') ->
           -- Tool calls were made: progress.  Reset no-progress counter.
-          loop (turn + 1) gs { gsNoProgressCount = 0 } nextHist
+          loop (turn + 1) spent' gs { gsNoProgressCount = 0 } nextHist
 
-        Left (result, finalHist) -> case result of
+        Left (result, finalHist, spent') -> case result of
           AgentCompleted content ->
             case classifyCompletion content of
               GoalErrUnrecoverable -> do
@@ -488,9 +496,12 @@ goalLoop cfg tools condition blockCap initialHistory = do
                               ( "Goal not yet met. " <> reason
                               <> " Continue working toward: " <> condition )
                             newHist = finalHist ++ [guidance]
-                        loop (turn + 1) g1 newHist
+                        loop (turn + 1) spent' g1 newHist
 
           AgentMaxTurnsReached _n ->
+            pure (result, finalHist, gs)
+
+          AgentBudgetExceeded _ _ ->
             pure (result, finalHist, gs)
 
           AgentFailed err ->

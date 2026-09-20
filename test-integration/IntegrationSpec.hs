@@ -47,6 +47,7 @@ main = do
         { cfgModel = envModel
         , cfgSystemPrompt = Just "You are an autonomous coding assistant. Use the provided tools to complete user requests."
         , cfgMaxTurns = Just 6
+        , cfgMaxBudgetUsd = Nothing
         }
       initMsgs = [UserMsg prompt]
 
@@ -75,6 +76,11 @@ main = do
 
     AgentMaxTurnsReached n -> do
       putStrLn ("FAIL: Max turns reached (" <> show n <> ")")
+      removeDirectoryRecursive sandboxDir
+      exitFailure
+
+    AgentBudgetExceeded spent budget -> do
+      putStrLn ("FAIL: Budget exceeded (spent " <> show spent <> " of " <> show budget <> ")")
       removeDirectoryRecursive sandboxDir
       exitFailure
 

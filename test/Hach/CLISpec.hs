@@ -369,6 +369,84 @@ spec = describe "headless CLI prompt acquisition" $ do
         stdoutText `shouldContain` "Unknown flag: --bogus"
         stdoutText `shouldContain` "hach --help"
 
+  describe "--max-budget-usd enforcement (Issue #150)" $ do
+    let runBudget executable workspace args = do
+          environment <- getEnvironment
+          let testEnvironment =
+                ("OPENROUTER_API_KEY", "test")
+                  : ("OPENROUTER_MODEL", "test-model")
+                  : ("CLAUDE_CONFIG_DIR", workspace </> "isolated-config")
+                  : filter
+                      ((`notElem` ["OPENROUTER_API_KEY", "OPENROUTER_MODEL", "CLAUDE_CONFIG_DIR"]) . fst)
+                      environment
+              command =
+                (proc executable args)
+                  { cwd = Just workspace
+                  , env = Just testEnvironment
+                  }
+          readCreateProcessWithExitCode command ""
+        namesBudget combined =
+          any (`T.isInfixOf` T.toLower (T.pack combined))
+            ["budget", "spending limit"]
+
+    it "stops --print --max-budget-usd 0 before any billable request" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, stderrText) <-
+          runBudget executable workspace
+            ["--print", "--max-budget-usd", "0", "--model", "test-model", "Reply with exactly the word pong"]
+
+        exitCode `shouldBe` ExitFailure 1
+        namesBudget (stdoutText <> stderrText) `shouldBe` True
+        stdoutText `shouldNotContain` "OpenRouter API error"
+        stderrText `shouldNotContain` "OpenRouter API error"
+        stdoutText `shouldNotContain` "pong"
+
+    it "reports the budget abort as JSON under --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, stderrText) <-
+          runBudget executable workspace
+            [ "--print"
+            , "--output-format"
+            , "json"
+            , "--max-budget-usd"
+            , "0"
+            , "--model"
+            , "test-model"
+            , "Reply with exactly the word pong"
+            ]
+
+        exitCode `shouldBe` ExitFailure 1
+        stderrText `shouldNotContain` "OpenRouter API error"
+        (Aeson.eitherDecode (LBS.pack stdoutText) :: Either String Aeson.Value)
+          `shouldSatisfy` isRight
+        stdoutText `shouldContain` "max_budget"
+
+    it "honours max_budget_usd from settings.json the same way as the flag" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        createDirectoryIfMissing True (workspace </> ".claude")
+        writeFile (workspace </> ".claude" </> "settings.json") "{\"max_budget_usd\": 0}\n"
+        (exitCode, stdoutText, stderrText) <-
+          runBudget executable workspace
+            ["--print", "--model", "test-model", "Reply with exactly the word pong"]
+
+        exitCode `shouldBe` ExitFailure 1
+        namesBudget (stdoutText <> stderrText) `shouldBe` True
+        stdoutText `shouldNotContain` "OpenRouter API error"
+
+    it "keeps --max-turns aborts distinct when no budget is set" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, stderrText) <-
+          runBudget executable workspace
+            ["--print", "--max-turns", "1", "--model", "test-model", "Reply with exactly the word pong"]
+
+        exitCode `shouldBe` ExitFailure 1
+        namesBudget (stdoutText <> stderrText) `shouldBe` False
+        (stdoutText <> stderrText) `shouldContain` "OpenRouter API error"
+
   describe "session persistence and continuation (Issue #151)" $ do
     let runWithEnv executable workspace args = do
           environment <- getEnvironment

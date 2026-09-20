@@ -18,7 +18,9 @@ module Hach.Env
   , headlessEmitsBanners
   , headlessVerbose
   , formatPrintResult
+  , formatUsd
   , resolvePermissionMode
+  , resolveMaxBudgetUsd
   , resolveEffortLevel
   , resolveConfigWith
   , resolveConfigWithSettings
@@ -50,6 +52,7 @@ import qualified Data.Text.IO as TIO
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.FilePath ((</>))
+import Text.Printf (printf)
 import Text.Read (readMaybe)
 
 -- | Parsed environment configuration for running the agent harness.
@@ -146,6 +149,23 @@ resolvePermissionMode mFlag skipPerms settings
   | skipPerms = ModeBypassPermissions
   | otherwise = fromMaybe ModeDefault (mFlag <|> setPermissionMode settings)
 
+-- | Spending ceiling for a run. The CLI flag overrides settings.json.
+-- Non-finite or negative settings values are ignored.
+resolveMaxBudgetUsd
+  :: Maybe Double
+  -> Settings
+  -> Maybe Double
+resolveMaxBudgetUsd mFlag settings =
+  mFlag <|> (setMaxBudgetUsd settings >>= finiteNonNegativeUsd)
+
+finiteNonNegativeUsd :: Double -> Maybe Double
+finiteNonNegativeUsd d
+  | d >= 0 && not (isNaN d) && not (isInfinite d) = Just d
+  | otherwise = Nothing
+
+formatUsd :: Double -> Text
+formatUsd d = T.pack (printf "$%.2f" d)
+
 -- | Resolve `effort_level` from layered settings. Unset stays unset so the
 -- OpenRouter request omits `reasoning`. Unsupported values are an error.
 resolveEffortLevel :: Settings -> Either String (Maybe EffortLevel)
@@ -195,6 +215,12 @@ formatPrintResult fmt result = case fmt of
     AgentCompleted ans -> ans
     AgentMaxTurnsReached turns ->
       T.pack ("Agent reached maximum turn limit of " <> show turns <> ".")
+    AgentBudgetExceeded spent budget ->
+      "Agent reached the spending budget of "
+        <> formatUsd budget
+        <> " (spent "
+        <> formatUsd spent
+        <> ")."
     AgentFailed err -> err
   OutputJson ->
     TE.decodeUtf8 . LBS.toStrict . Aeson.encode $ case result of
@@ -204,6 +230,12 @@ formatPrintResult fmt result = case fmt of
         Aeson.object
           [ "error" .= ("max_turns" :: Text)
           , "turns" .= turns
+          ]
+      AgentBudgetExceeded spent budget ->
+        Aeson.object
+          [ "error" .= ("max_budget" :: Text)
+          , "spent" .= spent
+          , "budget" .= budget
           ]
       AgentFailed err ->
         Aeson.object ["error" .= err]
@@ -230,7 +262,7 @@ cliFlags =
   , CliFlag ["-r", "--resume"] Nothing "Resume the most recent session in this workspace"
   , CliFlag ["--session-id"] (Just "ID") "Resume the session with this ID"
   , CliFlag ["--max-turns"] (Just "N") "Stop the agent after N turns"
-  , CliFlag ["--max-budget-usd"] (Just "USD") "Spending limit in US dollars (not yet enforced)"
+  , CliFlag ["--max-budget-usd"] (Just "USD") "Stop the agent after spending this many US dollars"
   , CliFlag ["--append-system-prompt"] (Just "TEXT") "Append TEXT to the system prompt"
   , CliFlag ["--add-dir"] (Just "DIR") "Add a working directory (repeatable; not yet applied)"
   , CliFlag ["-w", "--worktree"] (Just "NAME") "Work in the git worktree NAME, creating it if needed"
