@@ -3,6 +3,8 @@
 
 module Hach.Env
   ( EnvConfig(..)
+  , EnvError(..)
+  , renderEnvError
   , CliOptions(..)
   , OutputFormat(..)
   , defaultCliOptions
@@ -32,12 +34,19 @@ module Hach.Env
   , buildSystemPromptWithAppend
   ) where
 
-import Hach.Settings (Settings(..), defaultSettings, loadLayeredSettings)
+import Hach.Settings
+  ( Settings(..)
+  , SettingsError
+  , defaultSettings
+  , loadLayeredSettings
+  , renderSettingsError
+  )
 import Hach.Types (AgentResult(..), EffortLevel, PermissionMode(..), parseEffortLevel)
 import Control.Applicative ((<|>))
 import Control.Exception (try, SomeException)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
+import Data.Bifunctor (first)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -552,11 +561,26 @@ resolveConfigWith
 resolveConfigWith mCliModel mOsApiKey mOsModel mDotEnvContent =
   resolveConfigWithSettings mCliModel mOsApiKey mOsModel mDotEnvContent defaultSettings
 
+-- | Why startup configuration could not be resolved.
+data EnvError
+  = EnvSettingsInvalid SettingsError  -- ^ A settings file exists but could not be loaded.
+  | EnvConfigUnresolved String        -- ^ API key or model could not be resolved.
+  deriving (Show, Eq)
+
+-- | Render a startup failure, with the hint that fits the cause.
+renderEnvError :: EnvError -> String
+renderEnvError (EnvSettingsInvalid err) =
+  "Configuration error: " <> renderSettingsError err <> "\n" <>
+  "Fix that file or move it aside; hach will not run with its settings ignored."
+renderEnvError (EnvConfigUnresolved err) =
+  "Configuration error: " <> err <> "\n" <>
+  "Please set OPENROUTER_API_KEY in the environment or in .env."
+
 -- | Resolve configuration from process environment, .env file, and layered settings.
 resolveEnvConfig
   :: Maybe Text       -- ^ Optional CLI model override
   -> Maybe FilePath   -- ^ Optional path to .env file
-  -> IO (Either String EnvConfig)
+  -> IO (Either EnvError EnvConfig)
 resolveEnvConfig mCliModel mDotEnvPath = do
   mOsApiKey <- fmap (fmap T.pack) (lookupEnv "OPENROUTER_API_KEY")
   mOsModel  <- fmap (fmap T.pack) (lookupEnv "OPENROUTER_MODEL")
@@ -565,11 +589,15 @@ resolveEnvConfig mCliModel mDotEnvPath = do
       exists <- doesFileExist path
       if exists then Just <$> TIO.readFile path else pure Nothing
     Nothing -> pure Nothing
-  settings <- loadLayeredSettings "."
-  pure $ resolveConfigWithSettings mCliModel mOsApiKey mOsModel mDotEnvContent settings
+  settingsRes <- loadLayeredSettings "."
+  pure $ case settingsRes of
+    Left err -> Left (EnvSettingsInvalid err)
+    Right settings ->
+      first EnvConfigUnresolved
+        (resolveConfigWithSettings mCliModel mOsApiKey mOsModel mDotEnvContent settings)
 
 -- | Legacy helper to load configuration specifically from a .env file.
-loadEnvConfig :: FilePath -> IO (Either String EnvConfig)
+loadEnvConfig :: FilePath -> IO (Either EnvError EnvConfig)
 loadEnvConfig path = resolveEnvConfig Nothing (Just path)
 
 -- | Load project instructions from AGENTS.md, AGENT.md, or CLAUDE.md in the workspace directory.

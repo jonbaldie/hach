@@ -22,7 +22,7 @@ main = do
   envRes <- loadEnvConfig ".env"
   EnvConfig{..} <- case envRes of
     Left err -> do
-      putStrLn ("FAIL: Could not load .env: " <> err)
+      putStrLn ("FAIL: Could not load .env: " <> renderEnvError err)
       exitFailure
     Right cfg -> pure cfg
 

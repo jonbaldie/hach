@@ -4,6 +4,8 @@
 
 module Hach.Settings
   ( Settings(..)
+  , SettingsError(..)
+  , renderSettingsError
   , defaultSettings
   , mergeSettings
   , loadSettingsFromFile
@@ -13,6 +15,7 @@ module Hach.Settings
 import Hach.Types
 import Control.Applicative ((<|>))
 import Control.Exception (SomeException, try)
+import Data.Bifunctor (bimap)
 import Data.Aeson
   ( FromJSON(..), ToJSON(..), (.:?), (.!=), object, (.=), withObject
   )
@@ -128,23 +131,40 @@ ordNub = go Set.empty
       | x `Set.member` seen = go seen xs
       | otherwise           = x : go (Set.insert x seen) xs
 
--- | Load settings from a specific JSON file.
-loadSettingsFromFile :: FilePath -> IO (Maybe Settings)
+-- | A settings file that exists on disk but could not be turned into 'Settings'.
+data SettingsError = SettingsError
+  { seFile    :: !FilePath
+  , seMessage :: !String
+  } deriving (Show, Eq)
+
+-- | Render a settings failure for the user, naming the file and the reason.
+renderSettingsError :: SettingsError -> String
+renderSettingsError SettingsError{..} =
+  "Settings file " <> seFile <> " could not be loaded: " <> seMessage
+
+-- | Load settings from a specific JSON file. A missing file is 'Nothing'; a
+-- file that is present but unreadable or undecodable is an error, never a
+-- silent fallback to 'defaultSettings'.
+loadSettingsFromFile :: FilePath -> IO (Either SettingsError (Maybe Settings))
 loadSettingsFromFile path = do
   exists <- doesFileExist path
   if not exists
-    then pure Nothing
+    then pure (Right Nothing)
     else do
       res <- try (BS.readFile path) :: IO (Either SomeException BS.ByteString)
-      case res of
-        Left _      -> pure Nothing
-        Right bytes -> pure (Aeson.decodeStrict bytes)
+      pure $ case res of
+        Left err    -> Left (failure (show err))
+        Right bytes -> bimap failure Just (Aeson.eitherDecodeStrict bytes)
+  where
+    failure = SettingsError path
 
 -- | Discover and load layered settings:
 -- 1. User layer (~/.claude/settings.json or ~/.agents/settings.json)
 -- 2. Project layer (<workspace>/.claude/settings.json or <workspace>/.agents/settings.json)
 -- 3. Local layer (<workspace>/.claude/settings.local.json or <workspace>/.agents/settings.local.json)
-loadLayeredSettings :: FilePath -> IO Settings
+-- A layer whose file fails to load aborts the whole load: running on with the
+-- layer's permission rules quietly dropped is the one outcome we must avoid.
+loadLayeredSettings :: FilePath -> IO (Either SettingsError Settings)
 loadLayeredSettings workspace = do
   mCustomConfig <- lookupEnv "CLAUDE_CONFIG_DIR"
   homeDir <- getHomeDirectory
@@ -152,27 +172,24 @@ loadLayeredSettings workspace = do
         Just p  -> p
         Nothing -> homeDir
 
-  userSettings <- loadFirst
-    [ userBase </> ".claude" </> "settings.json"
-    , userBase </> ".agents" </> "settings.json"
+  layers <- traverse loadFirst
+    [ [ userBase  </> ".claude" </> "settings.json"
+      , userBase  </> ".agents" </> "settings.json"
+      ]
+    , [ workspace </> ".claude" </> "settings.json"
+      , workspace </> ".agents" </> "settings.json"
+      ]
+    , [ workspace </> ".claude" </> "settings.local.json"
+      , workspace </> ".agents" </> "settings.local.json"
+      ]
     ]
 
-  projectSettings <- loadFirst
-    [ workspace </> ".claude" </> "settings.json"
-    , workspace </> ".agents" </> "settings.json"
-    ]
-
-  localSettings <- loadFirst
-    [ workspace </> ".claude" </> "settings.local.json"
-    , workspace </> ".agents" </> "settings.local.json"
-    ]
-
-  let merged = foldl mergeSettings defaultSettings [userSettings, projectSettings, localSettings]
-  pure merged
+  pure (foldl mergeSettings defaultSettings <$> sequence layers)
   where
-    loadFirst [] = pure defaultSettings
+    loadFirst [] = pure (Right defaultSettings)
     loadFirst (p : ps) = do
-      mSet <- loadSettingsFromFile p
-      case mSet of
-        Just s  -> pure s
-        Nothing -> loadFirst ps
+      res <- loadSettingsFromFile p
+      case res of
+        Left err       -> pure (Left err)
+        Right (Just s) -> pure (Right s)
+        Right Nothing  -> loadFirst ps
