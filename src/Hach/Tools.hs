@@ -70,6 +70,7 @@ module Hach.Tools
     , resolvedToolAuthority
     , resolvedToolTarget
     , resolveToolIdentity
+    , toolNameSpellings
     , toolTarget
     , executeResolvedTool
 
@@ -1049,6 +1050,16 @@ resolveToolIdentity :: Text -> Maybe (Text, ToolAuthority)
 resolveToolIdentity name = do
   ToolRegistration{..} <- findToolRegistration name
   pure (toolCanonicalName, toolAuthority)
+
+-- | Every name one registered tool answers to: its canonical name plus each
+-- alias the model may invoke it by. Callers that police a tool by name (hook
+-- matchers, for instance) must treat the whole set as one tool, or the model
+-- picks a spelling and walks past them. An unregistered name is its own only
+-- spelling.
+toolNameSpellings :: Text -> [Text]
+toolNameSpellings name = case findToolRegistration name of
+  Just ToolRegistration{..} -> toolCanonicalName : toolAliases
+  Nothing -> [name]
 
 -- | Extract a registered tool's display target. A partial path is still useful
 -- to the TUI when a malformed edit call is about to be rejected by execution.

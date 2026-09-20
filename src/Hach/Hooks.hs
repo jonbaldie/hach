@@ -9,6 +9,7 @@ module Hach.Hooks
   ) where
 
 import Hach.Types
+import Hach.Tools (toolNameSpellings)
 import Control.Concurrent.Async (async)
 import Control.Exception (SomeException, try)
 import qualified Data.Aeson as Aeson
@@ -23,14 +24,20 @@ import System.Exit (ExitCode(..))
 import System.Process (CreateProcess(..), readCreateProcessWithExitCode, shell)
 
 -- | Filter hook handlers by checking whether their matcher matches the target tool.
+--
+-- A matcher names a tool, not one spelling of it. The model chooses freely
+-- among a tool's registered aliases, so @run_command@ has to match a call the
+-- model made as @Bash@; otherwise a blocking hook is bypassed by renaming.
 filterMatchingHandlers :: Maybe Text -> [HookHandler] -> [HookHandler]
 filterMatchingHandlers mTool handlers =
   [ h | h <- handlers, matches (hhMatcher h) mTool ]
   where
     matches Nothing _ = True
     matches (Just "*") _ = True
-    matches (Just m) (Just t) = T.toLower m == T.toLower t
+    matches (Just m) (Just t) = any (sameName m) (toolNameSpellings t)
     matches (Just _) Nothing = False
+
+    sameName a b = T.toLower a == T.toLower b
 
 -- | Parse the output of a command hook according to the exit code protocol.
 -- Exit code 0: Pass (no effect).
