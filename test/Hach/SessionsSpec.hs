@@ -153,6 +153,49 @@ spec = describe "Hach.Sessions" $ do
           , UserMsg "q2"
           ]
 
+      it "resumes a session that ended on unresolved tool_calls without a user following them" $ do
+        let danglingCall = ToolCall "call_abc" "read_file" "{\"path\":\"README.md\"}"
+            prior =
+              [ SystemMsg "old sys"
+              , UserMsg "Use the read_file tool to read README.md"
+              , AssistantMsg (Just "I'll read it.") [danglingCall]
+              ]
+            built = buildSessionHistory "new sys" (Just prior) "Please continue."
+        openaiToolCallContractHolds built `shouldBe` True
+
+      it "keeps matching tool results when saving a run that stopped after tool execution" $ do
+        let call = ToolCall "call_abc" "read_file" "{\"path\":\"README.md\"}"
+            history =
+              [ SystemMsg "sys"
+              , UserMsg "read README"
+              , AssistantMsg (Just "I'll read it.") [call]
+              , ToolMsg "call_abc" "read_file" "hello"
+              ]
+        saveRunSession wsDir "sess-164-tools" "test-model" Nothing history
+        mLoaded <- loadWorkspaceSession wsDir "sess-164-tools"
+        case mLoaded of
+          Nothing -> expectationFailure "Expected saved session"
+          Just (_, loaded) -> do
+            openaiToolCallContractHolds loaded `shouldBe` True
+            let resumed = buildSessionHistory "sys" (Just loaded) "Please continue."
+            openaiToolCallContractHolds resumed `shouldBe` True
+
+      it "saves a mid-tool-call stop so resume does not follow tool_calls with a user message" $ do
+        let danglingCall = ToolCall "call_abc" "read_file" "{\"path\":\"README.md\"}"
+            history =
+              [ SystemMsg "sys"
+              , UserMsg "Use the read_file tool to read README.md"
+              , AssistantMsg (Just "I'll read it.") [danglingCall]
+              ]
+        saveRunSession wsDir "sess-164-dangling" "test-model" Nothing history
+        mLoaded <- loadWorkspaceSession wsDir "sess-164-dangling"
+        case mLoaded of
+          Nothing -> expectationFailure "Expected saved session"
+          Just (_, loaded) -> do
+            openaiToolCallContractHolds loaded `shouldBe` True
+            let resumed = buildSessionHistory "sys" (Just loaded) "Please continue."
+            openaiToolCallContractHolds resumed `shouldBe` True
+
   describe "Cost estimation (BUG-7)" $ do
     it "correctly prices gpt-4o-mini without shadowing from gpt-4o" $ do
       -- 1M prompt ($0.15) + 1M completion ($0.60) = $0.75
@@ -166,3 +209,18 @@ spec = describe "Hach.Sessions" $ do
       estimateCostUsd "openai/gpt-4-turbo" 1000000 1000000 `shouldBe` 12.5
       estimateCostUsd "openai/gpt-4o-mini" 1000000 1000000 `shouldBe` 0.75
       estimateCostUsd "openai/gpt-4o" 1000000 1000000 `shouldBe` 20.0
+
+openaiToolCallContractHolds :: [Message] -> Bool
+openaiToolCallContractHolds = go
+  where
+    go [] = True
+    go (AssistantMsg _ calls : rest)
+      | null calls = go rest
+      | otherwise =
+          let (tools, afterTools) = span isToolMsg rest
+              gotIds = [cid | ToolMsg cid _ _ <- tools]
+              wantIds = map callId calls
+          in gotIds == wantIds && go afterTools
+    go (_ : rest) = go rest
+    isToolMsg ToolMsg{} = True
+    isToolMsg _         = False

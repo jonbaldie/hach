@@ -263,14 +263,38 @@ isSystemMsg :: Message -> Bool
 isSystemMsg (SystemMsg _) = True
 isSystemMsg _             = False
 
--- | Drop any trailing non-assistant messages (e.g. unanswered user prompts)
--- to keep history ending at a completed assistant turn.
-dropTrailingNonAssistant :: [Message] -> [Message]
-dropTrailingNonAssistant [] = []
-dropTrailingNonAssistant msgs =
-  let rev = reverse msgs
-      rest = dropWhile (\case AssistantMsg _ _ -> False; _ -> True) rev
-  in reverse rest
+-- | Drop trailing unanswered user prompts so history ends on an assistant
+-- or tool turn. Matching tool results are kept.
+dropTrailingUnansweredUser :: [Message] -> [Message]
+dropTrailingUnansweredUser = reverse . dropWhile isUserMsg . reverse
+  where
+    isUserMsg (UserMsg _) = True
+    isUserMsg _           = False
+
+isToolMsg :: Message -> Bool
+isToolMsg ToolMsg{} = True
+isToolMsg _         = False
+
+-- | Strip assistant tool_calls that have no matching tool results, and drop
+-- orphan tool messages, so the sequence is OpenAI-compatible.
+closeUnresolvedToolCalls :: [Message] -> [Message]
+closeUnresolvedToolCalls = go
+  where
+    go [] = []
+    go (AssistantMsg content calls : rest)
+      | null calls = AssistantMsg content [] : go rest
+      | otherwise =
+          let (tools, afterTools) = span isToolMsg rest
+              gotIds = [cid | ToolMsg cid _ _ <- tools]
+              wantIds = map callId calls
+          in if gotIds == wantIds
+               then AssistantMsg content calls : tools ++ go afterTools
+               else AssistantMsg content [] : go rest
+    go (ToolMsg{} : rest) = go rest
+    go (m : rest) = m : go rest
+
+cleanHistoryForSession :: [Message] -> [Message]
+cleanHistoryForSession = closeUnresolvedToolCalls . dropTrailingUnansweredUser
 
 -- | Build initial conversation history for a new or resumed session.
 -- Preserves prior dialogue messages while ensuring the current system prompt is at the head.
@@ -278,13 +302,13 @@ buildSessionHistory :: Text -> Maybe [Message] -> Text -> [Message]
 buildSessionHistory sysPrompt mPriorHistory prompt =
   let priorDialogue = case mPriorHistory of
         Nothing   -> []
-        Just msgs -> dropTrailingNonAssistant (filter (not . isSystemMsg) msgs)
+        Just msgs -> cleanHistoryForSession (filter (not . isSystemMsg) msgs)
   in SystemMsg sysPrompt : priorDialogue ++ [UserMsg prompt]
 
 -- | Persist completed agent dialogue to the workspace session directory.
 saveRunSession :: FilePath -> Text -> Text -> Maybe SessionInfo -> [Message] -> IO ()
 saveRunSession workspace activeSid model mPrevInfo finalHistory = do
-  let cleanHistory = dropTrailingNonAssistant finalHistory
+  let cleanHistory = cleanHistoryForSession finalHistory
       totalTurns = length [() | AssistantMsg _ _ <- cleanHistory]
   when (totalTurns > 0) $ do
     timestamp <- currentTimestampIso8601

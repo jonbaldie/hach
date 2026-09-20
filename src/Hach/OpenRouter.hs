@@ -113,12 +113,41 @@ parseChatResponse body =
       case AesonTypes.parseMaybe (\obj -> obj .: "error") o of
         Just (Aeson.String msg) -> Just msg
         Just (Aeson.Object errObj) ->
-          AesonTypes.parseMaybe (\obj -> obj .: "message") errObj
-            <|> AesonTypes.parseMaybe (\obj -> obj .: "detail") errObj
-            <|> (fmap (\c -> "Error code " <> T.pack (show (c :: Int))) (AesonTypes.parseMaybe (\obj -> obj .: "code") errObj))
-            <|> Just (TE.decodeUtf8 (LBS.toStrict (Aeson.encode errObj)))
+          let mMsg = AesonTypes.parseMaybe (\obj -> obj .: "message") errObj
+              mDetail = AesonTypes.parseMaybe (\obj -> obj .: "detail") errObj
+              mRaw = fmap innerErrorText $
+                AesonTypes.parseMaybe
+                  (\obj -> do
+                      meta <- obj .: "metadata"
+                      meta .: "raw")
+                  errObj
+              mCode = fmap (\c -> "Error code " <> T.pack (show (c :: Int)))
+                (AesonTypes.parseMaybe (\obj -> obj .: "code") errObj)
+          in case (mMsg, mRaw) of
+               (Just msg, Just inner)
+                 | not (T.null inner) && inner /= msg -> Just (msg <> ": " <> inner)
+               (Just msg, _) -> Just msg
+               (Nothing, Just inner) | not (T.null inner) -> Just inner
+               _ -> mDetail <|> mCode <|> Just (TE.decodeUtf8 (LBS.toStrict (Aeson.encode errObj)))
         _ ->
           AesonTypes.parseMaybe (\obj -> obj .: "message") o
+
+    innerErrorText raw =
+      case Aeson.decode (LBS.fromStrict (TE.encodeUtf8 raw)) :: Maybe Value of
+        Just (Aeson.Object innerObj) ->
+          case AesonTypes.parseMaybe nestedErrorMessage innerObj of
+            Just nested | not (T.null nested) -> nested
+            _ -> raw
+        _ -> raw
+
+    nestedErrorMessage obj =
+      (do
+          err <- obj .: "error"
+          case err of
+            Aeson.String m -> pure m
+            Aeson.Object e -> e .: "message"
+            _ -> fail "no nested error message")
+      <|> obj .: "message"
 
 -- | Send an inference request to OpenRouter API.
 sendChatCompletion
