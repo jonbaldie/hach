@@ -2,6 +2,7 @@
 
 module Hach.ToolsSpec (spec) where
 
+import Hach.Paths (Workspace(..), workspaceAt)
 import Hach.Tools
 import Hach.Types
 import qualified Data.Text as T
@@ -188,7 +189,7 @@ spec = do
       case resolveTool (ToolCall "unknown" "unregistered_tool" "{}") of
         Nothing -> pure ()
         _ -> expectationFailure "Unknown tool resolved unexpectedly"
-      executeCodingTool "." (ToolCall "bad" "Bash" "{}") `shouldReturn` ToolError "Failed to parse run_command args: Error in $: key \"command\" not found"
+      executeCodingTool (workspaceAt ".") (ToolCall "bad" "Bash" "{}") `shouldReturn` ToolError "Failed to parse run_command args: Error in $: key \"command\" not found"
 
   describe "truncateToolOutput" $ do
     it "leaves short output intact" $ do
@@ -230,11 +231,11 @@ spec = do
 
       it "replaces unique text in a file" $ do
         let targetFile = testSandbox </> "sample.txt"
-        _ <- executeWriteFile "." (WriteFileArgs targetFile "foo bar baz")
-        res <- executeReplaceFileContent "." (ReplaceFileContentArgs targetFile "bar" "qux")
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs targetFile "foo bar baz")
+        res <- executeReplaceFileContent (workspaceAt ".") (ReplaceFileContentArgs targetFile "bar" "qux")
         case res of
           ToolSuccess _ -> do
-            readRes <- executeReadFile "." (ReadFileArgs targetFile)
+            readRes <- executeReadFile (workspaceAt ".") (ReadFileArgs targetFile)
             readRes `shouldBe` ToolSuccess "foo qux baz"
           ToolError err -> expectationFailure ("Unexpected error: " ++ T.unpack err)
 
@@ -258,7 +259,7 @@ spec = do
 
           let call = ToolCall "c_protected_write" "write_file"
                 ("{\"path\":\"" <> T.pack rawPath <> "\",\"content\":\"HIJACKED\"}")
-          res <- executeCodingTool testSandbox call
+          res <- executeCodingTool (workspaceAt testSandbox) call
           res `shouldBe` ToolError ("Protected path: write denied to " <> T.pack rawPath)
           readFile protectedFile `shouldReturn` "ORIGINAL"
           ) protectedTargets
@@ -274,7 +275,7 @@ spec = do
 
         let call = ToolCall "c_protected_edit" "Edit"
               "{\"path\":\"safe-edit-link/config\",\"old_content\":\"ORIGINAL\",\"new_content\":\"HIJACKED\"}"
-        res <- executeCodingTool testSandbox call
+        res <- executeCodingTool (workspaceAt testSandbox) call
         res `shouldBe` ToolError "Protected path: edit denied to safe-edit-link/config"
         readFile protectedFile `shouldReturn` "ORIGINAL"
 
@@ -294,23 +295,23 @@ spec = do
 
         let call = ToolCall "c_protected_chain" "write_file"
               ("{\"path\":\"" <> T.pack rawPath <> "\",\"content\":\"HIJACKED\"}")
-        res <- executeCodingTool testSandbox call
+        res <- executeCodingTool (workspaceAt testSandbox) call
         res `shouldBe` ToolError ("Protected path: write denied to " <> T.pack rawPath)
         readFile protectedFile `shouldReturn` "ORIGINAL"
 
       it "preserves the workspace escape error for writes outside the root" $ do
         let rawPath = "../hach-99-outside.txt"
-        res <- executeWriteFile testSandbox (WriteFileArgs rawPath "outside")
+        res <- executeWriteFile (workspaceAt testSandbox) (WriteFileArgs rawPath "outside")
         res `shouldBe` ToolError ("Access denied: path '" <> T.pack rawPath <> "' escapes the workspace root.")
 
       it "allows ordinary writes when the workspace root is under a protected directory name" $ do
         let workspace = testSandbox </> ".claude" </> "workspace"
             targetFile = workspace </> "ordinary.txt"
         createDirectoryIfMissing True workspace
-        relativeRes <- executeWriteFile workspace (WriteFileArgs "ordinary.txt" "safe")
+        relativeRes <- executeWriteFile (workspaceAt workspace) (WriteFileArgs "ordinary.txt" "safe")
         relativeRes `shouldBe` ToolSuccess "Successfully wrote 4 characters to ordinary.txt"
         absoluteTargetFile <- canonicalizePath targetFile
-        absoluteRes <- executeWriteFile workspace (WriteFileArgs absoluteTargetFile "safe-again")
+        absoluteRes <- executeWriteFile (workspaceAt workspace) (WriteFileArgs absoluteTargetFile "safe-again")
         absoluteRes `shouldBe` ToolSuccess ("Successfully wrote 10 characters to " <> T.pack absoluteTargetFile)
         readFile targetFile `shouldReturn` "safe-again"
 
@@ -334,41 +335,41 @@ spec = do
 
       it "fails to replace text when target content is not found" $ do
         let targetFile = testSandbox </> "sample.txt"
-        _ <- executeWriteFile "." (WriteFileArgs targetFile "foo bar baz")
-        res <- executeReplaceFileContent "." (ReplaceFileContentArgs targetFile "missing" "qux")
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs targetFile "foo bar baz")
+        res <- executeReplaceFileContent (workspaceAt ".") (ReplaceFileContentArgs targetFile "missing" "qux")
         case res of
           ToolError err -> err `shouldSatisfy` ("not found" `T.isInfixOf`)
           ToolSuccess _ -> expectationFailure "Expected error when target content missing"
 
       it "fails to replace text when target content occurs multiple times" $ do
         let targetFile = testSandbox </> "sample.txt"
-        _ <- executeWriteFile "." (WriteFileArgs targetFile "repeat repeat")
-        res <- executeReplaceFileContent "." (ReplaceFileContentArgs targetFile "repeat" "single")
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs targetFile "repeat repeat")
+        res <- executeReplaceFileContent (workspaceAt ".") (ReplaceFileContentArgs targetFile "repeat" "single")
         res `shouldBe` ToolError
           ("Target content found multiple (2) times in '" <> T.pack targetFile <> "'; replacement requires a unique match.")
 
       it "refuses overlapping target matches and leaves the file unchanged" $ do
         let targetFile = "overlap.txt"
-        _ <- executeWriteFile testSandbox (WriteFileArgs targetFile "aaa")
+        _ <- executeWriteFile (workspaceAt testSandbox) (WriteFileArgs targetFile "aaa")
         let call = ToolCall "c_overlap" "Edit"
               "{\"path\":\"overlap.txt\",\"old_content\":\"aa\",\"new_content\":\"X\"}"
-        res <- executeCodingTool testSandbox call
+        res <- executeCodingTool (workspaceAt testSandbox) call
         res `shouldBe` ToolError "Target content found multiple (2) times in 'overlap.txt'; replacement requires a unique match."
-        readRes <- executeReadFile testSandbox (ReadFileArgs targetFile)
+        readRes <- executeReadFile (workspaceAt testSandbox) (ReadFileArgs targetFile)
         readRes `shouldBe` ToolSuccess "aaa"
 
       it "returns ToolError and does not crash when old_content is empty" $ do
         let targetFile = testSandbox </> "sample.txt"
-        _ <- executeWriteFile "." (WriteFileArgs targetFile "foo bar baz")
-        res <- executeReplaceFileContent "." (ReplaceFileContentArgs targetFile "" "qux")
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs targetFile "foo bar baz")
+        res <- executeReplaceFileContent (workspaceAt ".") (ReplaceFileContentArgs targetFile "" "qux")
         case res of
           ToolError err -> err `shouldSatisfy` ("cannot be empty" `T.isInfixOf`)
           ToolSuccess _ -> expectationFailure "Expected error when old_content is empty"
 
       it "finds files matching glob/extension pattern" $ do
-        _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "A.hs") "module A where")
-        _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "B.txt") "notes")
-        res <- executeFindFiles "." (FindFilesArgs "*.hs" testSandbox)
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs (testSandbox </> "A.hs") "module A where")
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs (testSandbox </> "B.txt") "notes")
+        res <- executeFindFiles (workspaceAt ".") (FindFilesArgs "*.hs" testSandbox)
         case res of
           ToolSuccess out -> do
             out `shouldSatisfy` ("A.hs" `T.isInfixOf`)
@@ -376,10 +377,10 @@ spec = do
           ToolError err -> expectationFailure (T.unpack err)
 
       it "does not match *.hs against files with .hs elsewhere in the name" $ do
-        _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "NotMatch.hsx") "x")
-        _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "Archive.hs.zip") "x")
-        _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "Real.hs") "module Real where")
-        res <- executeFindFiles "." (FindFilesArgs "*.hs" testSandbox)
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs (testSandbox </> "NotMatch.hsx") "x")
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs (testSandbox </> "Archive.hs.zip") "x")
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs (testSandbox </> "Real.hs") "module Real where")
+        res <- executeFindFiles (workspaceAt ".") (FindFilesArgs "*.hs" testSandbox)
         case res of
           ToolSuccess out -> do
             out `shouldSatisfy` ("Real.hs" `T.isInfixOf`)
@@ -389,9 +390,9 @@ spec = do
 
       it "evaluates pathological wildcard patterns without exponential backtracking in executeFindFiles" $ do
         let pathologicalFile = testSandbox </> (replicate 30 'a' ++ ".txt")
-        _ <- executeWriteFile "." (WriteFileArgs pathologicalFile "target")
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs pathologicalFile "target")
         let pat = "*a*a*a*a*a*a*a*a*a*a*b"
-        mRes <- timeout 2000000 (executeFindFiles "." (FindFilesArgs pat testSandbox))
+        mRes <- timeout 2000000 (executeFindFiles (workspaceAt ".") (FindFilesArgs pat testSandbox))
         case mRes of
           Nothing -> expectationFailure "executeFindFiles timed out on pathological pattern (exponential backtracking)"
           Just (ToolSuccess out) -> out `shouldBe` "No matching files found."
@@ -399,20 +400,20 @@ spec = do
 
       it "preserves find_files wildcard semantics across path separators in executeFindFiles" $ do
         let nestedFile = testSandbox </> "sub" </> "foo.txt"
-        _ <- executeWriteFile "." (WriteFileArgs nestedFile "content")
-        r1 <- executeFindFiles "." (FindFilesArgs "*sub*foo*" testSandbox)
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs nestedFile "content")
+        r1 <- executeFindFiles (workspaceAt ".") (FindFilesArgs "*sub*foo*" testSandbox)
         case r1 of
           ToolSuccess out -> out `shouldSatisfy` ("foo.txt" `T.isInfixOf`)
           ToolError err   -> expectationFailure (T.unpack err)
-        r2 <- executeFindFiles "." (FindFilesArgs "*.txt" testSandbox)
+        r2 <- executeFindFiles (workspaceAt ".") (FindFilesArgs "*.txt" testSandbox)
         case r2 of
           ToolSuccess out -> out `shouldSatisfy` ("foo.txt" `T.isInfixOf`)
           ToolError err   -> expectationFailure (T.unpack err)
 
       it "performs non-wildcard substring searches in executeFindFiles" $ do
         let nestedFile = testSandbox </> "sub" </> "searchme.txt"
-        _ <- executeWriteFile "." (WriteFileArgs nestedFile "content")
-        r1 <- executeFindFiles "." (FindFilesArgs "searchme" testSandbox)
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs nestedFile "content")
+        r1 <- executeFindFiles (workspaceAt ".") (FindFilesArgs "searchme" testSandbox)
         case r1 of
           ToolSuccess out -> out `shouldSatisfy` ("searchme.txt" `T.isInfixOf`)
           ToolError err   -> expectationFailure (T.unpack err)
@@ -430,8 +431,8 @@ spec = do
         writeFile secretFile "TOP SECRET CONTENT\n"
         createDirectoryLink outside externalLink
 
-        findRes <- timeout 2000000 (executeFindFiles workspace (FindFilesArgs "*.txt" "."))
-        grepRes <- timeout 2000000 (executeGrepSearch workspace (GrepSearchArgs "TOP SECRET" "." True))
+        findRes <- timeout 2000000 (executeFindFiles (workspaceAt workspace) (FindFilesArgs "*.txt" "."))
+        grepRes <- timeout 2000000 (executeGrepSearch (workspaceAt workspace) (GrepSearchArgs "TOP SECRET" "." True))
         case (findRes, grepRes) of
           (Just (ToolSuccess findOut), Just (ToolSuccess grepOut)) ->
             [ "secret.txt" `T.isInfixOf` findOut
@@ -450,8 +451,8 @@ spec = do
         createDirectoryIfMissing True workspace
         createDirectoryLink workspace cycleLink
 
-        findRes <- timeout 2000000 (executeFindFiles workspace (FindFilesArgs "*" "."))
-        grepRes <- timeout 2000000 (executeGrepSearch workspace (GrepSearchArgs "anything" "." True))
+        findRes <- timeout 2000000 (executeFindFiles (workspaceAt workspace) (FindFilesArgs "*" "."))
+        grepRes <- timeout 2000000 (executeGrepSearch (workspaceAt workspace) (GrepSearchArgs "anything" "." True))
         case (findRes, grepRes) of
           (Just (ToolSuccess findOut), Just (ToolSuccess grepOut)) ->
             [findOut, grepOut] `shouldBe` ["No matching files found.", "No matches found."]
@@ -462,22 +463,22 @@ spec = do
 
       it "executes find_files via executeCodingTool and reports accurate error on parse failure" $ do
         let nestedFile = testSandbox </> "sub" </> "alpha.txt"
-        _ <- executeWriteFile "." (WriteFileArgs nestedFile "alpha")
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs nestedFile "alpha")
         let call = ToolCall "c_ff" "find_files" ("{\"pattern\":\"*.txt\",\"path\":\"" <> T.pack testSandbox <> "\"}")
-        rSuccess <- executeCodingTool "." call
+        rSuccess <- executeCodingTool (workspaceAt ".") call
         case rSuccess of
           ToolSuccess out -> out `shouldSatisfy` ("alpha.txt" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("find_files failed: " ++ T.unpack err)
         let badCall = ToolCall "c_bad" "find_files" "{}"
-        rBad <- executeCodingTool "." badCall
+        rBad <- executeCodingTool (workspaceAt ".") badCall
         case rBad of
           ToolError err   -> err `shouldSatisfy` ("Failed to parse find_files args" `T.isInfixOf`)
           ToolSuccess out -> expectationFailure ("Expected parse error, got: " ++ T.unpack out)
 
       it "greps files for matching pattern and reports line number" $ do
         let targetFile = testSandbox </> "Code.hs"
-        _ <- executeWriteFile "." (WriteFileArgs targetFile "line 1\nsearchTarget here\nline 3")
-        res <- executeGrepSearch "." (GrepSearchArgs "searchTarget" testSandbox True)
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs targetFile "line 1\nsearchTarget here\nline 3")
+        res <- executeGrepSearch (workspaceAt ".") (GrepSearchArgs "searchTarget" testSandbox True)
         case res of
           ToolSuccess out -> do
             out `shouldSatisfy` ("Code.hs:2: searchTarget here" `T.isInfixOf`)
@@ -485,12 +486,12 @@ spec = do
 
       it "executes Edit tool via executeCodingTool" $ do
         let targetFile = testSandbox </> "edit_target.txt"
-        _ <- executeWriteFile "." (WriteFileArgs targetFile "apple banana cherry")
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs targetFile "apple banana cherry")
         let call = ToolCall "c_e" "Edit" ("{\"path\":\"" <> T.pack targetFile <> "\",\"old_content\":\"banana\",\"new_content\":\"orange\"}")
-        res <- executeCodingTool "." call
+        res <- executeCodingTool (workspaceAt ".") call
         case res of
           ToolSuccess _ -> do
-            readRes <- executeReadFile "." (ReadFileArgs targetFile)
+            readRes <- executeReadFile (workspaceAt ".") (ReadFileArgs targetFile)
             readRes `shouldBe` ToolSuccess "apple orange cherry"
           ToolError err -> expectationFailure ("Edit execution failed: " ++ T.unpack err)
 
@@ -506,21 +507,21 @@ spec = do
 
       it "executes Bash command via executeCodingTool" $ do
         let call = ToolCall "c_b" "Bash" "{\"command\":\"echo hello-bash\"}"
-        res <- executeCodingTool "." call
+        res <- executeCodingTool (workspaceAt ".") call
         case res of
           ToolSuccess out -> out `shouldSatisfy` ("hello-bash" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("Bash failed: " ++ T.unpack err)
 
       it "respects timeout in Bash tool calls via executeCodingTool" $ do
         let call = ToolCall "c_b_to" "Bash" "{\"command\":\"sleep 2\",\"timeout\":1}"
-        res <- executeCodingTool "." call
+        res <- executeCodingTool (workspaceAt ".") call
         case res of
           ToolError err   -> err `shouldSatisfy` ("Command timed out after 1 seconds" `T.isInfixOf`)
           ToolSuccess out -> expectationFailure ("Expected timeout error, but succeeded: " ++ T.unpack out)
 
       it "respects timeout in run_command tool calls via executeCodingTool" $ do
         let call = ToolCall "c_rc_to" "run_command" "{\"command\":\"sleep 2\",\"timeout\":1}"
-        res <- executeCodingTool "." call
+        res <- executeCodingTool (workspaceAt ".") call
         case res of
           ToolError err   -> err `shouldSatisfy` ("Command timed out after 1 seconds" `T.isInfixOf`)
           ToolSuccess out -> expectationFailure ("Expected timeout error, but succeeded: " ++ T.unpack out)
@@ -541,51 +542,51 @@ spec = do
         alive "child.pid" `shouldReturn` False
 
       it "executes Glob tool via executeCodingTool" $ do
-        _ <- executeWriteFile "." (WriteFileArgs (testSandbox </> "sub" </> "foo.txt") "content")
+        _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs (testSandbox </> "sub" </> "foo.txt") "content")
         let call = ToolCall "c_g" "Glob" ("{\"pattern\":\"*.txt\",\"path\":\"" <> T.pack testSandbox <> "\"}")
-        res <- executeCodingTool "." call
+        res <- executeCodingTool (workspaceAt ".") call
         case res of
           ToolSuccess out -> out `shouldSatisfy` ("foo.txt" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("Glob failed: " ++ T.unpack err)
 
       it "executes EnterPlanMode and enter_plan_mode" $ do
-        r1 <- executeCodingTool "." (ToolCall "p1" "EnterPlanMode" "{}")
+        r1 <- executeCodingTool (workspaceAt ".") (ToolCall "p1" "EnterPlanMode" "{}")
         r1 `shouldBe` ToolSuccess "Entered plan mode. The agent is now in read-only planning mode."
-        r2 <- executeCodingTool "." (ToolCall "p2" "enter_plan_mode" "{}")
+        r2 <- executeCodingTool (workspaceAt ".") (ToolCall "p2" "enter_plan_mode" "{}")
         r2 `shouldBe` ToolSuccess "Entered plan mode. The agent is now in read-only planning mode."
 
       it "executes ExitPlanMode and exit_plan_mode" $ do
-        r1 <- executeCodingTool "." (ToolCall "p1" "ExitPlanMode" "{}")
+        r1 <- executeCodingTool (workspaceAt ".") (ToolCall "p1" "ExitPlanMode" "{}")
         r1 `shouldBe` ToolSuccess "Exited plan mode. The agent is now in standard execution mode."
-        r2 <- executeCodingTool "." (ToolCall "p2" "exit_plan_mode" "{}")
+        r2 <- executeCodingTool (workspaceAt ".") (ToolCall "p2" "exit_plan_mode" "{}")
         r2 `shouldBe` ToolSuccess "Exited plan mode. The agent is now in standard execution mode."
 
       it "returns ToolError for ExitWorktree and exit_worktree when not in a worktree" $ do
-        r1 <- executeCodingTool testSandbox (ToolCall "w1" "ExitWorktree" "{}")
+        r1 <- executeCodingTool (workspaceAt testSandbox) (ToolCall "w1" "ExitWorktree" "{}")
         r1 `shouldBe` ToolError "Not currently inside a worktree."
-        r2 <- executeCodingTool testSandbox (ToolCall "w2" "exit_worktree" "{}")
+        r2 <- executeCodingTool (workspaceAt testSandbox) (ToolCall "w2" "exit_worktree" "{}")
         r2 `shouldBe` ToolError "Not currently inside a worktree."
 
       it "executes ListAgents and list_agents" $ do
-        r1 <- executeCodingTool "." (ToolCall "a1" "ListAgents" "{}")
+        r1 <- executeCodingTool (workspaceAt ".") (ToolCall "a1" "ListAgents" "{}")
         r1 `shouldBe` ToolSuccess "Available subagents: explore, plan."
-        r2 <- executeCodingTool "." (ToolCall "a2" "list_agents" "{}")
+        r2 <- executeCodingTool (workspaceAt ".") (ToolCall "a2" "list_agents" "{}")
         r2 `shouldBe` ToolSuccess "Available subagents: explore, plan."
 
       it "executes EndConversation and end_conversation" $ do
-        r1 <- executeCodingTool "." (ToolCall "e1" "EndConversation" "{}")
+        r1 <- executeCodingTool (workspaceAt ".") (ToolCall "e1" "EndConversation" "{}")
         r1 `shouldBe` ToolSuccess "Conversation completed by agent."
-        r2 <- executeCodingTool "." (ToolCall "e2" "end_conversation" "{}")
+        r2 <- executeCodingTool (workspaceAt ".") (ToolCall "e2" "end_conversation" "{}")
         r2 `shouldBe` ToolSuccess "Conversation completed by agent."
 
       it "manages tasks via TaskCreate and TaskList" $ do
-        r1 <- executeCodingTool "." (ToolCall "t1" "TaskCreate" "{\"name\":\"Build feature\"}")
+        r1 <- executeCodingTool (workspaceAt ".") (ToolCall "t1" "TaskCreate" "{\"name\":\"Build feature\"}")
         r1 `shouldSatisfy` \case ToolSuccess out -> "Build feature" `T.isInfixOf` out; _ -> False
-        r2 <- executeCodingTool "." (ToolCall "t2" "TaskList" "{}")
+        r2 <- executeCodingTool (workspaceAt ".") (ToolCall "t2" "TaskList" "{}")
         r2 `shouldSatisfy` \case ToolSuccess out -> "Build feature" `T.isInfixOf` out; _ -> False
 
       it "writes todos via TodoWrite" $ do
-        r <- executeCodingTool testSandbox (ToolCall "tw" "TodoWrite" "{\"tasks\":[\"Step 1\",\"Step 2\"]}")
+        r <- executeCodingTool (workspaceAt testSandbox) (ToolCall "tw" "TodoWrite" "{\"tasks\":[\"Step 1\",\"Step 2\"]}")
         r `shouldSatisfy` \case ToolSuccess out -> "2 todo items" `T.isInfixOf` out; _ -> False
         TIO.readFile (testSandbox </> ".claude" </> "todos.json") `shouldReturn` "[\"Step 1\",\"Step 2\"]"
 
@@ -594,7 +595,7 @@ spec = do
         let readOnlyPermissions = originalPermissions { writable = False }
         setPermissions testSandbox readOnlyPermissions
         (do
-          result <- executeCodingTool testSandbox (ToolCall "tw-read-only" "TodoWrite" "{\"tasks\":[]}")
+          result <- executeCodingTool (workspaceAt testSandbox) (ToolCall "tw-read-only" "TodoWrite" "{\"tasks\":[]}")
           result `shouldSatisfy` \case
             ToolError err -> "TodoWrite error: " `T.isPrefixOf` err
             ToolSuccess _ -> False
@@ -607,39 +608,39 @@ spec = do
         let readOnlyPermissions = originalPermissions { writable = False }
         setPermissions todoDir readOnlyPermissions
         (do
-          result <- executeCodingTool testSandbox (ToolCall "tw-file-read-only" "TodoWrite" "{\"tasks\":[]}")
+          result <- executeCodingTool (workspaceAt testSandbox) (ToolCall "tw-file-read-only" "TodoWrite" "{\"tasks\":[]}")
           result `shouldSatisfy` \case
             ToolError err -> "TodoWrite error: " `T.isPrefixOf` err
             ToolSuccess _ -> False
           ) `finally` setPermissions todoDir originalPermissions
 
       it "manages background tasks with consistent IDs and error handling (BUG-6)" $ do
-        r1 <- executeCodingTool "." (ToolCall "t1" "TaskCreate" "{\"name\":\"compile-bg\",\"command\":\"sleep 0.1\"}")
+        r1 <- executeCodingTool (workspaceAt ".") (ToolCall "t1" "TaskCreate" "{\"name\":\"compile-bg\",\"command\":\"sleep 0.1\"}")
         case r1 of
           ToolSuccess out -> out `shouldSatisfy` ("Created background task bg-" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("TaskCreate failed: " ++ T.unpack err)
 
-        rList <- executeCodingTool "." (ToolCall "tl" "TaskList" "{}")
+        rList <- executeCodingTool (workspaceAt ".") (ToolCall "tl" "TaskList" "{}")
         case rList of
           ToolSuccess out -> out `shouldSatisfy` ("compile-bg" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("TaskList failed: " ++ T.unpack err)
 
-        rGet <- executeCodingTool "." (ToolCall "tg" "TaskGet" "{\"task_id\":\"bg-1\"}")
+        rGet <- executeCodingTool (workspaceAt ".") (ToolCall "tg" "TaskGet" "{\"task_id\":\"bg-1\"}")
         case rGet of
           ToolSuccess out -> out `shouldSatisfy` ("compile-bg" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("TaskGet failed: " ++ T.unpack err)
 
-        rUpdate <- executeCodingTool "." (ToolCall "tu" "TaskUpdate" "{\"task_id\":\"bg-1\",\"status\":\"completed\"}")
+        rUpdate <- executeCodingTool (workspaceAt ".") (ToolCall "tu" "TaskUpdate" "{\"task_id\":\"bg-1\",\"status\":\"completed\"}")
         case rUpdate of
           ToolSuccess out -> out `shouldSatisfy` ("Updated task bg-1 status to completed" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("TaskUpdate failed: " ++ T.unpack err)
 
-        rUpdateMissing <- executeCodingTool "." (ToolCall "tu2" "TaskUpdate" "{\"task_id\":\"nonexistent-id\",\"status\":\"completed\"}")
+        rUpdateMissing <- executeCodingTool (workspaceAt ".") (ToolCall "tu2" "TaskUpdate" "{\"task_id\":\"nonexistent-id\",\"status\":\"completed\"}")
         case rUpdateMissing of
           ToolError err   -> err `shouldSatisfy` ("Task not found: nonexistent-id" `T.isInfixOf`)
           ToolSuccess out -> expectationFailure ("Expected error on nonexistent task update, got: " ++ T.unpack out)
 
-        rStop <- executeCodingTool "." (ToolCall "ts" "TaskStop" "{\"task_id\":\"bg-1\"}")
+        rStop <- executeCodingTool (workspaceAt ".") (ToolCall "ts" "TaskStop" "{\"task_id\":\"bg-1\"}")
         case rStop of
           ToolSuccess out -> out `shouldSatisfy` ("Stopped task bg-1" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("TaskStop failed: " ++ T.unpack err)

@@ -7,6 +7,7 @@ import Hach.Env (resolveEffortLevel, resolvePermissionMode)
 import Hach.Interpreter.IO
 import Hach.Permissions (isProtectedPath)
 import Hach.Settings (Settings (..), defaultSettings, loadLayeredSettings)
+import Hach.Paths (workspaceAt)
 import Hach.Tools (ReplaceFileContentArgs (..), WriteFileArgs (..), executeCodingTool, executeReplaceFileContent, executeWriteFile)
 import Hach.Types
 import Hach.TUI.App
@@ -485,7 +486,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
 
     describe "executeWriteFile (tool layer)" $ do
       it "refuses to write into protected paths" $ do
-        res <- executeWriteFile testDir (WriteFileArgs ".git/pwned.txt" "pwned")
+        res <- executeWriteFile (workspaceAt testDir) (WriteFileArgs ".git/pwned.txt" "pwned")
         res `shouldSatisfy` \case
           ToolError e -> "Protected path" `T.isPrefixOf` e
           ToolSuccess _ -> False
@@ -493,7 +494,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         exists `shouldBe` False
 
       it "refuses protected paths through executeCodingTool" $ do
-        res <- executeCodingTool testDir
+        res <- executeCodingTool (workspaceAt testDir)
           (ToolCall "c1" "write_file" "{\"path\":\".agents/evil.txt\",\"content\":\"evil\"}")
         res `shouldSatisfy` \case
           ToolError _ -> True
@@ -502,7 +503,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         exists `shouldBe` False
 
       it "refuses protected paths through executeReplaceFileContent" $ do
-        res <- executeReplaceFileContent testDir
+        res <- executeReplaceFileContent (workspaceAt testDir)
           (ReplaceFileContentArgs ".git/config" "old" "new")
         res `shouldSatisfy` \case
           ToolError e -> "Protected path" `T.isPrefixOf` e

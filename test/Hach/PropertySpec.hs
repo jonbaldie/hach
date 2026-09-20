@@ -5,6 +5,7 @@ module Hach.PropertySpec (spec) where
 
 import Hach.Env
 import Hach.OpenRouter
+import Hach.Paths (workspaceAt)
 import Hach.Tools
 import Hach.TUI.State
 import Hach.TUI.Types
@@ -59,7 +60,7 @@ spec = do
         writeFile secretFile "SUPER_SECRET_DATA"
 
         -- Attempt path traversal
-        res <- executeReadFile wsDir (ReadFileArgs "../secret.txt")
+        res <- executeReadFile (workspaceAt wsDir) (ReadFileArgs "../secret.txt")
         Dir.removeDirectoryRecursive sandboxDir
 
         case res of
@@ -76,7 +77,7 @@ spec = do
         writeFile secretFile "SUPER_SECRET_DATA"
 
         -- Attempt absolute path reading
-        res <- executeReadFile wsDir (ReadFileArgs secretFile)
+        res <- executeReadFile (workspaceAt wsDir) (ReadFileArgs secretFile)
         Dir.removeDirectoryRecursive sandboxDir
 
         case res of
@@ -91,7 +92,7 @@ spec = do
         Dir.createDirectoryIfMissing True wsDir
 
         -- Attempt path traversal write
-        res <- executeWriteFile wsDir (WriteFileArgs "../pwned.txt" "pwned")
+        res <- executeWriteFile (workspaceAt wsDir) (WriteFileArgs "../pwned.txt" "pwned")
         Dir.removeDirectoryRecursive sandboxDir
 
         case res of

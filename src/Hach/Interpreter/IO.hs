@@ -12,6 +12,7 @@ module Hach.Interpreter.IO
   , setIOPermissionMode
   , currentIOPermissionMode
   , currentIOWorkspace
+  , currentIOWorkspaceScope
   , currentIOWorktree
   , ioAlgebra
   , ioAlgebraWithLog
@@ -27,6 +28,7 @@ import qualified Hach.Git as Git
 import Hach.Hooks (executeHooks)
 import Hach.Memory (loadHierarchicalMemory, resolveMemoryImports)
 import Hach.Notifications (sendDesktopNotification)
+import Hach.Paths (Workspace(..))
 import Hach.OpenRouter
 import Hach.Permissions (evalPermission, evalPermissionForAuthority)
 import qualified Hach.Sessions as Sessions
@@ -133,6 +135,7 @@ data IOEnv = IOEnv
   , ioApiKey           :: !Text
   , ioModel            :: !Text
   , ioWorkspace        :: !FilePath
+  , ioWorkingDirs      :: ![FilePath]
   , ioCurrentWorkspace :: !(IORef FilePath)
   , ioCurrentWorktree  :: !(IORef (Maybe FilePath))
   , ioVerbose          :: !Bool
@@ -158,6 +161,7 @@ newIOEnvWithPermissions perms apiKey model workspace verbose = do
     , ioApiKey           = apiKey
     , ioModel            = model
     , ioWorkspace        = workspace
+    , ioWorkingDirs      = []
     , ioCurrentWorkspace = wsRef
     , ioCurrentWorktree  = wtRef
     , ioVerbose          = verbose
@@ -178,6 +182,13 @@ currentIOPermissionMode = readIORef . prtMode . ioPerms
 -- | Read the currently active workspace directory.
 currentIOWorkspace :: IOEnv -> IO FilePath
 currentIOWorkspace = readIORef . ioCurrentWorkspace
+
+-- | Every directory tools may reach right now: the active workspace (which
+-- follows worktree entry and exit) plus the session's additional working
+-- directories.
+currentIOWorkspaceScope :: IOEnv -> IO Workspace
+currentIOWorkspaceScope env =
+  flip Workspace (ioWorkingDirs env) <$> currentIOWorkspace env
 
 -- | Read the currently active worktree directory, if inside one.
 currentIOWorktree :: IOEnv -> IO (Maybe FilePath)
@@ -361,15 +372,15 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
         _ -> case functionName call of
           name | name `elem` ["EnterPlanMode", "enter_plan_mode"] -> do
             setIOPermissionMode env ModePlan
-            currentWs <- readIORef ioCurrentWorkspace
-            executeCodingTool currentWs call
+            scope <- currentIOWorkspaceScope env
+            executeCodingTool scope call
           name | name `elem` ["ExitPlanMode", "exit_plan_mode"] -> do
             setIOPermissionMode env ModeDefault
-            currentWs <- readIORef ioCurrentWorkspace
-            executeCodingTool currentWs call
+            scope <- currentIOWorkspaceScope env
+            executeCodingTool scope call
           _ -> do
-            currentWs <- readIORef ioCurrentWorkspace
-            executeCodingTool currentWs call
+            scope <- currentIOWorkspaceScope env
+            executeCodingTool scope call
 
   , interpLog = logger
 

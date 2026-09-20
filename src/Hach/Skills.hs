@@ -20,7 +20,7 @@ module Hach.Skills
   , injectDynamicContext
   ) where
 
-import Hach.Paths (resolveWorkspacePath)
+import Hach.Paths (resolveWorkspacePath, workspaceAt)
 import Control.Applicative ((<|>))
 import Control.Exception (try, SomeException)
 import Control.Monad (guard)
@@ -221,7 +221,7 @@ injectDynamicContext root raw = do
           case T.breakOn "}}" afterPrefix of
             (fpText, restAfter) | not (T.null restAfter) -> do
               let trailing = T.drop 2 restAfter
-              pathRes <- resolveWorkspacePath root (T.unpack (T.strip fpText))
+              pathRes <- resolveWorkspacePath (workspaceAt root) (T.unpack (T.strip fpText))
               fileContent <- case pathRes of
                 Left _ -> pure ("{{file:" <> fpText <> "}}")
                 Right targetFp -> do

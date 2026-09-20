@@ -24,7 +24,7 @@ import Control.Exception (tryJust)
 import Control.Monad (when)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import System.Directory (getCurrentDirectory)
+import System.Directory (getCurrentDirectory, makeAbsolute)
 import System.Environment (getArgs)
 import Data.Version (showVersion)
 import qualified Paths_hach as Paths
@@ -97,8 +97,12 @@ main = do
         , iopRules       = setPermissionRules envSettings
         , iopHooks       = setHooks envSettings
         }
+  -- Additional working directories are resolved against the startup cwd so a
+  -- relative @--add-dir@ keeps meaning the same directory after the agent
+  -- enters a worktree.
+  workingDirs <- mapM makeAbsolute (resolveWorkingDirs optAddDir envSettings)
   ioEnv0 <- newIOEnvWithPermissions perms envApiKey envModel cwd (headlessVerbose opts)
-  let ioEnv = ioEnv0 { ioEffortLevel = effort }
+  let ioEnv = ioEnv0 { ioEffortLevel = effort, ioWorkingDirs = workingDirs }
   case optWorktree of
     Nothing -> pure ()
     Just _  -> interpEnterWorktree (ioAlgebra ioEnv) activeWorkspace
