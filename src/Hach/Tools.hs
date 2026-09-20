@@ -142,7 +142,7 @@ import Hach.Paths
   , relativeToWorkspace
   , resolveWorkspacePath
   )
-import Hach.Skills (discoverSkills, expandSkillContent, skillContent)
+import Hach.Skills (discoverSkills, expandSkillContent, skillContent, skillDisableModelInvocation)
 import Hach.Tasks
   ( Task(..)
   , TaskStore
@@ -1487,9 +1487,12 @@ executeSkill root (SkillToolArgs name mArgs) = do
   catalog <- discoverSkills root
   case Map.lookup name catalog of
     Nothing -> pure $ ToolError ("Skill not found: " <> name)
-    Just sk -> do
-      expanded <- expandSkillContent root mArgs (skillContent sk)
-      pure $ ToolSuccess ("Skill '" <> name <> "' content:\n" <> expanded)
+    Just sk
+      | skillDisableModelInvocation sk ->
+          pure $ ToolError ("Model invocation is disabled for skill '" <> name <> "'.")
+      | otherwise -> do
+          expanded <- expandSkillContent root mArgs (skillContent sk)
+          pure $ ToolSuccess ("Skill '" <> name <> "' content:\n" <> expanded)
 
 globalBgRegistry :: BackgroundRegistry
 globalBgRegistry = unsafePerformIO newBackgroundRegistry
