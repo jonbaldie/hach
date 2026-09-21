@@ -5,7 +5,8 @@ module Hach.SettingsSpec (spec) where
 import Hach.Settings
 import Hach.Types
 import Control.Exception (finally)
-import Data.Aeson (decode)
+import Data.Aeson (Value, decode, encode, object, withObject, (.:), (.=))
+import Data.Aeson.Types (parseMaybe)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Map.Strict as Map
 import System.Directory
@@ -118,6 +119,41 @@ spec = describe "Hach.Settings" $ do
         res <- loadLayeredSettings workspace
         fmap setModel res `shouldBe` Right (Just "local-model")
         fmap setTheme res `shouldBe` Right (Just "nord")
+
+  describe "Hooks as a JSON object keyed by event (Issue #166)" $ do
+    let preToolUse = HookHandler (HookCommand "true") (Just "Bash") False
+        expected = Map.fromList [(HookPreToolUse, [preToolUse])]
+        handlerJson = "[{\"matcher\": \"Bash\", \"handler\": {\"type\": \"command\", \"command\": \"true\"}}]"
+
+    it "loads a settings file whose hooks are an object keyed by event name" $
+      withTemporaryWorkspace $ \workspace -> do
+        createDirectoryIfMissing True (workspace </> ".claude")
+        writeFile (workspace </> ".claude" </> "settings.json") $
+          "{\"hooks\": {\"pre_tool_use\": " <> handlerJson <> "}}"
+        res <- loadLayeredSettings workspace
+        fmap setHooks res `shouldBe` Right expected
+
+    it "still loads the older array-of-pairs form" $
+      withTemporaryWorkspace $ \workspace -> do
+        createDirectoryIfMissing True (workspace </> ".claude")
+        writeFile (workspace </> ".claude" </> "settings.json") $
+          "{\"hooks\": [[\"pre_tool_use\", " <> handlerJson <> "]]}"
+        res <- loadLayeredSettings workspace
+        fmap setHooks res `shouldBe` Right expected
+
+    it "writes hooks as an object keyed by event name and reads them back" $ do
+      let settings = defaultSettings { setHooks = expected }
+          encoded = encode settings
+      ((decode encoded :: Maybe Value) >>= parseMaybe (withObject "Settings" (.: "hooks")))
+        `shouldBe` Just (object ["pre_tool_use" .= [preToolUse]])
+      fmap setHooks (decode encoded) `shouldBe` Just expected
+
+    it "names an unknown event key in the error" $
+      withTemporaryDirectory $ \dir -> do
+        let path = dir </> "settings.json"
+        writeFile path ("{\"hooks\": {\"PreToolUse\": " <> handlerJson <> "}}")
+        res <- loadSettingsFromFile path
+        either seMessage (const "") res `shouldContain` "Unknown hook event: PreToolUse"
 
 -- | A fresh empty directory, removed afterwards.
 withTemporaryDirectory :: (FilePath -> IO a) -> IO a

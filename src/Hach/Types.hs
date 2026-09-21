@@ -91,7 +91,7 @@ import Data.Aeson
   ( FromJSON(..), ToJSON(..), FromJSONKey(..), ToJSONKey(..), Value, object, withObject, (.:), (.:?), (.!=), (.=)
   )
 import qualified Data.Aeson as Aeson
-import Data.Aeson.Types (Parser, parseMaybe)
+import Data.Aeson.Types (Parser, parseMaybe, toJSONKeyText)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isSpace)
 import Data.Foldable (toList)
@@ -769,8 +769,9 @@ data ToolAuthority
   | AuthorityInteraction
   deriving (Show, Eq)
 
-instance ToJSON HookEvent where
-  toJSON = \case
+-- | The canonical settings-file name of a hook event.
+hookEventName :: HookEvent -> Text
+hookEventName = \case
     HookPreToolUse       -> "pre_tool_use"
     HookPostToolUse      -> "post_tool_use"
     HookUserPromptSubmit -> "user_prompt_submit"
@@ -790,8 +791,16 @@ instance FromJSON HookEvent where
     "pre_compact"        -> pure HookPreCompact
     other                -> fail ("Unknown hook event: " <> T.unpack other)
 
-instance ToJSONKey HookEvent
-instance FromJSONKey HookEvent
+instance ToJSON HookEvent where
+  toJSON = Aeson.String . hookEventName
+
+-- | Hook events key a JSON object (@{"pre_tool_use": [...]}@), not an array
+-- of pairs, and an unknown key fails with the same message as 'FromJSON'.
+instance ToJSONKey HookEvent where
+  toJSONKey = toJSONKeyText hookEventName
+
+instance FromJSONKey HookEvent where
+  fromJSONKey = Aeson.FromJSONKeyTextParser (parseJSON . Aeson.String)
 
 data HookHandlerType
   = HookCommand !Text
