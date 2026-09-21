@@ -145,6 +145,14 @@ spec = describe "Hach.Settings" $ do
         res <- loadSettingsFromFile path
         either seMessage (const "") res `shouldContain` "Unknown hook event: pre_tool_us"
 
+    -- Issue #203: an mcp handler used to load and then allow every event.
+    it "rejects mcp hook handlers as unsupported" $
+      withTemporaryDirectory $ \dir -> do
+        let path = dir </> "settings.json"
+        writeFile path "{\"hooks\": [[\"pre_tool_use\", [{\"handler\": {\"type\": \"mcp\", \"server\": \"policy\", \"tool\": \"check\"}}]]]}"
+        res <- loadSettingsFromFile path
+        either seMessage (const "") res `shouldContain` "mcp hook handlers are not supported yet"
+
     it "encodes hooks as an object and round-trips" $ do
       let s = defaultSettings { setHooks = expected }
           encoded = encode s
