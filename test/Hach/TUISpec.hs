@@ -585,6 +585,16 @@ spec = do
         tsTokenUsage s1 `shouldBe` Nothing
         a1 `shouldBe` []
 
+      it "does not clear transcript or context tokens when typing 'c' while the agent is running (#171)" $ do
+        let s0 = baseState { tsContextTokens = 1500, tsTokenUsage = Just (mkTokenUsage 100 200 300) }
+            typeKeys = foldl (\s k -> fst (updateTui (EvUserKey k) s))
+            sBusy = typeKeys s0 (map KeyChar "hello" ++ [KeyEnter])
+            typed = typeKeys sBusy (map KeyChar "cancel that")
+        tsStatus sBusy `shouldBe` StatusThinking
+        tsTranscript typed `shouldBe` tsTranscript sBusy
+        tsContextTokens typed `shouldBe` 1500
+        tsTokenUsage typed `shouldBe` Just (mkTokenUsage 100 200 300)
+
       it "quits on 'q' when FocusTranscript is active and agent is idle" $ do
         let s0 = baseState { tsFocus = FocusTranscript, tsStatus = StatusIdle }
             (s1, actions) = updateTui (EvUserKey (KeyChar 'q')) s0
