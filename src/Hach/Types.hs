@@ -91,7 +91,7 @@ import Data.Aeson
   ( FromJSON(..), ToJSON(..), FromJSONKey(..), ToJSONKey(..), Value, object, withObject, (.:), (.:?), (.!=), (.=)
   )
 import qualified Data.Aeson as Aeson
-import Data.Aeson.Types (Parser, parseMaybe)
+import Data.Aeson.Types (FromJSONKeyFunction(..), Parser, parseMaybe, toJSONKeyText)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isSpace)
 import Data.Foldable (toList)
@@ -769,29 +769,41 @@ data ToolAuthority
   | AuthorityInteraction
   deriving (Show, Eq)
 
+-- | The settings-file name of a hook event.
+hookEventName :: HookEvent -> Text
+hookEventName = \case
+  HookPreToolUse       -> "pre_tool_use"
+  HookPostToolUse      -> "post_tool_use"
+  HookUserPromptSubmit -> "user_prompt_submit"
+  HookStop             -> "stop"
+  HookSessionStart     -> "session_start"
+  HookNotification     -> "notification"
+  HookPreCompact       -> "pre_compact"
+
+parseHookEventName :: Text -> Parser HookEvent
+parseHookEventName = \case
+  "pre_tool_use"       -> pure HookPreToolUse
+  "post_tool_use"      -> pure HookPostToolUse
+  "user_prompt_submit" -> pure HookUserPromptSubmit
+  "stop"               -> pure HookStop
+  "session_start"      -> pure HookSessionStart
+  "notification"       -> pure HookNotification
+  "pre_compact"        -> pure HookPreCompact
+  other                -> fail ("Unknown hook event: " <> T.unpack other)
+
 instance ToJSON HookEvent where
-  toJSON = \case
-    HookPreToolUse       -> "pre_tool_use"
-    HookPostToolUse      -> "post_tool_use"
-    HookUserPromptSubmit -> "user_prompt_submit"
-    HookStop             -> "stop"
-    HookSessionStart     -> "session_start"
-    HookNotification     -> "notification"
-    HookPreCompact       -> "pre_compact"
+  toJSON = toJSON . hookEventName
 
 instance FromJSON HookEvent where
-  parseJSON = Aeson.withText "HookEvent" $ \case
-    "pre_tool_use"       -> pure HookPreToolUse
-    "post_tool_use"      -> pure HookPostToolUse
-    "user_prompt_submit" -> pure HookUserPromptSubmit
-    "stop"               -> pure HookStop
-    "session_start"      -> pure HookSessionStart
-    "notification"       -> pure HookNotification
-    "pre_compact"        -> pure HookPreCompact
-    other                -> fail ("Unknown hook event: " <> T.unpack other)
+  parseJSON = Aeson.withText "HookEvent" parseHookEventName
 
-instance ToJSONKey HookEvent
-instance FromJSONKey HookEvent
+-- | Hook maps are keyed by event name, so they encode and decode as
+-- @{"pre_tool_use": [...]}@ rather than aeson's default array of pairs.
+instance ToJSONKey HookEvent where
+  toJSONKey = toJSONKeyText hookEventName
+
+instance FromJSONKey HookEvent where
+  fromJSONKey = FromJSONKeyTextParser parseHookEventName
 
 data HookHandlerType
   = HookCommand !Text

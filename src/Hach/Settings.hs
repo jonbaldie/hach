@@ -20,6 +20,7 @@ import Data.Aeson
   ( FromJSON(..), ToJSON(..), (.:?), (.!=), object, (.=), withObject
   )
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (Parser, explicitParseFieldMaybe)
 import qualified Data.ByteString as BS
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -94,7 +95,7 @@ instance FromJSON Settings where
       <*> o .:? "max_budget_usd"
       <*> o .:? "permission_mode"
       <*> o .:? "permission_rules" .!= []
-      <*> o .:? "hooks"            .!= Map.empty
+      <*> (explicitParseFieldMaybe parseHooks o "hooks" .!= Map.empty)
       <*> o .:? "theme"
       <*> o .:? "keybindings"      .!= Map.empty
       <*> o .:? "status_line"
@@ -102,6 +103,13 @@ instance FromJSON Settings where
       <*> o .:? "working_directories" .!= []
       <*> o .:? "output_style"
       <*> o .:? "auto_compact_limit"
+
+-- | Parse the @hooks@ block. The object form keyed by event name is canonical;
+-- the array-of-pairs form is still accepted because it was once the only form
+-- hach could read (#166).
+parseHooks :: Aeson.Value -> Parser (Map HookEvent [HookHandler])
+parseHooks v@(Aeson.Array _) = Map.fromList <$> parseJSON v
+parseHooks v                 = parseJSON v
 
 -- | Merge two settings layers. The second (later) layer takes precedence over the first.
 mergeSettings :: Settings -> Settings -> Settings
