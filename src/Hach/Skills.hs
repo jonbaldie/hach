@@ -34,6 +34,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import System.Directory (doesDirectoryExist, doesFileExist, getHomeDirectory, listDirectory)
+import System.Environment (lookupEnv)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.Process (CreateProcess(cwd), readCreateProcessWithExitCode, shell)
@@ -172,16 +173,21 @@ discoverSkillsFromDir source dir = do
 -- | Discover all skills across global and workspace, supporting .claude/skills and .agents/skills.
 discoverSkills :: FilePath -> IO SkillCatalog
 discoverSkills workspace = do
+  mCustomConfig <- lookupEnv "CLAUDE_CONFIG_DIR"
   homeRes <- try getHomeDirectory :: IO (Either SomeException FilePath)
-  globalSkills <- case homeRes of
-    Left _ -> pure []
-    Right home -> do
-      gClaude <- discoverSkillsFromDir SkillGlobal (home </> ".claude" </> "skills")
-      gAgents <- discoverSkillsFromDir SkillGlobal (home </> ".agents" </> "skills")
-      pure (gClaude ++ gAgents)
+  globalSkills <- case mCustomConfig of
+    Just configDir -> discoverGlobalSkills configDir
+    Nothing -> case homeRes of
+      Left _ -> pure []
+      Right home -> discoverGlobalSkills home
   wClaude <- discoverSkillsFromDir SkillWorkspace (workspace </> ".claude" </> "skills")
   wAgents <- discoverSkillsFromDir SkillWorkspace (workspace </> ".agents" </> "skills")
   pure (mergeSkills globalSkills (wClaude ++ wAgents))
+  where
+    discoverGlobalSkills root = do
+      gClaude <- discoverSkillsFromDir SkillGlobal (root </> ".claude" </> "skills")
+      gAgents <- discoverSkillsFromDir SkillGlobal (root </> ".agents" </> "skills")
+      pure (gClaude ++ gAgents)
 
 -- | Substitute $ARGUMENTS in skill content.
 substituteArguments :: Text -> Text -> Text

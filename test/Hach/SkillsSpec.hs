@@ -3,10 +3,12 @@
 module Hach.SkillsSpec (spec) where
 
 import Hach.Skills
+import Control.Exception (finally)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (canonicalizePath, createDirectoryIfMissing, doesFileExist, removeDirectoryRecursive, removeFile)
+import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.FilePath ((</>))
 import Test.Hspec
 
@@ -98,6 +100,48 @@ spec = do
               skillContent s `shouldBe` "Body here"
               skillSource s `shouldBe` SkillWorkspace
             _ -> expectationFailure ("Expected 1 skill, got " ++ show (length skills))
+
+    describe "discoverSkills" $ do
+      it "discovers user skills below CLAUDE_CONFIG_DIR" $ do
+        let sandbox = "dist-newstyle/test-sandbox-skill-config"
+            configDir = sandbox </> "config"
+            homeDir = sandbox </> "home"
+            workspace = sandbox </> "workspace"
+            claudeSkillDir = configDir </> ".claude" </> "skills" </> "from-claude"
+            agentsSkillDir = configDir </> ".agents" </> "skills" </> "from-agents"
+        createDirectoryIfMissing True claudeSkillDir
+        createDirectoryIfMissing True agentsSkillDir
+        createDirectoryIfMissing True workspace
+        TIO.writeFile (claudeSkillDir </> "SKILL.md")
+          "---\nname: from-claude\ndescription: Claude config skill\n---\nFrom Claude config"
+        TIO.writeFile (agentsSkillDir </> "SKILL.md")
+          "---\nname: from-agents\ndescription: Agents config skill\n---\nFrom agents config"
+        originalConfig <- lookupEnv "CLAUDE_CONFIG_DIR"
+        originalHome <- lookupEnv "HOME"
+        let restore name value = maybe (unsetEnv name) (setEnv name) value
+        (setEnv "CLAUDE_CONFIG_DIR" configDir >> setEnv "HOME" homeDir >> discoverSkills workspace)
+          `finally` (restore "CLAUDE_CONFIG_DIR" originalConfig >> restore "HOME" originalHome >> removeDirectoryRecursive sandbox)
+          >>= \catalog -> do
+            fmap skillContent (Map.lookup "from-claude" catalog) `shouldBe` Just "From Claude config"
+            fmap skillContent (Map.lookup "from-agents" catalog) `shouldBe` Just "From agents config"
+            fmap skillSource (Map.lookup "from-claude" catalog) `shouldBe` Just SkillGlobal
+            fmap skillSource (Map.lookup "from-agents" catalog) `shouldBe` Just SkillGlobal
+
+      it "falls back to HOME when CLAUDE_CONFIG_DIR is unset" $ do
+        let sandbox = "dist-newstyle/test-sandbox-skill-home"
+            homeDir = sandbox </> "home"
+            workspace = sandbox </> "workspace"
+            skillDir = homeDir </> ".claude" </> "skills" </> "from-home"
+        createDirectoryIfMissing True skillDir
+        createDirectoryIfMissing True workspace
+        TIO.writeFile (skillDir </> "SKILL.md")
+          "---\nname: from-home\ndescription: Home skill\n---\nFrom home"
+        originalConfig <- lookupEnv "CLAUDE_CONFIG_DIR"
+        originalHome <- lookupEnv "HOME"
+        let restore name value = maybe (unsetEnv name) (setEnv name) value
+        (unsetEnv "CLAUDE_CONFIG_DIR" >> setEnv "HOME" homeDir >> discoverSkills workspace)
+          `finally` (restore "CLAUDE_CONFIG_DIR" originalConfig >> restore "HOME" originalHome >> removeDirectoryRecursive sandbox)
+          >>= \catalog -> fmap skillContent (Map.lookup "from-home" catalog) `shouldBe` Just "From home"
 
     describe "parseSkillInvocations" $ do
       let skillA = mkSkill "to-spec" "Spec gen" "Instructions for spec" "/p" SkillGlobal
