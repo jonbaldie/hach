@@ -585,6 +585,26 @@ spec = do
         tsTokenUsage s1 `shouldBe` Nothing
         a1 `shouldBe` []
 
+      it "does not clear transcript or context tokens on 'c' while the agent is busy" $ do
+        let tool1 = TiToolCard (ToolCard "c1" "run_command" "sleep 8" Running False)
+            usage = mkTokenUsage 100 200 300
+            s0 = baseState
+              { tsFocus = FocusTranscript
+              , tsStatus = StatusRunningTool "run_command"
+              , tsTranscript = [TiUser "hello", tool1]
+              , tsSelectedToolIndex = 1
+              , tsTranscriptScroll = 10
+              , tsContextTokens = 1500
+              , tsTokenUsage = Just usage
+              }
+            (s1, actions) = updateTui (EvUserKey (KeyChar 'c')) s0
+        tsTranscript s1 `shouldBe` tsTranscript s0
+        tsSelectedToolIndex s1 `shouldBe` tsSelectedToolIndex s0
+        tsTranscriptScroll s1 `shouldBe` tsTranscriptScroll s0
+        tsContextTokens s1 `shouldBe` tsContextTokens s0
+        tsTokenUsage s1 `shouldBe` tsTokenUsage s0
+        actions `shouldBe` []
+
       it "quits on 'q' when FocusTranscript is active and agent is idle" $ do
         let s0 = baseState { tsFocus = FocusTranscript, tsStatus = StatusIdle }
             (s1, actions) = updateTui (EvUserKey (KeyChar 'q')) s0
