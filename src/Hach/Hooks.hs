@@ -88,10 +88,6 @@ runHookHandler root payload HookHandler{..} = case hhType of
               { hrError = Just ("HTTP hook " <> url <> " returned status "
                                   <> T.pack (show (statusCode (responseStatus resp)))) }
 
-  HookMcp _srv _tool -> do
-    -- MCP hooks proxy to MCP server
-    pure defaultHookResult
-
 postHookPayload :: Text -> Aeson.Value -> IO (Response BSL.ByteString)
 postHookPayload url payload = do
   manager <- newTlsManager

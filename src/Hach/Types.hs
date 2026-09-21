@@ -808,14 +808,12 @@ instance FromJSONKey HookEvent where
 data HookHandlerType
   = HookCommand !Text
   | HookHttp !Text
-  | HookMcp !Text !Text
   deriving (Show, Eq, Generic)
 
 instance ToJSON HookHandlerType where
   toJSON = \case
     HookCommand cmd   -> object ["type" .= ("command" :: Text), "command" .= cmd]
     HookHttp url      -> object ["type" .= ("http" :: Text), "url" .= url]
-    HookMcp srv tool  -> object ["type" .= ("mcp" :: Text), "server" .= srv, "tool" .= tool]
 
 instance FromJSON HookHandlerType where
   parseJSON = withObject "HookHandlerType" $ \o -> do
@@ -823,7 +821,9 @@ instance FromJSON HookHandlerType where
     case (t :: Text) of
       "command" -> HookCommand <$> o .: "command"
       "http"    -> HookHttp <$> o .: "url"
-      "mcp"     -> HookMcp <$> o .: "server" <*> o .: "tool"
+      -- Rejected rather than accepted as a no-op: a silent mcp handler would
+      -- allow every event it was meant to police (#203).
+      "mcp"     -> fail "mcp hook handlers are not supported yet; use a command or http handler"
       other     -> fail ("Unknown hook handler type: " <> T.unpack other)
 
 data HookHandler = HookHandler
