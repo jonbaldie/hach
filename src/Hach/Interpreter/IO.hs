@@ -413,7 +413,9 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
 
   , interpRunHook = \ev payload -> do
       currentWs <- readIORef ioCurrentWorkspace
-      let (mTool, payloadVal) = splitHookPayload payload
+      let (mTool, payloadVal)
+            | ev `elem` [HookPreToolUse, HookPostToolUse] = splitHookPayload payload
+            | otherwise = (Nothing, fromMaybe (Aeson.String payload) (Aeson.decodeStrict (TE.encodeUtf8 payload)))
       executeHooks currentWs prtHooks ev mTool payloadVal
   , interpSaveSession = \sinfo -> do
       currentWs <- readIORef ioCurrentWorkspace
