@@ -163,7 +163,7 @@ import Hach.Types
 import Control.Applicative ((<|>))
 import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, writeTVar)
 import Control.Concurrent.Async (wait, withAsync)
-import Control.Exception (SomeException, onException, try)
+import Control.Exception (SomeAsyncException(..), SomeException, fromException, onException, try, tryJust)
 import Control.Monad (forM)
 import Data.Aeson
   ( FromJSON(..), (.:), (.:?), (.!=), object, (.=)
@@ -1224,6 +1224,12 @@ executeReplaceFileContent ws (ReplaceFileContentArgs path oldContent newContent)
                                   Left ex -> pure $ ToolError ("Write error: " <> T.pack (show ex))
                                   Right () -> pure $ ToolSuccess ("Successfully replaced content in " <> T.pack path <> ".")
 
+trySync :: IO a -> IO (Either SomeException a)
+trySync = tryJust $ \e ->
+  case fromException e of
+    Just (SomeAsyncException _) -> Nothing
+    Nothing -> Just e
+
 -- | Run a shell command in the workspace, killing its whole process group
 -- (the shell plus anything it backgrounded) if it times out or is interrupted.
 runWorkspaceShell :: FilePath -> Text -> Maybe Int -> IO (Either Text (ExitCode, String, String))
@@ -1236,7 +1242,7 @@ runWorkspaceShell root cmd mTimeout = do
         , std_err = CreatePipe
         , create_group = True
         }
-  res <- try (runGroupWithTimeout (secs * 1000000) sh) :: IO (Either SomeException (Maybe (ExitCode, String, String)))
+  res <- trySync (runGroupWithTimeout (secs * 1000000) sh)
   case res of
     Left ex -> pure $ Left ("Process execution failed: " <> T.pack (show ex))
     Right Nothing ->
