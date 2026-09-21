@@ -296,6 +296,10 @@ spec = do
       fmap startupIntent (parseCliArgs ["--help", "--max-turns"])
         `shouldBe` Right IntentHelp
 
+    it "short-circuits before a later --no-tui flag" $ do
+      parseCliArgs ["-h", "--no-tui"]
+        `shouldBe` Right defaultCliOptions { optHelp = True }
+
     it "treats --help after -- as prompt text" $ do
       parseCliArgs ["--", "--help"] `shouldBe` Right defaultCliOptions
         { optPrompt = Just "--help" }
