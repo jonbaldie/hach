@@ -5,7 +5,8 @@ module Hach.SettingsSpec (spec) where
 import Hach.Settings
 import Hach.Types
 import Control.Exception (finally)
-import Data.Aeson (decode)
+import Data.Aeson (decode, encode)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Map.Strict as Map
 import System.Directory
@@ -118,6 +119,37 @@ spec = describe "Hach.Settings" $ do
         res <- loadLayeredSettings workspace
         fmap setModel res `shouldBe` Right (Just "local-model")
         fmap setTheme res `shouldBe` Right (Just "nord")
+
+  describe "Hooks block (Issue #166)" $ do
+    let bashHook = HookHandler (HookCommand "true") (Just "Bash") False
+        expected = Map.fromList [(HookPreToolUse, [bashHook])]
+
+    it "loads the object form keyed by event name" $
+      withTemporaryDirectory $ \dir -> do
+        let path = dir </> "settings.json"
+        writeFile path "{\"hooks\": {\"pre_tool_use\": [{\"matcher\": \"Bash\", \"handler\": {\"type\": \"command\", \"command\": \"true\"}}]}}"
+        res <- loadSettingsFromFile path
+        fmap (fmap setHooks) res `shouldBe` Right (Just expected)
+
+    it "still loads the older array-of-pairs form" $
+      withTemporaryDirectory $ \dir -> do
+        let path = dir </> "settings.json"
+        writeFile path "{\"hooks\": [[\"pre_tool_use\", [{\"matcher\": \"Bash\", \"handler\": {\"type\": \"command\", \"command\": \"true\"}}]]]}"
+        res <- loadSettingsFromFile path
+        fmap (fmap setHooks) res `shouldBe` Right (Just expected)
+
+    it "names an unknown event instead of failing as a generic map error" $
+      withTemporaryDirectory $ \dir -> do
+        let path = dir </> "settings.json"
+        writeFile path "{\"hooks\": {\"pre_tool_us\": []}}"
+        res <- loadSettingsFromFile path
+        either seMessage (const "") res `shouldContain` "Unknown hook event: pre_tool_us"
+
+    it "encodes hooks as an object and round-trips" $ do
+      let s = defaultSettings { setHooks = expected }
+          encoded = encode s
+      BSL.toStrict encoded `shouldSatisfy` BS.isInfixOf "\"hooks\":{\"pre_tool_use\":"
+      fmap setHooks (decode encoded) `shouldBe` Just expected
 
 -- | A fresh empty directory, removed afterwards.
 withTemporaryDirectory :: (FilePath -> IO a) -> IO a
