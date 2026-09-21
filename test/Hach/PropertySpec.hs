@@ -109,7 +109,7 @@ spec = do
 
       it "always sets optNoTui = True when --no-tui is present" $
         withNumTests 2000 $ property $ \wordsBefore wordsAfter ->
-          let cleanBefore = filter (/= "--") wordsBefore
+          let cleanBefore = filter (`notElem` ["--", "-h", "--help"]) wordsBefore
               args = cleanBefore ++ ["--no-tui"] ++ wordsAfter
           in case parseCliArgs args of
                Left _     -> True
