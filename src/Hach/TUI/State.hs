@@ -769,8 +769,10 @@ handleTranscriptKey key state@TuiState{..} =
     KeyChar ' ' ->
       (toggleToolExpanded tsSelectedToolIndex (state { tsTranscriptManualScroll = False }), [])
 
-    KeyChar 'c' ->
-      -- Clear transcript and reset context window tokens
+    KeyChar 'c'
+      | not (isBusy tsStatus) ->
+      -- Clear transcript and reset context window tokens; ignored while the
+      -- agent runs so type-ahead cannot wipe the in-flight turn (#171)
       (state { tsTranscript = [], tsTranscriptScroll = 0, tsTranscriptManualScroll = False, tsSelectedToolIndex = 0, tsContextTokens = 0, tsTokenUsage = Nothing, tsUsageStatus = UsageVerified }, [])
 
     _ ->
