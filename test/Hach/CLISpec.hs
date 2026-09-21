@@ -5,7 +5,7 @@ import Control.Monad (forM_)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import Data.Either (isRight)
-import Data.List (isPrefixOf)
+import Data.List (intercalate, isPrefixOf)
 import System.Directory
   ( createDirectory
   , createDirectoryIfMissing
@@ -517,6 +517,60 @@ spec = describe "headless CLI prompt acquisition" $ do
         (_exitCode, stdoutText, _) <-
           runWithEnv executable workspace ["--no-tui", "--session-id", "sess-specific", "What was the codeword?"]
         stdoutText `shouldContain` "Prompting LLM with 4 messages in context"
+
+  -- The stub credentials make every model request fail, so these runs also
+  -- show that the lifecycle hooks fire on a run that ends in failure.
+  describe "lifecycle hooks (Issue #168)" $ do
+    let recordingHook event =
+          "{\"handler\":{\"type\":\"command\",\"command\":\"{ printf '"
+            <> event <> " '; cat; echo; } >> hooks.log\"}}"
+        hooksSettings entries =
+          "{\"hooks\":[" <> intercalate "," entries <> "]}\n"
+        entry event handlers = "[\"" <> event <> "\",[" <> intercalate "," handlers <> "]]"
+        runWithHooks executable workspace settings args = do
+          createDirectoryIfMissing True (workspace </> ".claude")
+          writeFile (workspace </> ".claude" </> "settings.json") settings
+          testEnvironment <- isolatedEnvironment workspace
+          let command =
+                (proc executable args)
+                  { cwd = Just workspace
+                  , env = Just testEnvironment
+                  }
+          readCreateProcessWithExitCode command ""
+        hookLog workspace = lines <$> readFile (workspace </> "hooks.log")
+        eventOf = takeWhile (/= ' ')
+        payloadOf = drop 1 . dropWhile (/= ' ')
+
+    it "runs session_start, user_prompt_submit and stop hooks in order" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        let settings = hooksSettings
+              [ entry "session_start" [recordingHook "session_start"]
+              , entry "user_prompt_submit" [recordingHook "user_prompt_submit"]
+              , entry "stop" [recordingHook "stop"]
+              ]
+        _ <- runWithHooks executable workspace settings
+          ["--no-tui", "--max-turns", "1", "--model", "test-model", "Say hello world"]
+        entries <- hookLog workspace
+
+        map eventOf entries `shouldBe` ["session_start", "user_prompt_submit", "stop"]
+        let payloads = map (Aeson.decode . LBS.pack . payloadOf) entries :: [Maybe Aeson.Value]
+        payloads `shouldSatisfy` all (/= Nothing)
+        (entries !! 1) `shouldContain` "\"prompt\":\"Say hello world\""
+
+    it "does not reach the model when a user_prompt_submit hook blocks the prompt" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        let blocking =
+              "{\"handler\":{\"type\":\"command\",\"command\":\"echo prompt rejected by policy; exit 2\"}}"
+            settings = hooksSettings [entry "user_prompt_submit" [blocking]]
+        (exitCode, stdoutText, stderrText) <- runWithHooks executable workspace settings
+          ["--no-tui", "--model", "test-model", "Say hello world"]
+        let combined = stdoutText <> stderrText
+
+        exitCode `shouldBe` ExitFailure 1
+        combined `shouldContain` "prompt rejected by policy"
+        combined `shouldNotContain` "OpenRouter API error"
 
 -- | Process environment for a spawned hach: stub credentials, and a user
 -- settings layer pointed at a directory that does not exist, so the

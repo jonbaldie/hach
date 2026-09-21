@@ -12,7 +12,9 @@ import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.Process (readProcessWithExitCode)
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (async, cancel)
 import Control.Exception (finally)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import System.Timeout (timeout)
 import Test.Hspec
 
@@ -568,6 +570,33 @@ spec = do
               pure (code == ExitSuccess)
         alive "shell.pid" `shouldReturn` False
         alive "child.pid" `shouldReturn` False
+
+      it "kills the process group when the calling thread is cancelled" $ do
+        root <- canonicalizePath testSandbox
+        let marker = "cancelled-should-not-exist.txt"
+            cmd = "echo $$ > shell.pid; sleep 8; touch cancelled-should-not-exist.txt"
+        continued <- newIORef False
+        worker <- async $ do
+          _ <- executeRunCommand root (RunCommandArgs cmd (Just 30))
+          writeIORef continued True
+        let waitForPid remaining
+              | remaining <= (0 :: Int) = expectationFailure "shell.pid was not created"
+              | otherwise = do
+                  exists <- doesFileExist (root </> "shell.pid")
+                  if exists
+                    then pure ()
+                    else threadDelay 50000 >> waitForPid (remaining - 50000)
+        waitForPid 2000000
+        cancelled <- timeout 2000000 (cancel worker)
+        cancelled `shouldBe` Just ()
+        threadDelay 200000
+        let alive pidFile = do
+              pid <- T.unpack . T.strip <$> TIO.readFile (root </> pidFile)
+              (code, _, _) <- readProcessWithExitCode "kill" ["-0", pid] ""
+              pure (code == ExitSuccess)
+        alive "shell.pid" `shouldReturn` False
+        doesFileExist (root </> marker) `shouldReturn` False
+        readIORef continued `shouldReturn` False
 
       it "executes Glob tool via executeCodingTool" $ do
         _ <- executeWriteFile (workspaceAt ".") (WriteFileArgs (testSandbox </> "sub" </> "foo.txt") "content")

@@ -30,6 +30,7 @@ data MockEnv = MockEnv
   , mockGoalEvaluationUsages :: ![Maybe TokenUsage]
   , mockPermissions       :: !(Text -> Text -> Bool)
   , mockHooks             :: !(HookEvent -> Text -> HookResult)
+  , mockHookCalls         :: ![(HookEvent, Text)]  -- ^ Hook dispatches, oldest first
   , mockSavedSessions     :: !(Map SessionId SessionInfo)
   , mockRunningAgents     :: ![AgentInfo]
   , mockMcpTools          :: ![ToolDef]
@@ -52,6 +53,7 @@ emptyMockEnv = MockEnv
   , mockGoalEvaluationUsages = []
   , mockPermissions     = \_ _ -> True
   , mockHooks           = \_ _ -> HookResult Nothing Nothing Nothing Nothing
+  , mockHookCalls       = []
   , mockSavedSessions   = Map.empty
   , mockRunningAgents   = []
   , mockMcpTools        = []
@@ -217,6 +219,7 @@ pureAlgebra = AgentAlgebra
         else Just interactiveAskDeniedReason
 
   , interpRunHook = \ev payload -> do
+      modifyEnv $ \e -> e { mockHookCalls = mockHookCalls e ++ [(ev, payload)] }
       env <- getEnv
       pure (mockHooks env ev payload)
 

@@ -53,7 +53,7 @@ import Control.Concurrent.STM
   , tryTakeTMVar
   , writeTVar
   )
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeAsyncException(..), SomeException, fromException, tryJust)
 import Control.Monad (forM_, void, when)
 import System.Timeout (timeout)
 import Control.Monad.IO.Class (liftIO)
@@ -151,6 +151,15 @@ cancelPermissionAsk gate = atomically $ do
       putTMVar (pgReply gate) (paId ask, False)
     Nothing -> pure ()
 
+trySync :: IO a -> IO (Either SomeException a)
+trySync = tryJust $ \e ->
+  case fromException e of
+    Just (SomeAsyncException _) -> Nothing
+    Nothing -> Just e
+
+interruptWorker :: Maybe (Async ()) -> IO ()
+interruptWorker = mapM_ $ \w -> void (async (cancel w))
+
 awaitPermissionAsk :: PermissionGate -> Int -> IO (Maybe (Int, Text, Text, Text))
 awaitPermissionAsk gate usec = do
   timeout usec $ atomically $ do
@@ -212,7 +221,7 @@ runTuiAction eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd = \case
       w <- readTVar workerVar
       writeTVar workerVar Nothing
       pure w
-    mapM_ cancel mWorker
+    interruptWorker mWorker
   ActionRunAgent prompt -> do
     currentState <- get
     triggerAgentRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) mMaxBudgetUsd prompt (tsHistory currentState)
@@ -456,7 +465,7 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
       w <- readTVar workerVar
       writeTVar workerVar Nothing
       pure w
-    mapM_ cancel mOldWorker
+    interruptWorker mOldWorker
 
     activeWorkspace <- currentIOWorkspace ioEnv
     finalPrompt <- expandSlashInvokedPrompt activeWorkspace (tsSkills st) currentPrompt
@@ -465,7 +474,7 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
       let runEnv = runEnvForModel selectedModel ioEnv
           agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns mMaxBudgetUsd
           initHistory = dialogueToMessages sysPrompt finalPrompt historyItems
-      res <- try (foldAgentProgram (tuiAlgebra eventChan runEnv) (agentLoop agentConfig allToolDefs initHistory))
+      res <- trySync (foldAgentProgram (tuiAlgebra eventChan runEnv) (agentLoop agentConfig allToolDefs initHistory))
       case res of
         Left (ex :: SomeException) ->
           writeBChan eventChan (EvError (T.pack (show ex)))
@@ -502,7 +511,7 @@ runGoalWorker
 runGoalWorker algebra agentConfig condition historyItems emitEvent = do
   let sysPrompt = fromMaybe "" (cfgSystemPrompt agentConfig)
       initHistory = dialogueToMessages sysPrompt condition historyItems
-  res <- try (foldAgentProgram algebra
+  res <- trySync (foldAgentProgram algebra
               (goalLoop agentConfig allToolDefs condition defaultBlockCap initHistory))
   case res of
     Left (ex :: SomeException) ->
@@ -535,7 +544,7 @@ triggerGoalRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns 
     w <- readTVar workerVar
     writeTVar workerVar Nothing
     pure w
-  mapM_ cancel mOldWorker
+  interruptWorker mOldWorker
 
   newWorker <- async $ do
     let runEnv = runEnvForModel selectedModel ioEnv

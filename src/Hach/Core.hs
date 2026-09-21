@@ -17,6 +17,7 @@ module Hach.Core
   , evaluateGoal
   , checkPermission
   , runHook
+  , sessionStartHook
   , saveSession
   , loadSession
   , spawnAgent
@@ -48,7 +49,9 @@ module Hach.Core
 import Hach.Types
 import Hach.Tools (resolveTool, resolveToolIdentity, resolvedToolCanonicalName)
 import Control.Monad (forM)
+import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (Pair)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -126,6 +129,69 @@ checkPermission tool args = Free (CheckPermission tool args Pure)
 
 runHook :: HookEvent -> Text -> AgentProgram HookResult
 runHook ev payload = Free (RunHook ev payload Pure)
+
+-- | Announce a session to @session_start@ hooks, saying whether it is new or
+-- resumed from a stored transcript.
+sessionStartHook :: SessionId -> Bool -> AgentProgram HookResult
+sessionStartHook sid resumed =
+  runHook HookSessionStart $ lifecyclePayload HookSessionStart
+    [ "session_id" .= sid
+    , "source"     .= (if resumed then "resume" else "startup" :: Text)
+    ]
+
+-- | The JSON document a lifecycle hook receives on stdin (or as an HTTP body).
+-- Unlike the tool-use events it names no tool, so the interpreter passes it
+-- through whole.
+lifecyclePayload :: HookEvent -> [Pair] -> Text
+lifecyclePayload ev fields =
+  TE.decodeUtf8 (BSL.toStrict (Aeson.encode (Aeson.object (("hook_event_name" .= ev) : fields))))
+
+-- | Bracket one run on a submitted prompt with its lifecycle hooks.
+--
+-- @user_prompt_submit@ sees the prompt first: a deny keeps it from the model,
+-- and any additional context rides along with it. @stop@ hears how the run
+-- ended, whether it succeeded or not.
+withPromptHooks
+  :: (Text -> a)            -- ^ Outcome for a prompt the hooks rejected
+  -> (a -> AgentResult)
+  -> [Message]
+  -> ([Message] -> AgentProgram a)
+  -> AgentProgram a
+withPromptHooks rejected resultOf history run = do
+  submitted <- runHook HookUserPromptSubmit $
+    lifecyclePayload HookUserPromptSubmit ["prompt" .= submittedPrompt history]
+  case hrDecision submitted of
+    Just (PermDeny reason) -> do
+      let err = "Prompt blocked by user_prompt_submit hook: " <> T.strip reason
+      logEvent (EvHookTriggered "UserPromptSubmit" "Blocked prompt")
+      logEvent (EvError err)
+      pure (rejected err)
+    _ -> do
+      outcome <- run (maybe history (withPromptContext history) (hrAdditionalContext submitted))
+      _ <- runHook HookStop (lifecyclePayload HookStop (stopFields (resultOf outcome)))
+      pure outcome
+  where
+    stopFields = \case
+      AgentCompleted answer     -> ["result" .= ("completed" :: Text), "message" .= answer]
+      AgentFailed err           -> ["result" .= ("failed" :: Text), "message" .= err]
+      AgentMaxTurnsReached n    -> ["result" .= ("max_turns" :: Text), "turns" .= n]
+      AgentBudgetExceeded sp bu -> ["result" .= ("budget_exceeded" :: Text), "spent_usd" .= sp, "budget_usd" .= bu]
+
+-- | The prompt just submitted: the newest user message in the history.
+submittedPrompt :: [Message] -> Text
+submittedPrompt history = case [ p | UserMsg p <- reverse history ] of
+  (p : _) -> p
+  []      -> ""
+
+-- | Attach hook-supplied context to the newest user message.
+withPromptContext :: [Message] -> Text -> [Message]
+withPromptContext history extra = case break isUser (reverse history) of
+  (after, UserMsg p : before) ->
+    reverse before ++ [UserMsg (p <> "\n[Additional Context]: " <> extra)] ++ reverse after
+  _ -> history
+  where
+    isUser (UserMsg _) = True
+    isUser _           = False
 
 saveSession :: SessionInfo -> AgentProgram Text
 saveSession sinfo = Free (SaveSession sinfo Pure)
@@ -401,7 +467,8 @@ agentLoop
   -> [ToolDef]
   -> [Message]
   -> AgentProgram (AgentResult, [Message])
-agentLoop cfg tools initialHistory = loop 1 0 initialHistory
+agentLoop cfg tools initialHistory =
+  withPromptHooks (\err -> (AgentFailed err, initialHistory)) fst initialHistory (loop 1 0)
   where
     loop turn spent hist = do
       agentStep cfg tools turn spent hist >>= \case
@@ -439,8 +506,11 @@ goalLoop
   -> AgentProgram (AgentResult, [Message], GoalState)
 goalLoop cfg tools condition blockCap initialHistory = do
   logEvent (EvGoalSet condition)
-  loop 1 0 (initialGoalState condition) initialHistory
+  withPromptHooks rejected (\(result, _, _) -> result) initialHistory
+    (loop 1 0 (initialGoalState condition))
   where
+    rejected err =
+      (AgentFailed err, initialHistory, (initialGoalState condition) { gsStatus = GoalFailed })
     -- Clamp to a minimum of 1: a block cap of 0 or less is degenerate because
     -- the block decision is only reached *after* a no-progress turn runs, so
     -- the counter would otherwise exceed the cap.  1 is the smallest value

@@ -769,9 +769,14 @@ handleTranscriptKey key state@TuiState{..} =
     KeyChar ' ' ->
       (toggleToolExpanded tsSelectedToolIndex (state { tsTranscriptManualScroll = False }), [])
 
-    KeyChar 'c' ->
-      -- Clear transcript and reset context window tokens
-      (state { tsTranscript = [], tsTranscriptScroll = 0, tsTranscriptManualScroll = False, tsSelectedToolIndex = 0, tsContextTokens = 0, tsTokenUsage = Nothing, tsUsageStatus = UsageVerified }, [])
+    KeyChar 'c'
+      | isBusy tsStatus ->
+          -- While a turn is active, printable keys are not transcript commands.
+          -- In particular, typing 'c' must not clear the in-flight transcript.
+          (state, [])
+      | otherwise ->
+          -- Clear transcript and reset context window tokens when explicitly idle.
+          (state { tsTranscript = [], tsTranscriptScroll = 0, tsTranscriptManualScroll = False, tsSelectedToolIndex = 0, tsContextTokens = 0, tsTokenUsage = Nothing, tsUsageStatus = UsageVerified }, [])
 
     _ ->
       (state, [])

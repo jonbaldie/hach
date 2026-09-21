@@ -22,6 +22,7 @@ import Hach.TUI.Types (ProjectInitializationResult(..))
 import Hach.Types
 import Control.Exception (tryJust)
 import Control.Monad (when)
+import Data.Maybe (isJust)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (getCurrentDirectory, makeAbsolute)
@@ -122,6 +123,8 @@ main = do
 
   let mPrevInfo = fmap fst mLoadedSession
       mLoadedHistory = fmap snd mLoadedSession
+
+  _ <- runIO ioEnv (sessionStartHook activeSid (isJust mLoadedSession))
 
   let maxBudgetUsd = resolveMaxBudgetUsd optMaxBudgetUsd envSettings
 
