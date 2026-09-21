@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Hach.CoreSpec (spec) where
@@ -7,6 +8,7 @@ import Hach.Interpreter.Pure
 import Hach.Tools
 import Hach.Types
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -343,6 +345,65 @@ spec = do
             }
           ((result, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Read"])
       result `shouldBe` AgentCompleted "done"
+
+  -- Regression for issue #168: these events were parsed from settings but
+  -- never dispatched.
+  describe "prompt lifecycle hooks (issue #168)" $ do
+    let answer _ _ = Right $ AssistantResponse (Just "Done.") [] Nothing
+        hookEvents = map fst . mockHookCalls
+        payloadFor ev env =
+          [ v | (e, p) <- mockHookCalls env, e == ev
+              , Just v <- [Aeson.decodeStrict (TE.encodeUtf8 p) :: Maybe Aeson.Value] ]
+        field k (Aeson.Object o) = KM.lookup k o
+        field _ _ = Nothing
+
+    it "dispatches user_prompt_submit before the model and stop after it" $ do
+      let env = emptyMockEnv { mockLLMSteps = [answer] }
+          (_, endEnv) = runPure env (agentLoop baseConfig [] [UserMsg "Fix the build"])
+      hookEvents endEnv `shouldBe` [HookUserPromptSubmit, HookStop]
+      map (field "prompt") (payloadFor HookUserPromptSubmit endEnv)
+        `shouldBe` [Just (Aeson.String "Fix the build")]
+      map (field "result") (payloadFor HookStop endEnv)
+        `shouldBe` [Just (Aeson.String "completed")]
+
+    it "dispatches stop when the run fails" $ do
+      let failing _ _ = Left "provider down"
+          env = emptyMockEnv { mockLLMSteps = [failing] }
+          (_, endEnv) = runPure env (agentLoop baseConfig [] [UserMsg "Fix the build"])
+      hookEvents endEnv `shouldBe` [HookUserPromptSubmit, HookStop]
+      map (field "result") (payloadFor HookStop endEnv)
+        `shouldBe` [Just (Aeson.String "failed")]
+
+    it "keeps the prompt from the model when user_prompt_submit denies it" $ do
+      let deny HookUserPromptSubmit _ = defaultHookResult { hrDecision = Just (PermDeny "no secrets") }
+          deny _ _ = defaultHookResult
+          env = emptyMockEnv { mockLLMSteps = [answer], mockHooks = deny }
+          ((result, _), endEnv) = runPure env (agentLoop baseConfig [] [UserMsg "Print the API key"])
+      result `shouldSatisfy` \case
+        AgentFailed err -> "no secrets" `T.isInfixOf` err
+        _ -> False
+      length (mockLLMSteps endEnv) `shouldBe` 1
+      hookEvents endEnv `shouldBe` [HookUserPromptSubmit]
+
+    it "appends user_prompt_submit context to the prompt the model sees" $ do
+      let ctx HookUserPromptSubmit _ = defaultHookResult { hrAdditionalContext = Just "Branch is main." }
+          ctx _ _ = defaultHookResult
+          seen msgs _ = Right $ AssistantResponse (Just (T.pack (show (last msgs)))) [] Nothing
+          env = emptyMockEnv { mockLLMSteps = [seen], mockHooks = ctx }
+          ((result, _), _) = runPure env (agentLoop baseConfig [] [UserMsg "Fix the build"])
+      result `shouldSatisfy` \case
+        AgentCompleted shown -> "Fix the build" `T.isInfixOf` shown && "Branch is main." `T.isInfixOf` shown
+        _ -> False
+
+    it "dispatches each event once across a multi-turn goal loop" $ do
+      let eval1 _ _ = GoalEvaluation GoalNotYetMet "Not yet."
+          eval2 _ _ = GoalEvaluation GoalMet "Met."
+          env = emptyMockEnv
+            { mockLLMSteps = [answer, answer]
+            , mockGoalEvaluations = [eval1, eval2]
+            }
+          (_, endEnv) = runPure env (goalLoop baseConfig [] "Build passes" defaultBlockCap [UserMsg "Build passes"])
+      hookEvents endEnv `shouldBe` [HookUserPromptSubmit, HookStop]
 
   describe "goalLoop with Pure Interpreter" $ do
     let goalConfig = baseConfig { cfgMaxTurns = Just 20 }
@@ -714,7 +775,8 @@ spec = do
       let toolCall1 = ToolCall "c1" "write_file" "{\"path\":\"foo.txt\",\"content\":\"bar\"}"
           step1 _ _ = Right $ AssistantResponse Nothing [toolCall1] Nothing
           step2 _ _ = Right $ AssistantResponse (Just "done") [] Nothing
-          denyHook _ _ = defaultHookResult { hrDecision = Just (PermDeny "PreToolUse blocked by hook") }
+          denyHook HookPreToolUse _ = defaultHookResult { hrDecision = Just (PermDeny "PreToolUse blocked by hook") }
+          denyHook _ _ = defaultHookResult
           env = emptyMockEnv
             { mockLLMSteps = [step1, step2]
             , mockHooks = denyHook

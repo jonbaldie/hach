@@ -12,10 +12,17 @@ import Hach.Interpreter.IO
   , newIOEnvWithPermissions
   )
 import Hach.Types
+import Control.Concurrent.Async (wait, withAsync)
+import Control.Exception (bracket)
+import Data.Maybe (fromMaybe)
+import System.Timeout (timeout)
 import Data.Aeson (object, (.=))
+import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
+import Network.Socket
+import qualified Network.Socket.ByteString as NSB
 import Test.Hspec
 
 spec :: Spec
@@ -113,6 +120,36 @@ spec = describe "Hach.Hooks" $ do
       res <- runLiveHook HookPreToolUse ("read_file {\"path\":\"README.md\"}")
       hrDecision res `shouldBe` Nothing
 
+  -- Regression for issue #168: http handlers used to return a pass without
+  -- sending anything.
+  describe "HTTP handlers (issue #168)" $ do
+    let payload = object ["hook_event_name" .= ("stop" :: Text), "result" .= ("completed" :: Text)]
+
+    it "POSTs the hook payload as JSON to the configured URL" $ do
+      (res, request) <- withOneShotServer (httpResponse "200 OK" "") $ \url ->
+        runHookHandler "." payload (HookHandler (HookHttp (url <> "/hook")) Nothing False)
+      res `shouldBe` defaultHookResult
+      BS.unpack request `shouldStartWith` "POST /hook HTTP/1.1"
+      BS.unpack request `shouldContain` "Content-Type: application/json"
+      BS.unpack request `shouldContain` "\"hook_event_name\":\"stop\""
+
+    it "applies a decision returned in the response body" $ do
+      let body = "{\"permissionDecision\":{\"decision\":\"deny\",\"reason\":\"not now\"}}"
+      (res, _) <- withOneShotServer (httpResponse "200 OK" body) $ \url ->
+        runHookHandler "." payload (HookHandler (HookHttp url) Nothing False)
+      hrDecision res `shouldBe` Just (PermDeny "not now")
+
+    it "reports a non-2xx response as a non-blocking error" $ do
+      (res, _) <- withOneShotServer (httpResponse "500 Internal Server Error" "boom") $ \url ->
+        runHookHandler "." payload (HookHandler (HookHttp url) Nothing False)
+      hrDecision res `shouldBe` Nothing
+      fmap ("500" `T.isInfixOf`) (hrError res) `shouldBe` Just True
+
+    it "reports an unreachable URL as a non-blocking error" $ do
+      res <- runHookHandler "." payload (HookHandler (HookHttp "http://127.0.0.1:1/hook") Nothing False)
+      hrDecision res `shouldBe` Nothing
+      hrError res `shouldSatisfy` (/= Nothing)
+
 isDeny :: Maybe PermissionDecision -> Bool
 isDeny (Just (PermDeny _)) = True
 isDeny _                   = False
@@ -136,3 +173,43 @@ runLiveHook :: HookEvent -> Text -> IO HookResult
 runLiveHook ev payload = do
   env <- blockingRunCommandEnv
   interpRunHook (ioAlgebraWithLog (const (pure ())) env) ev payload
+
+httpResponse :: BS.ByteString -> BS.ByteString -> BS.ByteString
+httpResponse status body =
+  "HTTP/1.1 " <> status <> "\r\nContent-Length: " <> BS.pack (show (BS.length body))
+    <> "\r\nConnection: close\r\n\r\n" <> body
+
+-- | Serve one HTTP request on a loopback port with a canned response, and
+-- return the raw request alongside the action's result.
+withOneShotServer :: BS.ByteString -> (Text -> IO a) -> IO (a, BS.ByteString)
+withOneShotServer response action =
+  bracket open close $ \sock -> do
+    port <- socketPort sock
+    withAsync (serve sock) $ \server -> do
+      res <- action ("http://127.0.0.1:" <> T.pack (show port))
+      -- A handler that never connects yields an empty request, not a hang.
+      request <- timeout 5000000 (wait server)
+      pure (res, fromMaybe "" request)
+  where
+    open = do
+      sock <- socket AF_INET Stream defaultProtocol
+      bind sock (SockAddrInet 0 (tupleToHostAddress (127, 0, 0, 1)))
+      listen sock 1
+      pure sock
+    serve sock = bracket (fst <$> accept sock) close $ \conn -> do
+      request <- readRequest conn ""
+      NSB.sendAll conn response
+      pure request
+    readRequest conn acc
+      | complete acc = pure acc
+      | otherwise = do
+          chunk <- NSB.recv conn 4096
+          if BS.null chunk then pure acc else readRequest conn (acc <> chunk)
+    complete acc =
+      let (headers, rest) = BS.breakSubstring "\r\n\r\n" acc
+      in not (BS.null rest) && BS.length rest - 4 >= contentLength headers
+    contentLength headers =
+      case [ BS.drop 15 l | l <- BS.lines headers, BS.map toLowerAscii (BS.take 15 l) == "content-length:" ] of
+        (v : _) -> maybe 0 fst (BS.readInt (BS.dropWhile (== ' ') v))
+        []      -> 0
+    toLowerAscii c = if c >= 'A' && c <= 'Z' then toEnum (fromEnum c + 32) else c

@@ -20,6 +20,11 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Network.HTTP.Client
+  ( Request(..), RequestBody(..), Response(..), httpLbs, parseRequest, responseTimeoutMicro )
+import Network.HTTP.Client.TLS (newTlsManager)
+import Network.HTTP.Types.Header (hContentType)
+import Network.HTTP.Types.Status (statusCode, statusIsSuccessful)
 import System.Exit (ExitCode(..))
 import System.Process (CreateProcess(..), readCreateProcessWithExitCode, shell)
 
@@ -69,13 +74,34 @@ runHookHandler root payload HookHandler{..} = case hhType of
         let errMsg = if T.null (T.strip (T.pack err)) then out else err
         in pure (parseHookOutput code (T.pack errMsg))
 
-  HookHttp _url -> do
-    -- HTTP hooks can be dispatched over HTTP client
-    pure defaultHookResult
+  -- The payload is POSTed as JSON. A 2xx body may carry the same JSON a
+  -- command hook prints on exit 2; any other status is a non-blocking error.
+  HookHttp url -> do
+    res <- try (postHookPayload url payload) :: IO (Either SomeException (Response BSL.ByteString))
+    pure $ case res of
+      Left ex -> defaultHookResult { hrError = Just ("HTTP hook " <> url <> " failed: " <> T.pack (show ex)) }
+      Right resp
+        | statusIsSuccessful (responseStatus resp) ->
+            fromMaybe defaultHookResult (Aeson.decode (responseBody resp))
+        | otherwise ->
+            defaultHookResult
+              { hrError = Just ("HTTP hook " <> url <> " returned status "
+                                  <> T.pack (show (statusCode (responseStatus resp)))) }
 
   HookMcp _srv _tool -> do
     -- MCP hooks proxy to MCP server
     pure defaultHookResult
+
+postHookPayload :: Text -> Aeson.Value -> IO (Response BSL.ByteString)
+postHookPayload url payload = do
+  manager <- newTlsManager
+  initReq <- parseRequest (T.unpack url)
+  httpLbs initReq
+    { method          = "POST"
+    , requestHeaders  = [(hContentType, "application/json")]
+    , requestBody     = RequestBodyLBS (Aeson.encode payload)
+    , responseTimeout = responseTimeoutMicro (30 * 1000000)
+    } manager
 
 -- | Execute all configured handlers for an event sequentially, merging results.
 -- Async handlers are spawned in the background.

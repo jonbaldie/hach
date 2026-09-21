@@ -161,4 +161,6 @@ test-suite hach-test
         directory,
         filepath,
         time,
+        async,
+        network,
         process
