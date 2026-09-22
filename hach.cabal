@@ -124,6 +124,7 @@ test-suite hach-test
         Hach.TUISpec
         Hach.TUILayoutSpec
         Hach.PropertySpec
+        Hach.RegressionSpec
         Hach.GoalFuzzSpec
         Hach.CampaignSpec
         Hach.Campaign2Spec
