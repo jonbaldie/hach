@@ -10,6 +10,7 @@ import qualified Hach.ToolsSpec as ToolsSpec
 import qualified Hach.TUISpec as TUISpec
 import qualified Hach.TUILayoutSpec as TUILayoutSpec
 import qualified Hach.PropertySpec as PropertySpec
+import qualified Hach.RegressionSpec as RegressionSpec
 import qualified Hach.GoalFuzzSpec as GoalFuzzSpec
 import qualified Hach.CampaignSpec as CampaignSpec
 import qualified Hach.Campaign2Spec as Campaign2Spec
@@ -40,6 +41,7 @@ main = hspec $ do
   describe "Hach.TUI (Pure Reducer Seam)" TUISpec.spec
   describe "Hach.TUI (Layout / Border Alignment)" TUILayoutSpec.spec
   describe "Hach.Property (CGPT & Fuzzing)" PropertySpec.spec
+  describe "Hach.Regression (high-level laws)" RegressionSpec.spec
   describe "Hach.GoalFuzz (CGPT /goal campaign)" GoalFuzzSpec.spec
   describe "Hach.Campaign (CGPT coverage-guided campaign)" CampaignSpec.spec
   describe "Hach.Campaign2 (CGPT wave-2 containment & identity)" Campaign2Spec.spec
