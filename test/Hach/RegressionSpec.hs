@@ -1,7 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | QuickCheck laws for public behavior the coverage campaigns leave as
--- examples, a zero baseline, or a tautology.
 module Hach.RegressionSpec (spec) where
 
 import Hach.Env
@@ -139,6 +137,11 @@ spec = describe "High-level regression laws" $ do
           resolveMaxBudgetUsd (Just flag) (defaultSettings { setMaxBudgetUsd = settingsBudget })
             === Just flag
 
+    it "keeps a NaN CLI ceiling instead of the settings value" $
+      forAll genMaybeBudget $ \settingsBudget ->
+        fmap isNaN (resolveMaxBudgetUsd (Just (0 / 0)) (defaultSettings { setMaxBudgetUsd = settingsBudget }))
+          === Just True
+
     it "drops a negative or non-finite settings ceiling and keeps a finite non-negative one" $
       forAll genRejectedBudget $ \bad ->
         forAll genNonNegBudget $ \good ->
@@ -209,7 +212,7 @@ expectedIntent opts =
     [] -> IntentTui
 
 genPad :: Gen T.Text
-genPad = T.pack <$> listOf (elements " \t\n")
+genPad = T.pack <$> listOf (elements " \t\n\r\v\f")
 
 genCaseFlip :: T.Text -> Gen T.Text
 genCaseFlip raw =
