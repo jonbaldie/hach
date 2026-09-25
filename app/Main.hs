@@ -3,6 +3,7 @@
 
 module Main (main) where
 
+import Hach.CLI
 import Hach.Core
 import Hach.Env
 import qualified Hach.Git as Git

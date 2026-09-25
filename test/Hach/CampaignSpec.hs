@@ -12,6 +12,7 @@
 -- cases that open new constructor / path combinations.
 module Hach.CampaignSpec (spec) where
 
+import Hach.CLI
 import Hach.Env
 import Hach.Git
 import Hach.Memory
