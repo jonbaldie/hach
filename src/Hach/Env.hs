@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 
 -- | Runtime environment resolution: OpenRouter credentials and model from the
 -- process environment and @.env@, layered settings, and the system prompt.
