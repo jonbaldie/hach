@@ -44,6 +44,8 @@ module Hach.Core
     -- * Goal-Directed Loop
   , goalLoop
   , defaultBlockCap
+  , historyBlockedByHeadlessAsks
+  , headlessAskBlockedMessageForHistory
   ) where
 
 import Hach.Types
@@ -382,7 +384,7 @@ agentStep cfg tools turn spent currentHistory
                   finalHistory = currentHistory ++ [AssistantMsg (respContent resp) []]
                   result
                     | historyBlockedByHeadlessAsks finalHistory =
-                        AgentFailed headlessAskBlockedMessage
+                        AgentFailed (headlessAskBlockedMessageForHistory finalHistory)
                     | otherwise = AgentCompleted content
               case result of
                 AgentCompleted answer -> logEvent (EvDone answer)
@@ -588,14 +590,37 @@ goalLoop cfg tools condition blockCap initialHistory = do
 historyBlockedByHeadlessAsks :: [Message] -> Bool
 historyBlockedByHeadlessAsks hist =
   let mutationMsgs = [ content | ToolMsg _ name content <- hist, isMutationTool name ]
-      headlessDenies = filter (T.isInfixOf headlessAskDeniedReason) mutationMsgs
+      headlessDenies = filter isHeadlessAskDeniedReason mutationMsgs
       successes = filter (not . isDeniedToolOutput) mutationMsgs
   in not (null headlessDenies) && null successes
+
+-- | Format the blocked task error message based on the mutations that were
+-- denied in history. If any command was denied or if acceptEdits was already
+-- in effect, recommends dontAsk or allow rules; otherwise recommends acceptEdits.
+headlessAskBlockedMessageForHistory :: [Message] -> Text
+headlessAskBlockedMessageForHistory hist =
+  let deniedEntries =
+        [ (name, content)
+        | ToolMsg _ name content <- hist
+        , isMutationTool name
+        , isHeadlessAskDeniedReason content
+        ]
+      authorities =
+        [ if T.isInfixOf "dontAsk" content
+            then AuthorityCommand
+            else case resolveToolIdentity name of
+                   Just (_, auth) -> auth
+                   Nothing        -> AuthorityCommand
+        | (name, content) <- deniedEntries
+        ]
+      isAcceptEditsMode = any (\(_, content) -> not (T.isInfixOf "acceptEdits" content)) deniedEntries
+      mode = if isAcceptEditsMode then ModeAcceptEdits else ModeDefault
+  in headlessAskBlockedMessage mode authorities
 
 isDeniedToolOutput :: Text -> Bool
 isDeniedToolOutput content =
   let lower = T.toLower content
-  in T.isInfixOf headlessAskDeniedReason content
+  in isHeadlessAskDeniedReason content
      || T.isInfixOf "denied" lower
      || T.isInfixOf "blocked" lower
 

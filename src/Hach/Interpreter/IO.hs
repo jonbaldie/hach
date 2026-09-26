@@ -169,7 +169,13 @@ newIOEnvWithPermissions perms apiKey model workspace verbose = do
     , ioVerbose          = verbose
     , ioPerms            = PermissionRuntime modeRef modeBeforePlanRef (iopRules perms) (iopHooks perms)
     , ioEffortLevel      = Nothing
-    , ioResolveAsk       = \_ _ _ -> pure (Just headlessAskDeniedReason)
+    , ioResolveAsk       = \tool args _ -> do
+        mode <- readIORef modeRef
+        let auth = case resolveTool (ToolCall "" tool args) of
+              Just (Right resolved) -> resolvedToolAuthority resolved
+              _ | Just (_, a) <- resolveToolIdentity tool -> a
+              _ -> AuthorityCommand
+        pure (Just (headlessAskDeniedReason mode auth))
     }
 
 -- | Switch the live permission mode; subsequent tool calls are checked
