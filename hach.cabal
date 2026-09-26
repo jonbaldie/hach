@@ -33,6 +33,7 @@ library
         Hach.OpenRouter
         Hach.Interpreter.IO
         Hach.Interpreter.Pure
+        Hach.CLI
         Hach.Env
         Hach.TUI.Types
         Hach.TUI.State

@@ -1,8 +1,14 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Hach.CLISpec (spec) where
+
+import Hach.CLI
+import Hach.Types (AgentResult(..), PermissionMode(..))
 
 import Control.Exception (finally)
 import Control.Monad (forM_)
 import qualified Data.Aeson as Aeson
+import Data.Aeson ((.=))
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import Data.Either (isRight)
 import Data.List (intercalate, isPrefixOf)
@@ -29,11 +35,340 @@ import System.Process
   , readProcess
   )
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
 import Test.Hspec
 
 spec :: Spec
-spec = describe "headless CLI prompt acquisition" $ do
+spec = do
+  optionsSpec
+  processSpec
+
+-- | Pure checks of 'Hach.CLI': argument parsing, help text, startup intent
+-- and --print result formatting.
+optionsSpec :: Spec
+optionsSpec = do
+  describe "parseCliArgs" $ do
+    it "parses --model with separate argument" $ do
+      let args = ["--model", "meta/llama-3", "do", "something"]
+      parseCliArgs args `shouldBe` Right defaultCliOptions
+        { optModel = Just "meta/llama-3"
+        , optPrompt = Just "do something"
+        , optNoTui = False
+        }
+
+    it "parses --model= syntax" $ do
+      let args = ["--model=anthropic/claude-3", "run", "all", "tests"]
+      parseCliArgs args `shouldBe` Right defaultCliOptions
+        { optModel = Just "anthropic/claude-3"
+        , optPrompt = Just "run all tests"
+        , optNoTui = False
+        }
+
+    it "parses short flag -m" $ do
+      let args = ["-m", "openai/gpt-4o", "hello"]
+      parseCliArgs args `shouldBe` Right defaultCliOptions
+        { optModel = Just "openai/gpt-4o"
+        , optPrompt = Just "hello"
+        , optNoTui = False
+        }
+
+    it "parses flag positioned between prompt words" $ do
+      let args = ["hello", "--model", "meta/muse-glimmer-30b", "world"]
+      parseCliArgs args `shouldBe` Right defaultCliOptions
+        { optModel = Just "meta/muse-glimmer-30b"
+        , optPrompt = Just "hello world"
+        , optNoTui = False
+        }
+
+    it "parses --no-tui flag" $ do
+      let args = ["--no-tui", "echo", "hello"]
+      parseCliArgs args `shouldBe` Right defaultCliOptions
+        { optModel = Nothing
+        , optPrompt = Just "echo hello"
+        , optNoTui = True
+        }
+
+    it "parses arguments when no model flag is provided" $ do
+      let args = ["run", "my", "task"]
+      parseCliArgs args `shouldBe` Right defaultCliOptions
+        { optModel = Nothing
+        , optPrompt = Just "run my task"
+        , optNoTui = False
+        }
+
+    it "parses empty arguments" $ do
+      parseCliArgs [] `shouldBe` Right defaultCliOptions
+        { optModel = Nothing
+        , optPrompt = Nothing
+        , optNoTui = False
+        }
+
+    it "treats whitespace-only arguments as Nothing for optPrompt" $ do
+      parseCliArgs ["", "   "] `shouldBe` Right defaultCliOptions
+        { optModel = Nothing
+        , optPrompt = Nothing
+        , optNoTui = False
+        }
+
+    it "fails when --model has no argument" $ do
+      case parseCliArgs ["--model"] of
+        Left _ -> pure ()
+        Right _ -> expectationFailure "Expected parseCliArgs to fail when --model has no argument"
+
+    it "fails when --model= is empty" $ do
+      case parseCliArgs ["--model="] of
+        Left _ -> pure ()
+        Right _ -> expectationFailure "Expected parseCliArgs to fail when --model= is empty"
+
+    it "rejects flag-like values as --model argument" $ do
+      case parseCliArgs ["--model", "--no-tui"] of
+        Left _  -> pure ()
+        Right _ -> expectationFailure "Expected parseCliArgs to reject --no-tui as model value"
+
+    it "rejects flag-like values as -m argument" $ do
+      case parseCliArgs ["-m", "--verbose"] of
+        Left _  -> pure ()
+        Right _ -> expectationFailure "Expected parseCliArgs to reject --verbose as model value"
+
+    it "parses --print and -p flags" $ do
+      parseCliArgs ["--print", "hi"] `shouldBe` Right defaultCliOptions
+        { optPrint = True
+        , optNoTui = True
+        , optPrompt = Just "hi"
+        }
+      parseCliArgs ["-p", "hi"] `shouldBe` Right defaultCliOptions
+        { optPrint = True
+        , optNoTui = True
+        , optPrompt = Just "hi"
+        }
+
+    it "parses --output-format json and text" $ do
+      parseCliArgs ["--output-format", "json"] `shouldBe` Right defaultCliOptions
+        { optOutputFormat = OutputJson }
+      parseCliArgs ["--output-format=text"] `shouldBe` Right defaultCliOptions
+        { optOutputFormat = OutputText }
+
+    it "parses --continue / -c and --resume / -r" $ do
+      parseCliArgs ["--continue"] `shouldBe` Right defaultCliOptions { optContinue = True }
+      parseCliArgs ["-c"] `shouldBe` Right defaultCliOptions { optContinue = True }
+      parseCliArgs ["--resume"] `shouldBe` Right defaultCliOptions { optResume = True }
+      parseCliArgs ["-r"] `shouldBe` Right defaultCliOptions { optResume = True }
+
+    it "parses --session-id" $ do
+      parseCliArgs ["--session-id", "sess-123"] `shouldBe` Right defaultCliOptions
+        { optSessionId = Just "sess-123" }
+
+    it "parses --max-turns and --max-budget-usd" $ do
+      parseCliArgs ["--max-turns", "50", "--max-budget-usd", "5.25"] `shouldBe` Right defaultCliOptions
+        { optMaxTurns = Just 50
+        , optMaxBudgetUsd = Just 5.25
+        }
+
+    it "parses --worktree / -w" $ do
+      parseCliArgs ["--worktree", "feat-1"] `shouldBe` Right defaultCliOptions
+        { optWorktree = Just "feat-1" }
+      parseCliArgs ["-w", "feat-2"] `shouldBe` Right defaultCliOptions
+        { optWorktree = Just "feat-2" }
+
+    it "parses --permission-mode" $ do
+      parseCliArgs ["--permission-mode", "acceptEdits"] `shouldBe` Right defaultCliOptions
+        { optPermissionMode = Just ModeAcceptEdits }
+      parseCliArgs ["--permission-mode=plan"] `shouldBe` Right defaultCliOptions
+        { optPermissionMode = Just ModePlan }
+
+    it "parses --dangerously-skip-permissions" $ do
+      parseCliArgs ["--dangerously-skip-permissions"] `shouldBe` Right defaultCliOptions
+        { optDangerouslySkipPerms = True }
+
+    it "parses --append-system-prompt flag with separate argument" $ do
+      let args = ["--append-system-prompt", "Always reply in uppercase", "hello"]
+      parseCliArgs args `shouldBe` Right defaultCliOptions
+        { optAppendSystemPrompt = Just "Always reply in uppercase"
+        , optPrompt = Just "hello"
+        , optNoTui = False
+        }
+
+    it "parses --append-system-prompt= syntax" $ do
+      let args = ["--append-system-prompt=Always reply in uppercase", "hello"]
+      parseCliArgs args `shouldBe` Right defaultCliOptions
+        { optAppendSystemPrompt = Just "Always reply in uppercase"
+        , optPrompt = Just "hello"
+        , optNoTui = False
+        }
+
+    it "fails when --append-system-prompt has no argument" $ do
+      case parseCliArgs ["--append-system-prompt"] of
+        Left err -> err `shouldContain` "requires an argument"
+        Right _  -> expectationFailure "Expected failure when --append-system-prompt has no argument"
+
+    it "parses --exec and implies --no-tui" $ do
+      parseCliArgs ["--exec", "echo hello"] `shouldBe` Right defaultCliOptions
+        { optExec = Just "echo hello"
+        , optNoTui = True
+        }
+      parseCliArgs ["--exec=ls -la"] `shouldBe` Right defaultCliOptions
+        { optExec = Just "ls -la"
+        , optNoTui = True
+        }
+
+    it "fails when --exec has no argument" $ do
+      case parseCliArgs ["--exec"] of
+        Left err -> err `shouldContain` "requires an argument"
+        Right _  -> expectationFailure "Expected failure when --exec has no argument"
+
+    it "fails on unknown flag" $ do
+      case parseCliArgs ["--some-bogus-flag"] of
+        Left err -> err `shouldContain` "Unknown flag"
+        Right _  -> expectationFailure "Expected failure on unknown flag"
+
+  describe "--help / -h (Issue #153)" $ do
+    let everyAcceptedFlag =
+          [ "-h", "--help", "-v", "--version", "-m", "--model", "--no-tui"
+          , "-p", "--print", "--output-format", "-c", "--continue"
+          , "-r", "--resume", "--session-id", "--max-turns", "--max-budget-usd"
+          , "--append-system-prompt", "--add-dir", "-w", "--worktree"
+          , "--init", "--exec", "--permission-mode"
+          , "--dangerously-skip-permissions", "--"
+          ]
+        documentedFlags = concatMap cliFlagNames cliFlags
+
+    it "parses --help and -h without a prompt" $ do
+      parseCliArgs ["--help"] `shouldBe` Right defaultCliOptions { optHelp = True }
+      parseCliArgs ["-h"] `shouldBe` Right defaultCliOptions { optHelp = True }
+
+    it "maps --help to the help intent, ahead of --version and --exec" $ do
+      fmap startupIntent (parseCliArgs ["-h"]) `shouldBe` Right IntentHelp
+      fmap startupIntent (parseCliArgs ["--exec", "ls", "--version", "--help"])
+        `shouldBe` Right IntentHelp
+
+    it "short-circuits so later arguments cannot turn help into an error" $ do
+      fmap startupIntent (parseCliArgs ["--help", "--some-bogus-flag"])
+        `shouldBe` Right IntentHelp
+      fmap startupIntent (parseCliArgs ["--help", "--max-turns"])
+        `shouldBe` Right IntentHelp
+
+    it "short-circuits before a later --no-tui flag" $ do
+      parseCliArgs ["-h", "--no-tui"]
+        `shouldBe` Right defaultCliOptions { optHelp = True }
+
+    it "treats --help after -- as prompt text" $ do
+      parseCliArgs ["--", "--help"] `shouldBe` Right defaultCliOptions
+        { optPrompt = Just "--help" }
+
+    it "documents every flag the parser accepts" $ do
+      mapM_ (\flag -> documentedFlags `shouldContain` [flag]) everyAcceptedFlag
+      mapM_ (\flag -> cliHelpText `shouldContain` flag) everyAcceptedFlag
+
+    it "documents only flags the parser accepts" $ do
+      let unknown flag = case parseCliArgs [flag] of
+            Left err -> "Unknown flag" `T.isInfixOf` T.pack err
+            Right _  -> False
+      filter unknown documentedFlags `shouldBe` []
+
+    it "points the error-path usage line at --help" $ do
+      cliUsageHint `shouldContain` "--help"
+
+  describe "startupIntent" $ do
+    it "runs --exec instead of the headless agent loop" $ do
+      case parseCliArgs ["--exec", "echo hello"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentExec "echo hello"
+
+    it "runs --exec= the same way" $ do
+      case parseCliArgs ["--exec=ls -la"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentExec "ls -la"
+
+    it "prefers --version over --exec" $ do
+      case parseCliArgs ["--exec", "ls", "--version"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentVersion
+
+    it "falls through to headless when --no-tui is set without --exec" $ do
+      case parseCliArgs ["--no-tui"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentHeadless
+
+    it "maps --init to the init intent instead of the TUI (Issue #118)" $ do
+      case parseCliArgs ["--init"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentInit
+
+    it "maps --init to the init intent even alongside --no-tui" $ do
+      case parseCliArgs ["--init", "--no-tui"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentInit
+
+    it "prefers --version over --init" $ do
+      case parseCliArgs ["--init", "--version"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentVersion
+
+    it "prefers --exec over --init" $ do
+      case parseCliArgs ["--init", "--exec", "ls"] of
+        Left err -> expectationFailure err
+        Right opts -> startupIntent opts `shouldBe` IntentExec "ls"
+
+    it "starts the TUI by default" $ do
+      startupIntent defaultCliOptions `shouldBe` IntentTui
+
+  describe "print mode (--print / -p)" $ do
+    it "suppresses banners and verbose events when --print is set" $ do
+      case parseCliArgs ["-p", "What is 2 + 2?"] of
+        Left err -> expectationFailure err
+        Right opts -> do
+          optPrint opts `shouldBe` True
+          headlessEmitsBanners opts `shouldBe` False
+          headlessVerbose opts `shouldBe` False
+
+    it "keeps banners and verbose events for --no-tui without --print" $ do
+      case parseCliArgs ["--no-tui", "What is 2 + 2?"] of
+        Left err -> expectationFailure err
+        Right opts -> do
+          optPrint opts `shouldBe` False
+          headlessEmitsBanners opts `shouldBe` True
+          headlessVerbose opts `shouldBe` True
+
+    it "prints the agent answer instead of the completion banner" $ do
+      let out = formatPrintResult OutputText (AgentCompleted "4")
+      out `shouldBe` "4"
+      out `shouldNotSatisfy` T.isInfixOf "Task successfully completed"
+      out `shouldNotSatisfy` T.isInfixOf "Haskell Agentic"
+
+    it "emits JSON containing the answer when --output-format json" $ do
+      let out = formatPrintResult OutputJson (AgentCompleted "4")
+          decoded = Aeson.decode (LBS.fromStrict (TE.encodeUtf8 out))
+      decoded `shouldBe` Just (Aeson.object ["answer" .= ("4" :: T.Text)])
+
+    it "escapes quotes in JSON print output" $ do
+      let ans = "say \"hi\""
+          out = formatPrintResult OutputJson (AgentCompleted ans)
+          decoded = Aeson.decode (LBS.fromStrict (TE.encodeUtf8 out))
+      decoded `shouldBe` Just (Aeson.object ["answer" .= ans])
+
+    it "prints failure text without interactive banners" $ do
+      let out = formatPrintResult OutputText (AgentFailed "boom")
+      out `shouldBe` "boom"
+      out `shouldNotSatisfy` T.isInfixOf "Agent failed with error"
+
+    it "prints a budget exceeded message naming the ceiling" $ do
+      let out = formatPrintResult OutputText (AgentBudgetExceeded 0 0)
+      out `shouldBe` "Agent reached the spending budget of $0.00 (spent $0.00)."
+
+    it "emits JSON containing max_budget when the spending ceiling is hit" $ do
+      let out = formatPrintResult OutputJson (AgentBudgetExceeded 0.6 0.5)
+          decoded = Aeson.decode (LBS.fromStrict (TE.encodeUtf8 out))
+      decoded `shouldBe` Just (Aeson.object
+        [ "error" .= ("max_budget" :: T.Text)
+        , "spent" .= (0.6 :: Double)
+        , "budget" .= (0.5 :: Double)
+        ])
+
+
+-- | End-to-end checks against the built @hach@ executable.
+processSpec :: Spec
+processSpec = describe "headless CLI prompt acquisition" $ do
   it "turns closed stdin into the intentional empty-prompt exit" $ do
     executable <- hachExecutable
     withTemporaryWorkspace $ \workspace -> do

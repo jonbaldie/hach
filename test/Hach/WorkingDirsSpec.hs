@@ -8,7 +8,8 @@
 module Hach.WorkingDirsSpec (spec) where
 
 import Hach.Core (AgentAlgebra (..))
-import Hach.Env (CliOptions (..), parseCliArgs, resolveWorkingDirs)
+import Hach.CLI (CliOptions (..), parseCliArgs)
+import Hach.Env (resolveWorkingDirs)
 import Hach.Interpreter.IO
   ( IOEnv (..)
   , IOEnvPermissions (..)

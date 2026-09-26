@@ -2,6 +2,7 @@
 
 module Hach.RegressionSpec (spec) where
 
+import Hach.CLI
 import Hach.Env
 import Hach.Git (parsePorcelainStatus)
 import Hach.Paths (isProtectedPath)
