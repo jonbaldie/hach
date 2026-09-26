@@ -928,6 +928,8 @@ handleAgentEvent event state@TuiState{..}
       { tsPendingAsk = Just (PermissionPrompt askId tool args reason)
       , tsStatus     = StatusAwaitingPermission tool
       }
+  EvPermissionModeChanged mode ->
+    state { tsPermissionMode = mode }
   EvHookTriggered hook res ->
     state { tsTranscript = tsTranscript ++ [TiNotice ("Hook triggered: " <> hook <> " -> " <> res)] }
   EvSessionSaved path ->

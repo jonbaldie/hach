@@ -22,7 +22,7 @@ import Hach.TUI.State (updateTui)
 import Hach.TUI.Types
 import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (SomeException, finally, try)
-import Control.Monad (when)
+import Control.Monad (forM_, when)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
@@ -532,6 +532,25 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         tsPermissionMode s `shouldBe` ModePlan
         actions `shouldContain` [ActionSetPermissionMode ModePlan]
 
+      it "tracks permission mode changes emitted by plan-mode tools" $ do
+        let initial = (initialTuiState "test-model" Nothing) { tsPermissionMode = ModeAcceptEdits }
+            (planned, _) = updateTui (EvSubmit "/plan") initial
+            (restored, _) = updateTui (EvHarness (EvPermissionModeChanged ModeAcceptEdits)) planned
+        tsPermissionMode planned `shouldBe` ModePlan
+        tsPermissionMode restored `shouldBe` ModeAcceptEdits
+
+      it "emits live permission mode changes from plan-mode tools" $ do
+        modes <- newIORef []
+        let perms = defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits }
+        env <- newIOEnvWithPermissions perms "k" "test-model" testDir False
+        let logger event = case event of
+              EvPermissionModeChanged mode -> modifyIORef' modes (<> [mode])
+              _ -> pure ()
+            alg = ioAlgebraWithLog logger env
+        _ <- interpTool alg (ToolCall "p1" "EnterPlanMode" "{}")
+        _ <- interpTool alg (ToolCall "p2" "ExitPlanMode" "{}")
+        readIORef modes `shouldReturn` [ModePlan, ModeAcceptEdits]
+
       it "reports the current permission mode in /permissions" $ do
         let planned = (initialTuiState "test-model" Nothing) { tsPermissionMode = ModePlan }
             (s, _) = updateTui (EvSubmit "/permissions") planned
@@ -551,13 +570,32 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
           currentIOPermissionMode env `shouldReturn` ModePlan)
           ["EnterPlanMode", "enter_plan_mode"]
 
-      it "restores the default permission mode for ExitPlanMode aliases" $ do
+      it "restores the previous mode for ExitPlanMode aliases" $ do
+        forM_ [("ExitPlanMode", ModeAcceptEdits), ("exit_plan_mode", ModeDontAsk)] $ \(exitName, initialMode) -> do
+          let perms = defaultIOEnvPermissions { iopInitialMode = initialMode }
+          env <- newIOEnvWithPermissions perms "k" "test-model" testDir False
+          let alg = ioAlgebra env
+          _ <- interpTool alg (ToolCall "p1" "EnterPlanMode" "{}")
+          result <- interpTool alg (ToolCall "p2" exitName "{}")
+          currentIOPermissionMode env `shouldReturn` initialMode
+          result `shouldBe` ToolSuccess
+            ("Exited plan mode. Restored " <> permissionModeName initialMode <> " permissions.")
+
+      it "does not overwrite the saved mode when EnterPlanMode is called twice" $ do
+        env <- newIOEnvWithPermissions
+          (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
+          "k" "test-model" testDir False
+        let alg = ioAlgebra env
+        _ <- interpTool alg (ToolCall "p1" "EnterPlanMode" "{}")
+        _ <- interpTool alg (ToolCall "p2" "EnterPlanMode" "{}")
+        _ <- interpTool alg (ToolCall "p3" "ExitPlanMode" "{}")
+        currentIOPermissionMode env `shouldReturn` ModeAcceptEdits
+
+      it "falls back to default when the session starts in plan mode" $ do
         env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
         let alg = ioAlgebra env
-        mapM_ (\name -> do
-          _ <- interpTool alg (ToolCall "p1" name "{}")
-          currentIOPermissionMode env `shouldReturn` ModeDefault)
-          ["ExitPlanMode", "exit_plan_mode"]
+        _ <- interpTool alg (ToolCall "p1" "ExitPlanMode" "{}")
+        currentIOPermissionMode env `shouldReturn` ModeDefault
 
     describe "worktree switching in IO interpreter" $ do
       it "fails ExitWorktree when not inside a worktree" $ do

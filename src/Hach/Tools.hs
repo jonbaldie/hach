@@ -1008,7 +1008,7 @@ toolRegistry =
   , registration "EnterWorktree" ["EnterWorktree", "enter_worktree", "enterworktree"] AuthorityCommand [enterWorktreeToolDef] (target parseEnterWorktreeArgs worktreeName) noTarget (run parseEnterWorktreeArgs (executeEnterWorktree . wsRoot))
   , registration "ExitWorktree" ["ExitWorktree", "exit_worktree", "exitworktree"] AuthorityCommand [exitWorktreeToolDef] (noArgs (const (Right ()))) noTarget (\ws _ -> executeExitWorktree (wsRoot ws))
   , registration "EnterPlanMode" ["EnterPlanMode", "enter_plan_mode"] AuthorityInteraction [enterPlanModeToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Entered plan mode. The agent is now in read-only planning mode."))))
-  , registration "ExitPlanMode" ["ExitPlanMode", "exit_plan_mode"] AuthorityInteraction [exitPlanModeToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Exited plan mode. The agent is now in standard execution mode."))))
+  , registration "ExitPlanMode" ["ExitPlanMode", "exit_plan_mode"] AuthorityInteraction [exitPlanModeToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Exited plan mode."))))
   , registration "EndConversation" ["EndConversation", "end_conversation"] AuthorityInteraction [endConversationToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Conversation completed by agent."))))
   ]
   where
