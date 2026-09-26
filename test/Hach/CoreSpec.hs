@@ -4,9 +4,11 @@
 module Hach.CoreSpec (spec) where
 
 import Hach.Core
+import Hach.Env (isHeadlessGoalSuccess, resolveHeadlessExitCode)
 import Hach.Interpreter.Pure
 import Hach.Tools
 import Hach.Types
+import System.Exit (ExitCode(..))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
@@ -459,6 +461,22 @@ spec = do
       gsStatus goalState `shouldBe` GoalActive
       gsNoProgressCount goalState `shouldBe` cap
       mockEvents endEnv `shouldContain` [EvGoalBlocked condition]
+
+    it "ends in a state the headless path maps to failure when evaluator always returns GoalNotYetMet with no progress (Issue #223)" $ do
+      let step _ _ = Right $ AssistantResponse (Just "Thinking...") [] Nothing
+          eval _ _ = GoalEvaluation GoalNotYetMet "Not done yet."
+          cap = 2
+          env = emptyMockEnv
+            { mockLLMSteps = repeat step
+            , mockGoalEvaluations = repeat eval
+            }
+          initHist = [UserMsg condition]
+          ((result, _, goalState), endEnv) =
+            runPure env (goalLoop goalConfig [] condition cap initHist)
+
+      mockEvents endEnv `shouldContain` [EvGoalBlocked condition]
+      isHeadlessGoalSuccess result goalState `shouldBe` False
+      resolveHeadlessExitCode result (Just goalState) `shouldBe` ExitFailure 1
 
     it "resets no-progress counter when agent uses tools between completions" $ do
       let toolCall = ToolCall

@@ -850,6 +850,14 @@ renderEventQuietSpec = describe "renderEventIO in quiet (--print) mode" $ do
     out `shouldContain` "Final Answer"
     out `shouldContain` "4"
 
+  it "does not claim goal is still active when goal is blocked (Issue #223)" $ do
+    (out, _) <- captureStdStreams (renderEventIO True (EvGoalBlocked "the file unicorn.txt exists"))
+    out `shouldNotContain` "Goal still active"
+    out `shouldContain` "Goal not met in this run: the file unicorn.txt exists"
+    (_, err) <- captureStdStreams (renderEventIO False (EvGoalBlocked "the file unicorn.txt exists"))
+    err `shouldNotContain` "Goal still active"
+    err `shouldContain` "Goal not met in this run: the file unicorn.txt exists"
+
 captureStdStreams :: IO () -> IO (String, String)
 captureStdStreams action = do
   tmp <- getTemporaryDirectory

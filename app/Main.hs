@@ -29,7 +29,7 @@ import System.Directory (getCurrentDirectory, makeAbsolute)
 import System.Environment (getArgs)
 import Data.Version (showVersion)
 import qualified Paths_hach as Paths
-import System.Exit (exitFailure, exitSuccess, exitWith)
+import System.Exit (ExitCode(..), exitFailure, exitSuccess, exitWith)
 import System.IO (stderr)
 import System.IO.Error (isEOFError)
 
@@ -194,23 +194,25 @@ runHach = do
                 saveRunSession currentWorkspace activeSid envModel mPrevInfo finalHistory
 
                 if optPrint
-                  then TIO.putStrLn (formatPrintResult optOutputFormat result)
-                  else case result of
-                    AgentCompleted _ans -> do
-                      putStrLn "\nTask completed."
-                      putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
-                      printGoalSummary goalState
-                    AgentMaxTurnsReached turns -> do
-                      putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
-                      printGoalSummary goalState
-                    AgentBudgetExceeded spent budget -> do
-                      putStrLn ("\n" <> T.unpack (formatPrintResult OutputText (AgentBudgetExceeded spent budget)))
-                      printGoalSummary goalState
-                    AgentFailed err -> do
-                      putStrLn ("\nAgent failed with error: " <> T.unpack err)
-                      printGoalSummary goalState
+                  then TIO.putStrLn (formatPrintGoalResult optOutputFormat goalState result)
+                  else do
+                    let outcome = formatHeadlessGoalOutcome goalState result
+                    case result of
+                      AgentCompleted _ans -> do
+                        putStrLn ("\n" <> T.unpack outcome)
+                        putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
+                        printGoalSummary goalState
+                      AgentMaxTurnsReached turns -> do
+                        putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
+                        printGoalSummary goalState
+                      AgentBudgetExceeded spent budget -> do
+                        putStrLn ("\n" <> T.unpack (formatPrintResult OutputText (AgentBudgetExceeded spent budget)))
+                        printGoalSummary goalState
+                      AgentFailed err -> do
+                        putStrLn ("\nAgent failed with error: " <> T.unpack err)
+                        printGoalSummary goalState
 
-                exitOnHeadlessFailure result
+                exitOnHeadlessFailureWith (Just goalState) result
 
         else do
           finalPrompt <- expandSlashInvokedPrompt currentWorkspace skills trimmedPrompt
@@ -245,11 +247,14 @@ runHach = do
 -- | Headless failures must be visible to shell callers through the process
 -- status, after the result has been rendered in the requested format.
 exitOnHeadlessFailure :: AgentResult -> IO ()
-exitOnHeadlessFailure result = case result of
-  AgentCompleted _         -> pure ()
-  AgentMaxTurnsReached _   -> exitFailure
-  AgentBudgetExceeded _ _  -> exitFailure
-  AgentFailed _            -> exitFailure
+exitOnHeadlessFailure = exitOnHeadlessFailureWith Nothing
+
+-- | Headless failure exit taking optional goal state into account.
+exitOnHeadlessFailureWith :: Maybe GoalState -> AgentResult -> IO ()
+exitOnHeadlessFailureWith mGs result =
+  case resolveHeadlessExitCode result mGs of
+    ExitSuccess      -> pure ()
+    ExitFailure code -> exitWith (ExitFailure code)
 
 -- | Resolve the workspace selected by the CLI before any task, command, or TUI
 -- work begins. The process remains rooted at the repository checkout so the
