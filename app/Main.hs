@@ -20,7 +20,7 @@ import Hach.Tools
 import Hach.TUI.App (runTui)
 import Hach.TUI.Types (ProjectInitializationResult(..))
 import Hach.Types
-import Control.Exception (tryJust)
+import Control.Exception (finally, tryJust)
 import Control.Monad (when)
 import Data.Maybe (isJust)
 import qualified Data.Text as T
@@ -33,8 +33,13 @@ import System.Exit (exitFailure, exitSuccess, exitWith)
 import System.IO (stderr)
 import System.IO.Error (isEOFError)
 
+-- | Background tasks run in their own process groups, so nothing else would
+-- stop them when Hach exits, however it exits.
 main :: IO ()
-main = do
+main = runHach `finally` stopBackgroundTasks
+
+runHach :: IO ()
+runHach = do
   rawArgs <- getArgs
   cwd     <- getCurrentDirectory
 

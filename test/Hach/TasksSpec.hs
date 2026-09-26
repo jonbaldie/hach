@@ -3,10 +3,50 @@
 module Hach.TasksSpec (spec) where
 
 import Hach.Tasks
-import Hach.Types (ToolResult(..))
+import Hach.Types (TaskId, ToolResult(..))
 import Control.Concurrent (threadDelay)
+import Control.Exception (SomeException, bracket, try)
 import qualified Data.Text as T
+import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive)
+import System.Exit (ExitCode(..))
+import System.FilePath ((</>))
+import System.Process (readProcessWithExitCode)
+import System.Timeout (timeout)
 import Test.Hspec
+
+-- | Run an action in a fresh scratch directory that is removed afterwards.
+withScratch :: String -> (FilePath -> IO a) -> IO a
+withScratch name action = do
+  tmp <- getTemporaryDirectory
+  let dir = tmp </> ("hach-tasks-spec-" <> name)
+      discard = try (removeDirectoryRecursive dir) :: IO (Either SomeException ())
+  bracket (discard >> createDirectoryIfMissing True dir >> pure dir) (const discard) action
+
+-- | Poll until the command has written its pid file, then read it.
+awaitPid :: FilePath -> IO String
+awaitPid path = go (50 :: Int)
+  where
+    go 0 = expectationFailure ("pid file never appeared: " <> path) >> pure ""
+    go n = do
+      exists <- doesFileExist path
+      contents <- if exists then readFile path else pure ""
+      case words contents of
+        [pid] -> pure pid
+        _ -> threadDelay 100000 >> go (n - 1)
+
+-- | Stop a task, failing rather than hanging if the stop never returns.
+stopWithin :: BackgroundRegistry -> TaskId -> IO (Either T.Text ())
+stopWithin reg tid = do
+  res <- timeout 10000000 (stopBackgroundProcess reg tid)
+  case res of
+    Nothing -> expectationFailure "stopBackgroundProcess did not return within 10s" >> pure (Left "timeout")
+    Just ok -> pure ok
+
+-- | Whether a process with this pid still exists.
+isAlive :: String -> IO Bool
+isAlive pid = do
+  (code, _, _) <- readProcessWithExitCode "kill" ["-0", pid] ""
+  pure (code == ExitSuccess)
 
 spec :: Spec
 spec = describe "Hach.Tasks" $ do
@@ -55,5 +95,27 @@ spec = describe "Hach.Tasks" $ do
     it "stops running background process cleanly" $ do
       reg <- newBackgroundRegistry
       tid <- spawnBackgroundProcess reg "." "sleep 10"
-      stopped <- stopBackgroundProcess reg tid
-      stopped `shouldBe` True
+      stopBackgroundProcess reg tid `shouldReturn` Right ()
+
+  describe "Stopping kills the whole process tree (issue #220)" $ do
+    it "kills processes the task's shell started" $ withScratch "grandchild" $ \dir -> do
+      reg <- newBackgroundRegistry
+      tid <- spawnBackgroundProcess reg dir "sleep 30 & echo $! > pid; wait"
+      pid <- awaitPid (dir </> "pid")
+      stopWithin reg tid `shouldReturn` Right ()
+      isAlive pid `shouldReturn` False
+
+    it "kills a task that ignores SIGTERM after the grace period" $ withScratch "trap" $ \dir -> do
+      reg <- newBackgroundRegistry
+      tid <- spawnBackgroundProcess reg dir "trap '' TERM; echo $$ > pid; while :; do sleep 1; done"
+      pid <- awaitPid (dir </> "pid")
+      stopWithin reg tid `shouldReturn` Right ()
+      isAlive pid `shouldReturn` False
+
+    it "stops every running task in the registry" $ withScratch "stop-all" $ \dir -> do
+      reg <- newBackgroundRegistry
+      _ <- spawnBackgroundProcess reg dir "sleep 30 & echo $! > pid1; wait"
+      _ <- spawnBackgroundProcess reg dir "sleep 30 & echo $! > pid2; wait"
+      pids <- mapM (awaitPid . (dir </>)) ["pid1", "pid2"]
+      stopAllBackgroundProcesses reg
+      mapM isAlive pids `shouldReturn` [False, False]
