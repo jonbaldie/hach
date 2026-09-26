@@ -51,6 +51,9 @@ module Hach.Types
   , interactiveAskDeniedReason
   , headlessAskDeniedReason
   , headlessAskBlockedMessage
+  , headlessAskDeniedReasonPrefix
+  , headlessAskBlockedPrefix
+  , isHeadlessAskDeniedReason
   , RuleAction(..)
   , PermissionRule(..)
 
@@ -659,15 +662,39 @@ instance FromJSON PermissionDecision where
 interactiveAskDeniedReason :: Text
 interactiveAskDeniedReason = "Permission denied by policy"
 
+-- | Shared prefix for all headless PermAsk refusal reasons.
+headlessAskDeniedReasonPrefix :: Text
+headlessAskDeniedReasonPrefix = "No interactive approval available in --no-tui."
+
 -- | Denial reason when headless mode cannot prompt for a PermAsk.
-headlessAskDeniedReason :: Text
-headlessAskDeniedReason =
-  "No interactive approval available in --no-tui. Re-run with --permission-mode acceptEdits to allow writes and commands."
+-- Recommends acceptEdits only when that mode would actually grant the denied
+-- capability and the session is not already running with it; otherwise
+-- recommends dontAsk or allow rules.
+headlessAskDeniedReason :: PermissionMode -> ToolAuthority -> Text
+headlessAskDeniedReason mode authority
+  | mode /= ModeAcceptEdits && authority == AuthorityWorkspaceWrite =
+      headlessAskDeniedReasonPrefix <> " Re-run with --permission-mode acceptEdits to allow writes and commands."
+  | otherwise =
+      headlessAskDeniedReasonPrefix <> " Re-run with --permission-mode dontAsk or add a matching permissions.allow rule."
+
+-- | Shared prefix for all headless blocked task messages.
+headlessAskBlockedPrefix :: Text
+headlessAskBlockedPrefix =
+  "Task blocked: every write and command was denied because --no-tui cannot prompt for approval."
 
 -- | Final result text when every write/command in a run was a headless PermAsk deny.
-headlessAskBlockedMessage :: Text
-headlessAskBlockedMessage =
-  "Task blocked: every write and command was denied because --no-tui cannot prompt for approval. Re-run with --permission-mode acceptEdits."
+-- When all denied tools were file writes and the session is not in acceptEdits,
+-- recommends acceptEdits; otherwise recommends dontAsk or allow rules.
+headlessAskBlockedMessage :: PermissionMode -> [ToolAuthority] -> Text
+headlessAskBlockedMessage mode authorities
+  | mode == ModeAcceptEdits || any (/= AuthorityWorkspaceWrite) authorities =
+      headlessAskBlockedPrefix <> " Re-run with --permission-mode dontAsk or add a matching permissions.allow rule."
+  | otherwise =
+      headlessAskBlockedPrefix <> " Re-run with --permission-mode acceptEdits."
+
+-- | Test whether a string is a headless PermAsk denial reason.
+isHeadlessAskDeniedReason :: Text -> Bool
+isHeadlessAskDeniedReason msg = headlessAskDeniedReasonPrefix `T.isInfixOf` msg
 
 -- | Action in a permission rule.
 data RuleAction = RuleAllow | RuleAsk | RuleDeny
