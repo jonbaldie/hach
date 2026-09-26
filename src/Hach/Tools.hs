@@ -113,6 +113,7 @@ module Hach.Tools
   , executeReplaceFileContent
   , executeRunCommand
   , runExecCommand
+  , stopBackgroundTasks
   , executeListDir
   , executeFindFiles
   , matchPattern
@@ -158,6 +159,8 @@ import Hach.Tasks
   , spawnBackgroundProcess
   , getBackgroundOutput
   , stopBackgroundProcess
+  , stopAllBackgroundProcesses
+  , signalGroup
   )
 import Hach.Types
 import Control.Applicative ((<|>))
@@ -196,7 +199,7 @@ import System.FilePath
   , takeFileName
   )
 import System.IO (hClose, hGetContents')
-import System.Posix.Signals (sigKILL, signalProcessGroup)
+import System.Posix.Signals (sigKILL)
 import System.Process (CreateProcess(..), StdStream(CreatePipe), cleanupProcess, createProcess, getPid, shell, waitForProcess)
 import System.Timeout (timeout)
 
@@ -1256,7 +1259,7 @@ runGroupWithTimeout micros cp = do
   -- but its backgrounded children still live in the group it led.
   mPid <- getPid ph
   let killGroup = do
-        mapM_ (\pid -> try (signalProcessGroup sigKILL pid) :: IO (Either SomeException ())) mPid
+        mapM_ (signalGroup sigKILL) mPid
         cleanupProcess procs
       collect = case (mIn, mOut, mErr) of
         (Just hIn, Just hOut, Just hErr) -> do
@@ -1504,6 +1507,10 @@ globalBgRegistry :: BackgroundRegistry
 globalBgRegistry = unsafePerformIO newBackgroundRegistry
 {-# NOINLINE globalBgRegistry #-}
 
+-- | Stop every background task this process started, so none outlive Hach.
+stopBackgroundTasks :: IO ()
+stopBackgroundTasks = stopAllBackgroundProcesses globalBgRegistry
+
 globalTaskStore :: TVar TaskStore
 globalTaskStore = unsafePerformIO (newTVarIO emptyTaskStore)
 {-# NOINLINE globalTaskStore #-}
@@ -1551,12 +1558,12 @@ executeTaskUpdate (TaskUpdateArgs (TaskId tid) st) = do
 
 executeTaskStop :: TaskStopArgs -> IO ToolResult
 executeTaskStop (TaskStopArgs tid) = do
-  ok <- stopBackgroundProcess globalBgRegistry tid
-  if ok
-    then do
+  res <- stopBackgroundProcess globalBgRegistry tid
+  case res of
+    Right () -> do
       atomically $ modifyTVar' globalTaskStore (\s -> updateTask s (unTaskId tid) "stopped")
       pure $ ToolSuccess ("Stopped task " <> unTaskId tid)
-    else pure $ ToolError ("Failed to stop task " <> unTaskId tid)
+    Left err -> pure $ ToolError ("Failed to stop task " <> unTaskId tid <> ": " <> err)
 
 executeMonitor :: MonitorArgs -> IO ToolResult
 executeMonitor (MonitorArgs tid) = do

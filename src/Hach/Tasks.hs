@@ -17,10 +17,12 @@ module Hach.Tasks
   , spawnBackgroundProcess
   , getBackgroundOutput
   , stopBackgroundProcess
+  , stopAllBackgroundProcesses
+  , signalGroup
   ) where
 
 import Hach.Types
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, try)
 import Data.Aeson (FromJSON, ToJSON)
@@ -29,6 +31,7 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import GHC.Clock (getMonotonicTime)
 import GHC.Generics (Generic)
 import System.Exit (ExitCode)
 import System.IO (Handle, hIsEOF)
@@ -37,10 +40,12 @@ import System.Process
   , ProcessHandle
   , StdStream(..)
   , createProcess
+  , getPid
+  , getProcessExitCode
   , shell
-  , terminateProcess
-  , waitForProcess
   )
+import System.Posix.Signals (Signal, nullSignal, sigKILL, sigTERM, signalProcessGroup)
+import System.Posix.Types (ProcessGroupID)
 
 -- | Model task item for TodoWrite / TaskCreate / TaskList.
 data Task = Task
@@ -99,6 +104,10 @@ formatTaskList ts = T.unlines
 
 data BgProcess = BgProcess
   { bpHandle  :: !ProcessHandle
+  , bpGroup   :: !(TVar (Maybe ProcessGroupID))
+    -- ^ The group the task's shell leads, captured at spawn: once the shell
+    -- is reaped its handle forgets the pid, but its children remain. Cleared
+    -- once the group is gone, so a reused id is never signalled.
   , bpOutput  :: !(TVar Text)
   , bpRunning :: !(TVar Bool)
   }
@@ -114,8 +123,10 @@ spawnBackgroundProcess reg root cmd = do
         { cwd = Just root
         , std_out = CreatePipe
         , std_err = CreatePipe
+        , create_group = True
         }
   (_, mOut, mErr, pHandle) <- createProcess procSpec
+  groupVar <- newTVarIO =<< getPid pHandle
   outVar <- newTVarIO ""
   runVar <- newTVarIO True
 
@@ -127,13 +138,13 @@ spawnBackgroundProcess reg root cmd = do
     _ -> pure ()
 
   _ <- forkIO $ do
-    _ <- try (waitForProcess pHandle) :: IO (Either SomeException ExitCode)
+    awaitExit pHandle
     atomically $ writeTVar runVar False
 
   tId <- atomically $ do
     m <- readTVar reg
     let tid = TaskId ("bg-" <> T.pack (show (Map.size m + 1)))
-        bp = BgProcess pHandle outVar runVar
+        bp = BgProcess pHandle groupVar outVar runVar
     writeTVar reg (Map.insert tid bp m)
     pure tid
   pure tId
@@ -153,6 +164,15 @@ spawnBackgroundProcess reg root cmd = do
                   atomically $ modifyTVar' var (\cur -> cur <> line <> "\n")
                   go
 
+-- | Wait for a process to exit by polling. 'waitForProcess' is a blocking
+-- foreign call that stalls every thread under the non-threaded RTS.
+awaitExit :: ProcessHandle -> IO ()
+awaitExit ph = do
+  res <- try (getProcessExitCode ph) :: IO (Either SomeException (Maybe ExitCode))
+  case res of
+    Right Nothing -> threadDelay 50000 >> awaitExit ph
+    _ -> pure ()
+
 getBackgroundOutput :: BackgroundRegistry -> TaskId -> IO ToolResult
 getBackgroundOutput reg tid = do
   mBp <- atomically $ do
@@ -164,15 +184,84 @@ getBackgroundOutput reg tid = do
       txt <- readTVarIO (bpOutput bp)
       pure (ToolSuccess (if T.null txt then "(no output yet)" else txt))
 
-stopBackgroundProcess :: BackgroundRegistry -> TaskId -> IO Bool
+-- | Stop a background task and everything it started. Succeeds only once its
+-- shell is reaped and no process in its group is left; otherwise says what
+-- survived.
+stopBackgroundProcess :: BackgroundRegistry -> TaskId -> IO (Either Text ())
 stopBackgroundProcess reg tid = do
-  mBp <- atomically $ do
-    m <- readTVar reg
-    pure (Map.lookup tid m)
+  mBp <- Map.lookup tid <$> readTVarIO reg
   case mBp of
-    Nothing -> pure False
+    Nothing -> pure (Left ("No background task with ID " <> unTaskId tid))
     Just bp -> do
-      res <- try (terminateProcess (bpHandle bp)) :: IO (Either SomeException ())
-      _ <- try (waitForProcess (bpHandle bp)) :: IO (Either SomeException ExitCode)
-      atomically $ writeTVar (bpRunning bp) False
-      pure (case res of Right () -> True; Left _ -> False)
+      mGroup <- readTVarIO (bpGroup bp)
+      gone <- maybe (pure True) (stopGroup (bpHandle bp)) mGroup
+      if gone
+        then do
+          atomically $ do
+            writeTVar (bpGroup bp) Nothing
+            writeTVar (bpRunning bp) False
+          pure (Right ())
+        else pure (Left ("Processes in group " <> maybe "?" (T.pack . show) mGroup
+                         <> " of task " <> unTaskId tid <> " survived SIGKILL"))
+
+-- | Terminate the group a task's shell leads, then reap the shell. A child
+-- the shell forked while the group was being killed can outlive the sweep,
+-- so the group is checked again once the shell is gone.
+stopGroup :: ProcessHandle -> ProcessGroupID -> IO Bool
+stopGroup ph pgid = do
+  _ <- terminateProcessGroup pgid
+  _ <- within gracePeriod (reaped ph)
+  alive <- groupAlive pgid
+  if alive then killProcessGroup pgid else pure True
+
+-- | Stop every background task, as Hach does on exit.
+stopAllBackgroundProcesses :: BackgroundRegistry -> IO ()
+stopAllBackgroundProcesses reg = do
+  tids <- Map.keys <$> readTVarIO reg
+  mapM_ (stopBackgroundProcess reg) tids
+
+-- | Send a signal to a whole process group, ignoring a group that has gone.
+signalGroup :: Signal -> ProcessGroupID -> IO ()
+signalGroup sig pgid = do
+  _ <- try (signalProcessGroup sig pgid) :: IO (Either SomeException ())
+  pure ()
+
+-- | SIGTERM a process group, then SIGKILL it if it outlives a grace period.
+-- True once the group has no members left.
+terminateProcessGroup :: ProcessGroupID -> IO Bool
+terminateProcessGroup pgid = do
+  signalGroup sigTERM pgid
+  termed <- within gracePeriod (not <$> groupAlive pgid)
+  if termed then pure True else killProcessGroup pgid
+
+-- | SIGKILL a process group until it has no members left, re-sending the
+-- signal so that processes forked during the sweep are caught too.
+killProcessGroup :: ProcessGroupID -> IO Bool
+killProcessGroup pgid =
+  within gracePeriod (signalGroup sigKILL pgid >> not <$> groupAlive pgid)
+
+-- | Whether any process remains in a group. The kernel skips zombies here,
+-- so a dead but unreaped group leader does not count.
+groupAlive :: ProcessGroupID -> IO Bool
+groupAlive pgid = either (const False) (const True)
+  <$> (try (signalProcessGroup nullSignal pgid) :: IO (Either SomeException ()))
+
+-- | Whether the process has exited and been reaped.
+reaped :: ProcessHandle -> IO Bool
+reaped ph = either (const True) (maybe False (const True))
+  <$> (try (getProcessExitCode ph) :: IO (Either SomeException (Maybe ExitCode)))
+
+-- | Seconds a task gets to exit after each signal.
+gracePeriod :: Double
+gracePeriod = 2
+
+-- | Poll a check until it holds or the given number of seconds has passed.
+within :: Double -> IO Bool -> IO Bool
+within secs holds = getMonotonicTime >>= poll . (+ secs)
+  where
+    poll deadline = do
+      ok <- holds
+      now <- getMonotonicTime
+      if ok || now >= deadline
+        then pure ok
+        else threadDelay 50000 >> poll deadline
