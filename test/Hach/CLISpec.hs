@@ -267,6 +267,27 @@ spec = describe "headless CLI prompt acquisition" $ do
           `shouldSatisfy` isRight
         stderrText `shouldContain` "[Goal] Failed"
 
+    it "returns a failure status and does not print Task completed for an unmet headless goal (Issue #223)" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        testEnvironment <- isolatedEnvironment workspace
+        let command =
+              (proc executable
+                [ "--no-tui"
+                , "--max-turns"
+                , "1"
+                , "--model"
+                , "test-model"
+                , "/goal answer in one sentence"
+                ])
+                { cwd = Just workspace
+                , env = Just testEnvironment
+                }
+        (exitCode, stdoutText, _) <- readCreateProcessWithExitCode command ""
+
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldNotContain` "Task completed."
+
   describe "--init (Issue #118)" $ do
     let initEnvironment = do
           environment <- getEnvironment

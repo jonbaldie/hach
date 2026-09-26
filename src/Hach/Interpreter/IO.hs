@@ -297,7 +297,7 @@ renderEventIO verbose = \case
     notice ("\n[Goal] Cleared: " <> T.unpack cond)
 
   EvGoalBlocked cond ->
-    notice ("\n[Goal] No progress detected. Goal still active: " <> T.unpack cond)
+    notice ("\n[Goal] No progress detected. Goal not met in this run: " <> T.unpack cond)
 
   EvPartialResponse delta ->
     when verbose $ TIO.putStr delta
