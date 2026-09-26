@@ -614,9 +614,9 @@ spec = do
 
       it "executes ExitPlanMode and exit_plan_mode" $ do
         r1 <- executeCodingTool (workspaceAt ".") (ToolCall "p1" "ExitPlanMode" "{}")
-        r1 `shouldBe` ToolSuccess "Exited plan mode. The agent is now in standard execution mode."
+        r1 `shouldBe` ToolSuccess "Exited plan mode."
         r2 <- executeCodingTool (workspaceAt ".") (ToolCall "p2" "exit_plan_mode" "{}")
-        r2 `shouldBe` ToolSuccess "Exited plan mode. The agent is now in standard execution mode."
+        r2 `shouldBe` ToolSuccess "Exited plan mode."
 
       it "returns ToolError for ExitWorktree and exit_worktree when not in a worktree" $ do
         r1 <- executeCodingTool (workspaceAt testSandbox) (ToolCall "w1" "ExitWorktree" "{}")
