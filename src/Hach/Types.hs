@@ -26,6 +26,7 @@ module Hach.Types
   , GoalVerdict(..)
   , GoalEvaluation(..)
   , GoalStatus(..)
+  , goalStatusName
   , GoalState(..)
   , initialGoalState
   , GoalErrorKind(..)
@@ -463,7 +464,30 @@ data GoalStatus
   | GoalAchieved
   | GoalFailed
   | GoalCleared
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+
+-- | Canonical lowercase name of a goal status.
+goalStatusName :: GoalStatus -> Text
+goalStatusName = \case
+  GoalActive   -> "active"
+  GoalAchieved -> "achieved"
+  GoalFailed   -> "failed"
+  GoalCleared  -> "cleared"
+
+instance ToJSON GoalStatus where
+  toJSON = Aeson.String . goalStatusName
+
+instance FromJSON GoalStatus where
+  parseJSON = Aeson.withText "GoalStatus" $ \case
+    "active"       -> pure GoalActive
+    "achieved"     -> pure GoalAchieved
+    "failed"       -> pure GoalFailed
+    "cleared"      -> pure GoalCleared
+    "GoalActive"   -> pure GoalActive
+    "GoalAchieved" -> pure GoalAchieved
+    "GoalFailed"   -> pure GoalFailed
+    "GoalCleared"  -> pure GoalCleared
+    other          -> fail ("Unknown goal status: " <> T.unpack other)
 
 -- | Per-session goal condition store.
 -- Holds one active condition at a time, plus evaluation metadata.

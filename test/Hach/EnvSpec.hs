@@ -4,14 +4,24 @@ module Hach.EnvSpec (spec) where
 
 import Hach.Env
 import Hach.Settings (Settings(..), defaultSettings)
-import Hach.Types (AgentResult(..), EffortLevel(..), PermissionMode(..), parseEffortLevel)
+import Hach.Types
+  ( AgentResult(..)
+  , EffortLevel(..)
+  , GoalState(..)
+  , GoalStatus(..)
+  , initialGoalState
+  , PermissionMode(..)
+  , parseEffortLevel
+  )
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy as LBS
 import Data.Aeson ((.=))
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
+import System.Exit (ExitCode(..))
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 import System.FilePath ((</>))
 import Test.Hspec
@@ -571,3 +581,75 @@ spec = do
         TIO.writeFile (testSandbox </> "CLAUDE.md") "Claude rules"
         res <- loadProjectInstructions testSandbox
         res `shouldBe` Just "Agents rules"
+
+  describe "headless exit decision (Issue #223)" $ do
+    it "is non-zero for a goal that was not achieved and zero for GoalAchieved" $ do
+      let gsActive = (initialGoalState "unicorn.txt exists") { gsStatus = GoalActive }
+          gsFailed = (initialGoalState "unicorn.txt exists") { gsStatus = GoalFailed }
+          gsAchieved = (initialGoalState "unicorn.txt exists") { gsStatus = GoalAchieved }
+      resolveHeadlessExitCode (AgentCompleted "done") (Just gsActive) `shouldBe` ExitFailure 1
+      resolveHeadlessExitCode (AgentCompleted "done") (Just gsFailed) `shouldBe` ExitFailure 1
+      resolveHeadlessExitCode (AgentCompleted "done") (Just gsAchieved) `shouldBe` ExitSuccess
+
+      isHeadlessGoalSuccess (AgentCompleted "done") gsActive `shouldBe` False
+      isHeadlessGoalSuccess (AgentCompleted "done") gsFailed `shouldBe` False
+      isHeadlessGoalSuccess (AgentCompleted "done") gsAchieved `shouldBe` True
+
+    it "is non-zero when agent itself failed even if goal was marked achieved" $ do
+      let gsAchieved = (initialGoalState "unicorn.txt exists") { gsStatus = GoalAchieved }
+      resolveHeadlessExitCode (AgentFailed "err") (Just gsAchieved) `shouldBe` ExitFailure 1
+      isHeadlessGoalSuccess (AgentFailed "err") gsAchieved `shouldBe` False
+
+    it "exits zero for normal agent completion without goal" $ do
+      resolveHeadlessExitCode (AgentCompleted "done") Nothing `shouldBe` ExitSuccess
+
+    it "exits non-zero for normal agent failure without goal" $ do
+      resolveHeadlessExitCode (AgentFailed "err") Nothing `shouldBe` ExitFailure 1
+
+  describe "headless goal outcome and print formatting (Issue #223)" $ do
+    it "renders Task completed. for GoalAchieved" $ do
+      let gs = (initialGoalState "unicorn.txt exists") { gsStatus = GoalAchieved }
+      formatHeadlessGoalOutcome gs (AgentCompleted "done") `shouldBe` "Task completed."
+
+    it "renders Goal not met: <reason> instead of Task completed for unachieved goal" $ do
+      let gs = (initialGoalState "unicorn.txt exists")
+                 { gsStatus = GoalActive
+                 , gsLastReason = Just "unicorn.txt is missing"
+                 }
+      formatHeadlessGoalOutcome gs (AgentCompleted "done")
+        `shouldBe` "Goal not met: unicorn.txt is missing"
+
+    it "formats --print text as Goal not met for unachieved goal" $ do
+      let gs = (initialGoalState "unicorn.txt exists")
+                 { gsStatus = GoalActive
+                 , gsLastReason = Just "unicorn.txt is missing"
+                 }
+      formatPrintGoalResult OutputText gs (AgentCompleted "done")
+        `shouldBe` "Goal not met: unicorn.txt is missing"
+
+    it "formats --output-format json carrying goal status and error for unachieved goal" $ do
+      let gs = (initialGoalState "unicorn.txt exists")
+                 { gsStatus = GoalActive
+                 , gsLastReason = Just "unicorn.txt is missing"
+                 }
+          out = formatPrintGoalResult OutputJson gs (AgentCompleted "unfinished")
+          decoded = Aeson.decode (LBS.fromStrict (TE.encodeUtf8 out)) :: Maybe Aeson.Value
+      case decoded of
+        Just (Aeson.Object obj) -> do
+          KM.lookup "status" obj `shouldBe` Just (Aeson.String "active")
+          KM.lookup "goal_status" obj `shouldBe` Just (Aeson.String "active")
+          KM.lookup "error" obj `shouldBe` Just (Aeson.String "Goal not met: unicorn.txt is missing")
+          KM.lookup "reason" obj `shouldBe` Just (Aeson.String "unicorn.txt is missing")
+          KM.lookup "answer" obj `shouldBe` Just (Aeson.String "unfinished")
+        _ -> expectationFailure ("expected JSON Object, got " <> show decoded)
+
+    it "formats --output-format json carrying goal status for achieved goal" $ do
+      let gs = (initialGoalState "unicorn.txt exists") { gsStatus = GoalAchieved }
+          out = formatPrintGoalResult OutputJson gs (AgentCompleted "created unicorn.txt")
+          decoded = Aeson.decode (LBS.fromStrict (TE.encodeUtf8 out)) :: Maybe Aeson.Value
+      case decoded of
+        Just (Aeson.Object obj) -> do
+          KM.lookup "status" obj `shouldBe` Just (Aeson.String "achieved")
+          KM.lookup "goal_status" obj `shouldBe` Just (Aeson.String "achieved")
+          KM.lookup "answer" obj `shouldBe` Just (Aeson.String "created unicorn.txt")
+        _ -> expectationFailure ("expected JSON Object, got " <> show decoded)
