@@ -6,13 +6,10 @@ module Hach.TUI.App
   , buildTuiSystemPrompt
   , vtyToUserKey
   , brickToUserKey
-  , dialogueToMessages
-  , transcriptToMessages
-  , transcriptItemsToMessages
   , messagesToTranscriptItems
-  , cancelledToolCallPlaceholder
   , shouldAutoScroll
   , isTranscriptAppendingEvent
+  , runAgentWorker
   , runGoalWorker
   , goalAgentConfig
   , runEnvForModel
@@ -31,7 +28,7 @@ import Hach.Env (buildSystemPromptWithAppend, formatUsd, loadProjectInstructions
 import Hach.Git (getGitDiff)
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
-import Hach.Sessions (saveRunSession)
+import Hach.Sessions (buildSessionHistory, saveRunSession)
 import Hach.Tools
 import Hach.TUI.State
 import Hach.TUI.Types
@@ -224,11 +221,11 @@ runTuiAction eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd = \case
     interruptWorker mWorker
   ActionRunAgent prompt -> do
     currentState <- get
-    triggerAgentRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) mMaxBudgetUsd prompt (tsHistory currentState)
+    triggerAgentRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) mMaxBudgetUsd prompt (tsConversation currentState)
     vScrollToEnd (viewportScroll VpTranscript)
   ActionRunGoal condition -> do
     currentState <- get
-    triggerGoalRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) mMaxBudgetUsd condition (tsHistory currentState)
+    triggerGoalRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) mMaxBudgetUsd condition (tsConversation currentState)
     vScrollToEnd (viewportScroll VpTranscript)
   ActionScrollTranscript delta ->
     vScrollBy (viewportScroll VpTranscript) delta
@@ -240,22 +237,6 @@ buildTuiSystemPrompt :: FilePath -> Maybe Text -> IO Text
 buildTuiSystemPrompt workspace mAppendPrompt = do
   mGuidelines <- loadProjectInstructions workspace
   pure (buildSystemPromptWithAppend mGuidelines mAppendPrompt)
-
--- | Convert loaded messages into transcript items for displaying past conversation.
-messagesToTranscriptItems :: [Message] -> [TranscriptItem]
-messagesToTranscriptItems msgs = concatMap msgToItems msgs
-  where
-    msgToItems = \case
-      SystemMsg s -> [TiSystem s]
-      UserMsg u   -> [TiUser u]
-      AssistantMsg mText calls ->
-        let textItems = maybe [] (\t -> [TiAssistant t]) mText
-            cardItems = [ TiToolCard (ToolCard (callId c) (functionName c) (callArgsRaw c) (Finished (ToolSuccess "")) False)
-                        | c <- calls
-                        ]
-        in textItems ++ cardItems
-      ToolMsg cid name content ->
-        [TiToolCard (ToolCard cid name "" (Finished (ToolSuccess content)) False)]
 
 -- | Run the full modern TUI application.
 runTui :: IOEnv -> Maybe Text -> Maybe Int -> Maybe Double -> Maybe Text -> Maybe Text -> Text -> Maybe (SessionInfo, [Message]) -> IO ()
@@ -274,16 +255,15 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
         [ file | Just (file, content) <- [mInstructions], not (T.null (T.strip content)) ]
   initialMode <- currentIOPermissionMode ioEnv
 
-  let loadedTranscript = case mLoadedSession of
-        Just (_, msgs) -> messagesToTranscriptItems msgs
-        Nothing        -> []
+  let loadedConversation = maybe [] snd mLoadedSession
       loadedTurns = case mLoadedSession of
         Just (info, _) -> siTurns info
         Nothing        -> 0
       baseState = (initialTuiState (ioModel ioEnv) mMaxTurns)
         { tsSkills = skills
         , tsPermissionMode = initialMode
-        , tsTranscript = loadedTranscript
+        , tsTranscript = messagesToTranscriptItems loadedConversation
+        , tsConversation = loadedConversation
         , tsCurrentTurn = loadedTurns
         , tsTheme = mTheme
         , tsProjectInstructions = listToMaybe loadedInstructions
@@ -316,126 +296,7 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
   mWorker <- atomically $ readTVar workerVar
   mapM_ cancel mWorker
 
-  let finalMsgs = transcriptItemsToMessages (tsTranscript finalState)
-  saveRunSession activeWorkspace activeSid (ioModel ioEnv) (fmap fst mLoadedSession) finalMsgs
-
--- | Collapse a run of same-role text items with one intercalate so the
--- copy is linear in the total text rather than quadratic in the run length.
-collapseAdjacent
-  :: (a -> Maybe Text)
-  -> (Text -> a)
-  -> [a]
-  -> [a]
-collapseAdjacent view wrap = go
-  where
-    go [] = []
-    go (x : xs) = case view x of
-      Just t ->
-        let (more, rest) = spanView [] xs
-        in wrap (T.intercalate "\n\n" (t : more)) : go rest
-      Nothing ->
-        x : go xs
-
-    spanView acc [] = (reverse acc, [])
-    spanView acc (y : ys) = case view y of
-      Just t  -> spanView (t : acc) ys
-      Nothing -> (reverse acc, y : ys)
-
--- | Convert dialogue history into LLM messages for multi-turn context.
--- Uses the expanded prompt for the latest turn so that skill instructions
--- reach the model while preserving clean display history in the UI.
-dialogueToMessages :: Text -> Text -> [DialogueItem] -> [Message]
-dialogueToMessages sysPrompt currentPrompt items =
-  let priorItems = dropLastUser items
-      priorMsgs  = transcriptItemsToMessages priorItems
-      -- A prior user turn with no assistant reply plus the new prompt would
-      -- otherwise emit two adjoining UserMsg values, which OpenRouter rejects.
-      msgs = SystemMsg sysPrompt : priorMsgs ++ [UserMsg currentPrompt]
-  in collapseAdjacent (\case UserMsg t -> Just t; _ -> Nothing) UserMsg msgs
-  where
-    dropLastUser [] = []
-    dropLastUser xs =
-      let rev = reverse xs
-          (notices, rest) = span (\case DiNotice _ -> True; _ -> False) rev
-      in case rest of
-           (DiUser _ : prior) -> reverse (notices ++ prior)
-           _                  -> xs
-
--- | Synonym for 'dialogueToMessages' using unified transcript terminology.
-transcriptToMessages :: Text -> Text -> [TranscriptItem] -> [Message]
-transcriptToMessages = dialogueToMessages
-
--- | Convert a chronological list of transcript items into LLM messages.
--- A run of consecutive tool cards following an assistant text item (or standing alone)
--- becomes one assistant message carrying the text plus those tool calls,
--- followed by one tool message per card keyed by call id.
--- Notices remain omitted. Consecutive assistant or user text items
--- (including those that become adjacent after notices are dropped) are
--- collapsed so the resulting message list never contains two adjoining
--- 'AssistantMsg' or 'UserMsg' values.
-transcriptItemsToMessages :: [TranscriptItem] -> [Message]
-transcriptItemsToMessages = go . collapseAdjacentTextItems . filter (not . isNotice)
-  where
-    isNotice (TiNotice _) = True
-    isNotice _            = False
-
-    collapseAdjacentTextItems =
-      collapseAdjacent (\case TiAssistant t -> Just t; _ -> Nothing) TiAssistant
-      . collapseAdjacent (\case TiUser t -> Just t; _ -> Nothing) TiUser
-
-    extractCards (TiToolCard c : rest) =
-      let (cs, remItems) = extractCards rest
-      in (c : cs, remItems)
-    extractCards remItems = ([], remItems)
-
-    go [] = []
-    go (TiAssistant text : rest) =
-      let (cards, remaining) = extractCards rest
-          mText = if T.null text then Nothing else Just text
-      in if null cards
-           then AssistantMsg mText [] : go remaining
-           else
-             let toolCalls = map cardToToolCall cards
-                 toolMsgs  = map cardToToolMsg cards
-             in AssistantMsg mText toolCalls : toolMsgs ++ go remaining
-    go (TiToolCard card : rest) =
-      let (cards, remaining) = extractCards rest
-          allCards = card : cards
-          toolCalls = map cardToToolCall allCards
-          toolMsgs  = map cardToToolMsg allCards
-      in AssistantMsg Nothing toolCalls : toolMsgs ++ go remaining
-    go (TiUser u : rest) =
-      UserMsg u : go rest
-    go (TiSystem s : rest) =
-      SystemMsg s : go rest
-    go (TiNotice _ : rest) =
-      go rest
-
--- | Convert a 'ToolCard' into a provider-facing 'ToolCall'.
-cardToToolCall :: ToolCard -> ToolCall
-cardToToolCall tc = ToolCall
-  { callId       = tcId tc
-  , functionName = tcName tc
-  , callArgsRaw  = tcArgs tc
-  }
-
--- | Convert a 'ToolCard' into a provider-facing 'ToolMsg'.
-cardToToolMsg :: ToolCard -> Message
-cardToToolMsg tc =
-  ToolMsg (tcId tc) (tcName tc) (toolCardContent (tcLifecycle tc))
-
--- | Placeholder text for unresolved tool calls (Pending, Running, Cancelled).
-cancelledToolCallPlaceholder :: Text
-cancelledToolCallPlaceholder = "Tool call was cancelled before completion."
-
--- | Extract tool message content based on card lifecycle.
-toolCardContent :: ToolLifecycle -> Text
-toolCardContent = \case
-  Finished res  -> toolResultToText res
-  Denied reason -> reason
-  Pending       -> cancelledToolCallPlaceholder
-  Running       -> cancelledToolCallPlaceholder
-  Cancelled     -> cancelledToolCallPlaceholder
+  saveRunSession activeWorkspace activeSid (ioModel ioEnv) (fmap fst mLoadedSession) (tsConversation finalState)
 
 -- | Per-run interpreter environment: the TUI's live model selection (changed
 -- via @/model@) overrides the model captured in the startup environment. The
@@ -455,9 +316,9 @@ triggerAgentRun
   -> Maybe Int
   -> Maybe Double
   -> Text
-  -> [DialogueItem]
+  -> [Message]    -- ^ conversation so far
   -> EventM Name TuiState ()
-triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd currentPrompt historyItems = do
+triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd currentPrompt conversation = do
   st <- get
   liftIO $ do
     cancelPermissionAsk gate
@@ -473,19 +334,7 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
     newWorker <- async $ do
       let runEnv = runEnvForModel selectedModel ioEnv
           agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns mMaxBudgetUsd
-          initHistory = dialogueToMessages sysPrompt finalPrompt historyItems
-      res <- trySync (foldAgentProgram (tuiAlgebra eventChan runEnv) (agentLoop agentConfig allToolDefs initHistory))
-      case res of
-        Left (ex :: SomeException) ->
-          writeBChan eventChan (EvError (T.pack (show ex)))
-        Right (AgentCompleted ans, _) ->
-          writeBChan eventChan (EvDone ans)
-        Right (AgentMaxTurnsReached n, _) ->
-          writeBChan eventChan (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
-        Right (AgentBudgetExceeded spent budget, _) ->
-          writeBChan eventChan (EvError ("Budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"))
-        Right (AgentFailed err, _) ->
-          writeBChan eventChan (EvError err)
+      runAgentWorker (tuiAlgebra eventChan runEnv) agentConfig finalPrompt conversation (writeBChan eventChan)
 
     atomically $ writeTVar workerVar (Just newWorker)
 
@@ -500,30 +349,59 @@ goalAgentConfig ioEnv sysPrompt mMaxTurns mMaxBudgetUsd = AgentConfig
   , cfgMaxBudgetUsd = mMaxBudgetUsd
   }
 
+-- | Run one agent turn on a prompt after the conversation so far, the same
+-- way a headless run does, and emit its events and resulting conversation.
+runAgentWorker
+  :: AgentAlgebra IO
+  -> AgentConfig
+  -> Text              -- ^ prompt, with any invoked skills expanded
+  -> [Message]         -- ^ conversation so far
+  -> (AgentEvent -> IO ())
+  -> IO ()
+runAgentWorker algebra agentConfig prompt conversation emitEvent = do
+  let initHistory = buildSessionHistory (workerSystemPrompt agentConfig) (Just conversation) prompt
+  res <- trySync (foldAgentProgram (reportingConversation emitEvent algebra)
+              (agentLoop agentConfig allToolDefs initHistory))
+  emitRunOutcome emitEvent res
+
 -- | Execute a goal-directed agent run using the given algebra and emit events.
 runGoalWorker
   :: AgentAlgebra IO
   -> AgentConfig
   -> Text
-  -> [DialogueItem]
+  -> [Message]         -- ^ conversation so far
   -> (AgentEvent -> IO ())
   -> IO ()
-runGoalWorker algebra agentConfig condition historyItems emitEvent = do
-  let sysPrompt = fromMaybe "" (cfgSystemPrompt agentConfig)
-      initHistory = dialogueToMessages sysPrompt condition historyItems
-  res <- trySync (foldAgentProgram algebra
+runGoalWorker algebra agentConfig condition conversation emitEvent = do
+  let initHistory = buildSessionHistory (workerSystemPrompt agentConfig) (Just conversation) condition
+  res <- trySync (foldAgentProgram (reportingConversation emitEvent algebra)
               (goalLoop agentConfig allToolDefs condition defaultBlockCap initHistory))
-  case res of
-    Left (ex :: SomeException) ->
-      emitEvent (EvError (T.pack (show ex)))
-    Right (AgentCompleted ans, _, _) ->
-      emitEvent (EvDone ans)
-    Right (AgentMaxTurnsReached n, _, _) ->
-      emitEvent (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
-    Right (AgentBudgetExceeded spent budget, _, _) ->
-      emitEvent (EvError ("Budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"))
-    Right (AgentFailed err, _, _) ->
-      emitEvent (EvError err)
+  emitRunOutcome emitEvent (fmap (\(result, history, _) -> (result, history)) res)
+
+workerSystemPrompt :: AgentConfig -> Text
+workerSystemPrompt = fromMaybe "" . cfgSystemPrompt
+
+-- | Report the conversation before every model call, so a run cancelled
+-- part-way still leaves the TUI with the history the model last saw.
+reportingConversation :: (AgentEvent -> IO ()) -> AgentAlgebra IO -> AgentAlgebra IO
+reportingConversation emitEvent algebra = algebra
+  { interpPrompt = \msgs tools -> do
+      emitEvent (EvConversationUpdated msgs)
+      interpPrompt algebra msgs tools
+  }
+
+-- | Hand a finished run's conversation back to the TUI, then report how it ended.
+emitRunOutcome :: (AgentEvent -> IO ()) -> Either SomeException (AgentResult, [Message]) -> IO ()
+emitRunOutcome emitEvent = \case
+  Left ex -> emitEvent (EvError (T.pack (show ex)))
+  Right (result, history) -> do
+    emitEvent (EvConversationUpdated history)
+    emitEvent $ case result of
+      AgentCompleted ans -> EvDone ans
+      AgentMaxTurnsReached n -> EvError ("Maximum turns reached (" <> T.pack (show n) <> ")")
+      AgentBudgetExceeded spent budget ->
+        EvError ("Budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")")
+      AgentFailed err -> EvError err
 
 -- | Trigger background goal-directed agent execution.
 triggerGoalRun
@@ -536,9 +414,9 @@ triggerGoalRun
   -> Maybe Int
   -> Maybe Double
   -> Text          -- ^ goal condition (also used as the first-turn directive)
-  -> [DialogueItem]
+  -> [Message]     -- ^ conversation so far
   -> EventM Name TuiState ()
-triggerGoalRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd condition historyItems = liftIO $ do
+triggerGoalRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd condition conversation = liftIO $ do
   cancelPermissionAsk gate
   mOldWorker <- atomically $ do
     w <- readTVar workerVar
@@ -549,7 +427,7 @@ triggerGoalRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns 
   newWorker <- async $ do
     let runEnv = runEnvForModel selectedModel ioEnv
         agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns mMaxBudgetUsd
-    runGoalWorker (tuiAlgebra eventChan runEnv) agentConfig condition historyItems (writeBChan eventChan)
+    runGoalWorker (tuiAlgebra eventChan runEnv) agentConfig condition conversation (writeBChan eventChan)
 
   atomically $ writeTVar workerVar (Just newWorker)
 

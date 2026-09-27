@@ -10,6 +10,8 @@ module Hach.TUI.State
   , toggleToolExpanded
   , shouldAutoScroll
   , isTranscriptAppendingEvent
+  , messagesToTranscriptItems
+  , compactConversation
   ) where
 
 import Hach.Sessions (estimateCostUsd)
@@ -21,10 +23,11 @@ import Hach.Types
   , GoalState(..)
   , GoalStatus(..)
   , GoalVerdict(..)
+  , Message(..)
   , SessionTokenUsage(..)
   , TokenUsage(..)
   , ToolCall(..)
-  , ToolResult
+  , ToolResult(..)
   , addUsageToSession
   , contextSaturationPercent
   , goalArgIsClear
@@ -39,6 +42,43 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe)
 import qualified Data.Text as T
 import Text.Printf (printf)
+
+-- | Draw a conversation as Transcript items. Each assistant tool call becomes
+-- one Tool Card carrying the result from the tool messages that answer it;
+-- system messages are not part of the visible dialogue.
+messagesToTranscriptItems :: [Message] -> [TranscriptItem]
+messagesToTranscriptItems = \case
+  [] -> []
+  AssistantMsg mText calls : rest ->
+    let (results, rest') = span isToolMsg rest
+        resultFor c = listToMaybe [ out | ToolMsg cid _ out <- results, cid == callId c ]
+        card c = TiToolCard ToolCard
+          { tcId        = callId c
+          , tcName      = functionName c
+          , tcArgs      = callArgsRaw c
+          , tcLifecycle = maybe Cancelled (Finished . ToolSuccess) (resultFor c)
+          , tcExpanded  = False
+          }
+    in [ TiAssistant t | Just t <- [mText], not (T.null (T.strip t)) ]
+         ++ map card calls
+         ++ messagesToTranscriptItems rest'
+  UserMsg u : rest -> TiUser u : messagesToTranscriptItems rest
+  _ : rest -> messagesToTranscriptItems rest
+  where
+    isToolMsg ToolMsg{} = True
+    isToolMsg _         = False
+
+-- | Keep the system prompt and the last two user turns of a conversation,
+-- or 'Nothing' when there are no older turns to drop. Cutting at a user
+-- message keeps every tool call next to its result.
+compactConversation :: [Message] -> Maybe [Message]
+compactConversation msgs
+  | length turnStarts <= keptTurns = Nothing
+  | otherwise = Just (system ++ drop (turnStarts !! (length turnStarts - keptTurns)) dialogue)
+  where
+    keptTurns = 2
+    (system, dialogue) = span (\case SystemMsg _ -> True; _ -> False) msgs
+    turnStarts = [ i | (i, UserMsg _) <- zip [0 :: Int ..] dialogue ]
 
 -- | Apply the result of the IO-side project initialization action.
 applyProjectInitializationResult :: ProjectInitializationResult -> TuiState -> TuiState
@@ -159,6 +199,7 @@ handleSubmitPrompt rawPrompt state
           actions = if busy then [ActionCancelAgent] else []
           newStatus = if busy then StatusIdle else tsStatus state
       in ( state { tsTranscript         = []
+                 , tsConversation       = []
                  , tsTranscriptScroll   = 0
                  , tsTranscriptManualScroll = False
                  , tsSelectedToolIndex  = 0
@@ -212,10 +253,20 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/compact" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = if length (tsTranscript state) > 4
-            then DiNotice "Prior conversation turns compacted for context efficiency." : drop (length (tsTranscript state) - 4) (tsTranscript state)
-            else tsTranscript state ++ [DiNotice "Conversation history compacted."]
+          -- The Transcript is redrawn from the compacted conversation so the
+          -- screen shows exactly what the model will see next turn. A running
+          -- turn would overwrite the compacted conversation when it reports.
+          (newTranscript, newConversation)
+            | isBusy (tsStatus state) =
+                (tsTranscript state ++ [DiNotice "Cannot compact while a turn is running."], tsConversation state)
+            | Just compacted <- compactConversation (tsConversation state) =
+                ( DiNotice "Prior conversation turns compacted for context efficiency."
+                    : messagesToTranscriptItems compacted
+                , compacted )
+            | otherwise =
+                (tsTranscript state ++ [DiNotice "Conversation history compacted."], tsConversation state)
       in ( state { tsTranscript         = newTranscript
+                 , tsConversation       = newConversation
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -936,6 +987,8 @@ handleAgentEvent event state@TuiState{..}
     state { tsTranscript = tsTranscript ++ [DiNotice ("Session saved to " <> path)] }
   EvNotificationSent msg ->
     state { tsTranscript = tsTranscript ++ [DiNotice ("Notification: " <> msg)] }
+  EvConversationUpdated msgs ->
+    state { tsConversation = msgs }
 
 -- | Transition the first 'Pending' card to 'Running', replacing its arguments,
 -- and return the card's 0-based index among tool cards in the transcript.

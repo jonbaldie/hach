@@ -21,7 +21,6 @@ import Hach.Settings
 import Hach.Skills
 import Hach.Tasks
 import Hach.Tools
-import Hach.TUI.App (dialogueToMessages)
 import Hach.TUI.Types
 import Hach.Types
 
@@ -414,41 +413,6 @@ spec = do
       isValidWorktreeName " -b" `shouldBe` False
       isValidWorktreeName "--force" `shouldBe` False
       isValidWorktreeName "feat-x" `shouldBe` True
-
-  describe "CGPT campaign: dialogueToMessages role alternation" $ do
-    it "never emits two consecutive AssistantMsg" $ vigorous $
-      forAll arbitrary $ \(items :: [TranscriptItem]) ->
-      forAll (listOf1 (elements ['a'..'z'])) $ \sys ->
-      forAll (listOf1 (elements ['a'..'z'])) $ \prompt ->
-        let msgs = dialogueToMessages (T.pack sys) (T.pack prompt) items
-            pairs = zip msgs (drop 1 msgs)
-            isAsst AssistantMsg{} = True
-            isAsst _              = False
-            bad = [(x, y) | (x, y) <- pairs, isAsst x, isAsst y]
-        in collect (length [() | AssistantMsg{} <- msgs]) $
-             null bad
-
-    it "always starts with SystemMsg and ends with a UserMsg carrying the current prompt" $ vigorous $
-      forAll arbitrary $ \(items :: [TranscriptItem]) ->
-        let msgs = dialogueToMessages "sys" "follow-up" items
-        in case msgs of
-             (SystemMsg "sys" : rest@(_:_)) ->
-               case last rest of
-                 -- A leftover prior user turn is merged into the new prompt
-                 -- so the suffix is always the current prompt text.
-                 UserMsg u -> "follow-up" `T.isSuffixOf` u
-                 _         -> False
-             _ -> False
-
-    it "reproducer: consecutive DiAssistant items collapse instead of adjoining" $ do
-      let items = [DiUser "u1", DiAssistant "a1", DiAssistant "a2", DiUser "u2"]
-          msgs  = dialogueToMessages "sys" "u2" items
-      msgs `shouldBe`
-        [ SystemMsg "sys"
-        , UserMsg "u1"
-        , AssistantMsg (Just "a1\n\na2") []
-        , UserMsg "u2"
-        ]
 
   describe "CGPT campaign: CLI parser invariants" $ do
     it "never crashes on arbitrary argument lists" $ vigorous $

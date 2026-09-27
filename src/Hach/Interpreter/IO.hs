@@ -321,6 +321,8 @@ renderEventIO verbose = \case
     notice ("\n[Notification] " <> T.unpack msg)
 
   EvPermissionModeChanged _ -> pure ()
+
+  EvConversationUpdated _ -> pure ()
   where
     -- Quiet runs ('--print' / '-p') reserve stdout for the final answer,
     -- so notices move to stderr instead of disappearing.

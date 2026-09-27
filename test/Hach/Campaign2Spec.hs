@@ -22,8 +22,6 @@ import Hach.Sessions
 import Hach.Skills
 import Hach.Subagents
 import Hach.Tasks
-import Hach.TUI.App (dialogueToMessages)
-import Hach.TUI.Types
 import Hach.Types
 
 import qualified Data.Aeson as Aeson
@@ -53,41 +51,6 @@ vigorous = withNumTests 2000
 
 genSeg :: Gen String
 genSeg = listOf1 (elements ['a'..'z'])
-
-genTxt :: Gen Text
-genTxt = T.pack <$> listOf (elements ['a'..'z'])
-
-genLifecycle :: Gen ToolLifecycle
-genLifecycle = oneof
-  [ pure Pending
-  , pure Running
-  , Finished <$> oneof
-      [ ToolSuccess <$> genTxt
-      , ToolError <$> (T.pack <$> listOf1 (elements ['a'..'z']))
-      ]
-  , Denied <$> (T.pack <$> listOf1 (elements ['a'..'z']))
-  , pure Cancelled
-  ]
-
-genToolCard :: Gen ToolCard
-genToolCard = ToolCard
-  <$> (T.pack <$> listOf1 (elements ['a'..'z']))
-  <*> (T.pack <$> listOf1 (elements ['a'..'z']))
-  <*> genTxt
-  <*> genLifecycle
-  <*> arbitrary
-
-genTranscriptItem :: Gen TranscriptItem
-genTranscriptItem = frequency
-  [ (4, TiUser      <$> genTxt)
-  , (3, TiAssistant <$> genTxt)
-  , (1, TiSystem    <$> genTxt)
-  , (1, TiNotice    <$> genTxt)
-  , (2, TiToolCard  <$> genToolCard)
-  ]
-
-genTranscript :: Gen [TranscriptItem]
-genTranscript = listOf genTranscriptItem
 
 -- MCP name parts must be non-empty, must not contain the '__' delimiter,
 -- and must not start or end with '_' (either edge fuses with '__' into '___').
@@ -170,27 +133,6 @@ spec = do
       taskId created `shouldNotBe` "task-2"
       getTask store1 "task-2" `shouldBe` Just held
       fmap taskTitle (getTask store1 (taskId created)) `shouldBe` Just "fresh"
-
-  describe "CGPT wave-2: dialogueToMessages user-role alternation" $ do
-    it "never emits two consecutive UserMsg" $ vigorous $
-      forAll genTranscript $ \items ->
-        let msgs = dialogueToMessages "sys" "follow-up" items
-            pairs = zip msgs (drop 1 msgs)
-            isUser UserMsg{} = True
-            isUser _         = False
-            bad = [(x, y) | (x, y) <- pairs, isUser x, isUser y]
-        in collect (length [() | UserMsg{} <- msgs]) $
-             null bad
-
-    it "reproducer: adjacent DiUser items collapse instead of adjoining" $ do
-      let items = [DiUser "u1", DiUser "u2", DiAssistant "a1"]
-          msgs  = dialogueToMessages "sys" "next" items
-      msgs `shouldBe`
-        [ SystemMsg "sys"
-        , UserMsg "u1\n\nu2"
-        , AssistantMsg (Just "a1") []
-        , UserMsg "next"
-        ]
 
   describe "CGPT wave-2: collapseLogicalPath" $ do
     it "collapsing a path twice is identity" $ vigorous $

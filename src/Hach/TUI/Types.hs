@@ -43,7 +43,7 @@ module Hach.TUI.Types
   ) where
 
 import Hach.Skills (SkillCatalog)
-import Hach.Types (AgentEvent, GoalState, PermissionMode (..), SessionTokenUsage, TokenUsage, ToolResult, initialSessionTokenUsage)
+import Hach.Types (AgentEvent, GoalState, Message, PermissionMode (..), SessionTokenUsage, TokenUsage, ToolResult, initialSessionTokenUsage)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 
@@ -149,6 +149,8 @@ data TuiState = TuiState
   , tsFocus              :: !FocusArea
   , tsInputBuffer        :: !Text
   , tsTranscript         :: ![TranscriptItem]
+  , tsConversation       :: ![Message]
+    -- ^ The model's conversation. The Transcript is only a view of it.
   , tsTranscriptScroll   :: !Int
   , tsTranscriptManualScroll :: !Bool
   , tsSelectedToolIndex  :: !Int
@@ -194,6 +196,7 @@ initialTuiState model maxTurns = TuiState
   , tsFocus              = FocusInput
   , tsInputBuffer        = ""
   , tsTranscript         = []
+  , tsConversation       = []
   , tsTranscriptScroll   = 0
   , tsTranscriptManualScroll = False
   , tsSelectedToolIndex  = 0
