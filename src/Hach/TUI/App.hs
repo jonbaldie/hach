@@ -27,7 +27,7 @@ module Hach.TUI.App
 
 import Hach.Clipboard (copyToClipboard)
 import Hach.Core
-import Hach.Env (buildSystemPromptWithAppend, formatUsd, loadProjectInstructions, loadProjectInstructionsFile)
+import Hach.Env (OutputFormat(..), RunOutcome(..), buildSystemPromptWithAppend, loadProjectInstructions, loadProjectInstructionsFile, renderRunOutcome, runOutcome)
 import Hach.Git (getGitDiff)
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
@@ -475,17 +475,9 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
           agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns mMaxBudgetUsd
           initHistory = dialogueToMessages sysPrompt finalPrompt historyItems
       res <- trySync (foldAgentProgram (tuiAlgebra eventChan runEnv) (agentLoop agentConfig allToolDefs initHistory))
-      case res of
-        Left (ex :: SomeException) ->
-          writeBChan eventChan (EvError (T.pack (show ex)))
-        Right (AgentCompleted ans, _) ->
-          writeBChan eventChan (EvDone ans)
-        Right (AgentMaxTurnsReached n, _) ->
-          writeBChan eventChan (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
-        Right (AgentBudgetExceeded spent budget, _) ->
-          writeBChan eventChan (EvError ("Budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"))
-        Right (AgentFailed err, _) ->
-          writeBChan eventChan (EvError err)
+      writeBChan eventChan $ case res of
+        Left (ex :: SomeException) -> EvError (T.pack (show ex))
+        Right (result, _)          -> runOutcomeEvent (runOutcome result Nothing)
 
     atomically $ writeTVar workerVar (Just newWorker)
 
@@ -513,17 +505,15 @@ runGoalWorker algebra agentConfig condition historyItems emitEvent = do
       initHistory = dialogueToMessages sysPrompt condition historyItems
   res <- trySync (foldAgentProgram algebra
               (goalLoop agentConfig allToolDefs condition defaultBlockCap initHistory))
-  case res of
-    Left (ex :: SomeException) ->
-      emitEvent (EvError (T.pack (show ex)))
-    Right (AgentCompleted ans, _, _) ->
-      emitEvent (EvDone ans)
-    Right (AgentMaxTurnsReached n, _, _) ->
-      emitEvent (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
-    Right (AgentBudgetExceeded spent budget, _, _) ->
-      emitEvent (EvError ("Budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"))
-    Right (AgentFailed err, _, _) ->
-      emitEvent (EvError err)
+  emitEvent $ case res of
+    Left (ex :: SomeException) -> EvError (T.pack (show ex))
+    Right (result, _, gs)      -> runOutcomeEvent (runOutcome result (Just gs))
+
+-- | The TUI's terminal event for a finished run: only a successful run is
+-- done; stopped, failed and unmet-goal runs end in an error state.
+runOutcomeEvent :: RunOutcome -> AgentEvent
+runOutcomeEvent (RunSucceeded ans) = EvDone ans
+runOutcomeEvent outcome            = EvError (renderRunOutcome OutputText outcome)
 
 -- | Trigger background goal-directed agent execution.
 triggerGoalRun

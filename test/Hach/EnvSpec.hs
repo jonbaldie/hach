@@ -607,17 +607,28 @@ spec = do
       resolveHeadlessExitCode (AgentFailed "err") Nothing `shouldBe` ExitFailure 1
 
   describe "headless goal outcome and print formatting (Issue #223)" $ do
-    it "renders Task completed. for GoalAchieved" $ do
+    it "classifies an achieved goal as success" $ do
       let gs = (initialGoalState "unicorn.txt exists") { gsStatus = GoalAchieved }
-      formatHeadlessGoalOutcome gs (AgentCompleted "done") `shouldBe` "Task completed."
+      runOutcome (AgentCompleted "done") (Just gs) `shouldBe` RunSucceeded "done"
 
-    it "renders Goal not met: <reason> instead of Task completed for unachieved goal" $ do
+    it "classifies an unachieved goal as not met with the evaluator's reason (Issue #232)" $ do
       let gs = (initialGoalState "unicorn.txt exists")
                  { gsStatus = GoalActive
                  , gsLastReason = Just "unicorn.txt is missing"
                  }
-      formatHeadlessGoalOutcome gs (AgentCompleted "done")
+      runOutcome (AgentCompleted "done") (Just gs)
+        `shouldBe` RunGoalNotMet "unicorn.txt is missing"
+      renderRunOutcome OutputText (runOutcome (AgentCompleted "done") (Just gs))
         `shouldBe` "Goal not met: unicorn.txt is missing"
+
+    it "classifies turn and budget limits as stopped, with or without a goal (Issue #232)" $ do
+      let gs = (initialGoalState "unicorn.txt exists") { gsStatus = GoalActive }
+      runOutcome (AgentMaxTurnsReached 3) Nothing `shouldBe` RunStopped (StopMaxTurns 3)
+      runOutcome (AgentMaxTurnsReached 3) (Just gs) `shouldBe` RunStopped (StopMaxTurns 3)
+      runOutcome (AgentBudgetExceeded 0.6 0.5) (Just gs) `shouldBe` RunStopped (StopBudget 0.6 0.5)
+
+    it "classifies a successful non-goal run as success" $ do
+      runOutcome (AgentCompleted "4") Nothing `shouldBe` RunSucceeded "4"
 
     it "formats --print text as Goal not met for unachieved goal" $ do
       let gs = (initialGoalState "unicorn.txt exists")
