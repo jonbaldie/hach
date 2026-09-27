@@ -1609,7 +1609,7 @@ spec = do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
         cfgMaxTurns (goalAgentConfig mockIOEnv "sys" (Just 5) Nothing) `shouldBe` Just 5
 
-      it "does not terminate with 'Maximum turns reached (20)' on turn 20 when default turn limit is infinity" $ do
+      it "does not terminate with the maximum-turn stop on turn 20 when default turn limit is infinity" $ do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
         eventsRef <- newIORef []
         let promptAction msgs _ = do
@@ -1629,11 +1629,11 @@ spec = do
             config = goalAgentConfig mockIOEnv "sys" Nothing Nothing
         runGoalWorker mockAlgebra config "All tests pass" [] (\ev -> modifyIORef' eventsRef (ev :))
         events <- readIORef eventsRef
-        events `shouldNotContain` [EvError "Maximum turns reached (20)"]
+        events `shouldNotContain` [EvError "Agent reached maximum turn limit of 20."]
         events `shouldContain` [EvDone "All tests pass."]
 
     describe "runGoalWorker terminal event handling (Issue #49)" $ do
-      it "emits EvDone instead of EvError when goal is blocked (GoalActive)" $ do
+      it "ends a blocked goal (GoalActive) in an error carrying the evaluator's reason (Issue #232)" $ do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
         eventsRef <- newIORef []
         let promptAction _ _ = pure $ Right (AssistantResponse (Just "Completed progress.") [] Nothing)
@@ -1648,9 +1648,10 @@ spec = do
         runGoalWorker mockAlgebra config "reach condition" [] (\ev -> modifyIORef' eventsRef (ev :))
         events <- readIORef eventsRef
         events `shouldNotContain` [EvError "Completed progress."]
-        events `shouldContain` [EvDone "Completed progress."]
+        -- Events are prepended, so the head is the worker's terminal event.
+        take 1 events `shouldBe` [EvError "Goal not met: Need more work"]
 
-      it "emits EvDone instead of EvError when goal is impossible (GoalFailed)" $ do
+      it "ends an impossible goal (GoalFailed) in an error carrying the evaluator's reason (Issue #232)" $ do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
         eventsRef <- newIORef []
         let promptAction _ _ = pure $ Right (AssistantResponse (Just "Goal cannot be met.") [] Nothing)
@@ -1665,7 +1666,32 @@ spec = do
         runGoalWorker mockAlgebra config "impossible condition" [] (\ev -> modifyIORef' eventsRef (ev :))
         events <- readIORef eventsRef
         events `shouldNotContain` [EvError "Goal cannot be met."]
-        events `shouldContain` [EvDone "Goal cannot be met."]
+        -- Events are prepended, so the head is the worker's terminal event.
+        take 1 events `shouldBe` [EvError "Goal not met: Reason impossible"]
+
+      it "ends an achieved goal with EvDone (Issue #232)" $ do
+        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+        eventsRef <- newIORef []
+        let promptAction _ _ = pure $ Right (AssistantResponse (Just "Created it.") [] Nothing)
+            evalAction _ _ = pure (GoalEvaluation GoalMet "It exists")
+            mockAlgebra = (ioAlgebra mockIOEnv)
+              { interpPrompt   = promptAction
+              , interpTool     = \_ -> pure (ToolSuccess "ok")
+              , interpLog      = \ev -> modifyIORef' eventsRef (ev :)
+              , interpEvaluate = evalAction
+              }
+            config = goalAgentConfig mockIOEnv "sys" (Just 5) Nothing
+        runGoalWorker mockAlgebra config "file exists" [] (\ev -> modifyIORef' eventsRef (ev :))
+        events <- readIORef eventsRef
+        take 1 events `shouldBe` [EvDone "Created it."]
+        [e | e@(EvError _) <- events] `shouldBe` []
+
+      it "reports an unmet goal as an error state in the reducer, keeping the answer (Issue #232)" $ do
+        let st0 = baseState
+            (st1, _) = updateTui (EvHarness (EvLLMResponse (Just "Goal cannot be met.") [] Nothing)) st0
+            (st2, _) = updateTui (EvHarness (EvError "Goal not met: Reason impossible")) st1
+        tsStatus st2 `shouldBe` StatusError "Goal not met: Reason impossible"
+        tsTranscript st2 `shouldContain` [TiAssistant "Goal cannot be met."]
 
 
     describe "Built-in Slash Commands" $ do

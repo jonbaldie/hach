@@ -19,10 +19,13 @@ module Hach.Env
   , startupIntent
   , headlessEmitsBanners
   , headlessVerbose
+  , RunOutcome(..)
+  , StopReason(..)
+  , runOutcome
+  , renderRunOutcome
   , formatPrintResult
   , isHeadlessGoalSuccess
   , resolveHeadlessExitCode
-  , formatHeadlessGoalOutcome
   , formatPrintGoalResult
   , formatUsd
   , resolvePermissionMode
@@ -60,6 +63,7 @@ import Control.Applicative ((<|>))
 import Control.Exception (try, SomeException)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (Pair)
 import Data.Bifunctor (first)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as BS
@@ -251,134 +255,109 @@ headlessEmitsBanners CliOptions{..} = not optPrint
 headlessVerbose :: CliOptions -> Bool
 headlessVerbose CliOptions{..} = not optPrint
 
--- | Format the agent result for '--print' / '-p' stdout.
-formatPrintResult :: OutputFormat -> AgentResult -> Text
-formatPrintResult fmt result = case fmt of
-  OutputText -> case result of
-    AgentCompleted ans -> ans
-    AgentMaxTurnsReached turns ->
+-- | Why a run stopped before finishing its task.
+data StopReason
+  = StopMaxTurns !Int
+  | StopBudget !Double !Double  -- ^ spent, budget
+  deriving (Show, Eq)
+
+-- | What a finished run means for the user. Every front-end (headless,
+-- @--print@ and the TUI) classifies a run through 'runOutcome', so they agree
+-- on whether it succeeded.
+data RunOutcome
+  = RunSucceeded !Text   -- ^ the final answer
+  | RunStopped !StopReason
+  | RunFailed !Text      -- ^ the agent's error
+  | RunGoalNotMet !Text  -- ^ why the goal is still unmet
+  deriving (Show, Eq)
+
+-- | Classify a finished run from its agent result and, for goal runs, the
+-- final goal state. A goal run succeeds only when the goal was achieved.
+runOutcome :: AgentResult -> Maybe GoalState -> RunOutcome
+runOutcome result mGs = case result of
+  AgentCompleted ans -> case mGs of
+    Just gs | gsStatus gs /= GoalAchieved -> RunGoalNotMet (goalUnmetReason gs)
+    _                                     -> RunSucceeded ans
+  AgentMaxTurnsReached turns       -> RunStopped (StopMaxTurns turns)
+  AgentBudgetExceeded spent budget -> RunStopped (StopBudget spent budget)
+  AgentFailed err                  -> RunFailed err
+
+-- | The evaluator's last reason for an unmet goal.
+goalUnmetReason :: GoalState -> Text
+goalUnmetReason gs = case gsLastReason gs of
+  Just r | not (T.null (T.strip r)) -> r
+  _                                 -> "condition not satisfied"
+
+-- | Render a run outcome for stdout or the TUI.
+renderRunOutcome :: OutputFormat -> RunOutcome -> Text
+renderRunOutcome fmt outcome = case fmt of
+  OutputText -> case outcome of
+    RunSucceeded ans -> ans
+    RunStopped (StopMaxTurns turns) ->
       T.pack ("Agent reached maximum turn limit of " <> show turns <> ".")
-    AgentBudgetExceeded spent budget ->
+    RunStopped (StopBudget spent budget) ->
       "Agent reached the spending budget of "
         <> formatUsd budget
         <> " (spent "
         <> formatUsd spent
         <> ")."
-    AgentFailed err -> err
+    RunFailed err -> err
+    RunGoalNotMet reason -> "Goal not met: " <> reason
   OutputJson ->
-    TE.decodeUtf8 . LBS.toStrict . Aeson.encode $ case result of
-      AgentCompleted ans ->
-        Aeson.object ["answer" .= ans]
-      AgentMaxTurnsReached turns ->
-        Aeson.object
-          [ "error" .= ("max_turns" :: Text)
-          , "turns" .= turns
-          ]
-      AgentBudgetExceeded spent budget ->
-        Aeson.object
-          [ "error" .= ("max_budget" :: Text)
-          , "spent" .= spent
-          , "budget" .= budget
-          ]
-      AgentFailed err ->
-        Aeson.object ["error" .= err]
+    TE.decodeUtf8 . LBS.toStrict . Aeson.encode $ Aeson.object (runOutcomeFields outcome)
+
+-- | JSON fields describing a run outcome.
+runOutcomeFields :: RunOutcome -> [Pair]
+runOutcomeFields outcome = case outcome of
+  RunSucceeded ans -> ["answer" .= ans]
+  RunStopped (StopMaxTurns turns) ->
+    [ "error" .= ("max_turns" :: Text)
+    , "turns" .= turns
+    ]
+  RunStopped (StopBudget spent budget) ->
+    [ "error" .= ("max_budget" :: Text)
+    , "spent" .= spent
+    , "budget" .= budget
+    ]
+  RunFailed err -> ["error" .= err]
+  RunGoalNotMet _ -> ["error" .= renderRunOutcome OutputText outcome]
+
+-- | Format the agent result for '--print' / '-p' stdout.
+formatPrintResult :: OutputFormat -> AgentResult -> Text
+formatPrintResult fmt result = renderRunOutcome fmt (runOutcome result Nothing)
 
 -- | Check if a headless goal execution completed successfully (goal was achieved and agent did not fail).
 isHeadlessGoalSuccess :: AgentResult -> GoalState -> Bool
-isHeadlessGoalSuccess result gs =
-  gsStatus gs == GoalAchieved && case result of
-    AgentCompleted _ -> True
-    _                -> False
+isHeadlessGoalSuccess result gs = case runOutcome result (Just gs) of
+  RunSucceeded _ -> True
+  _              -> False
 
 -- | Determine the process exit code for a headless run, taking goal state into account if present.
 resolveHeadlessExitCode :: AgentResult -> Maybe GoalState -> ExitCode
-resolveHeadlessExitCode result mGs = case mGs of
-  Just gs ->
-    if isHeadlessGoalSuccess result gs
-      then ExitSuccess
-      else ExitFailure 1
-  Nothing ->
-    case result of
-      AgentCompleted _ -> ExitSuccess
-      _                -> ExitFailure 1
+resolveHeadlessExitCode result mGs = case runOutcome result mGs of
+  RunSucceeded _ -> ExitSuccess
+  _              -> ExitFailure 1
 
--- | Formats the final outcome message for a headless goal run.
-formatHeadlessGoalOutcome :: GoalState -> AgentResult -> Text
-formatHeadlessGoalOutcome gs result =
-  case gsStatus gs of
-    GoalAchieved -> "Task completed."
-    _            ->
-      let reason = case gsLastReason gs of
-            Just r | not (T.null (T.strip r)) -> r
-            _ -> case result of
-              AgentFailed err -> err
-              AgentMaxTurnsReached n -> "maximum turn limit reached (" <> T.pack (show n) <> ")"
-              AgentBudgetExceeded spent budget ->
-                "spending budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"
-              _ -> "condition not satisfied"
-      in "Goal not met: " <> reason
-
--- | Format the goal result for '--print' / '-p' stdout.
+-- | Format the goal result for '--print' / '-p' stdout. JSON output adds the
+-- goal status and, for an unmet goal, the evaluator's reason and any answer.
 formatPrintGoalResult :: OutputFormat -> GoalState -> AgentResult -> Text
 formatPrintGoalResult fmt gs result = case fmt of
-  OutputText ->
-    case gsStatus gs of
-      GoalAchieved -> case result of
-        AgentCompleted ans -> ans
-        _                  -> formatPrintResult OutputText result
-      _ ->
-        formatHeadlessGoalOutcome gs result
+  OutputText -> renderRunOutcome OutputText outcome
   OutputJson ->
-    TE.decodeUtf8 . LBS.toStrict . Aeson.encode $
-      let statusText = goalStatusName (gsStatus gs)
-          baseFields =
-            [ "status"      .= statusText
-            , "goal_status" .= statusText
-            ]
-      in case gsStatus gs of
-        GoalAchieved -> case result of
-          AgentCompleted ans ->
-            Aeson.object (("answer" .= ans) : baseFields)
-          AgentMaxTurnsReached turns ->
-            Aeson.object
-              ( [ "error" .= ("max_turns" :: Text)
-                , "turns" .= turns
-                ]
-                ++ baseFields
-              )
-          AgentBudgetExceeded spent budget ->
-            Aeson.object
-              ( [ "error" .= ("max_budget" :: Text)
-                , "spent" .= spent
-                , "budget" .= budget
-                ]
-                ++ baseFields
-              )
-          AgentFailed err ->
-            Aeson.object (("error" .= err) : baseFields)
-        _ ->
-          let outcome = formatHeadlessGoalOutcome gs result
-              errReason = case gsLastReason gs of
-                Just r | not (T.null (T.strip r)) -> r
-                _ -> case result of
-                  AgentFailed err -> err
-                  AgentMaxTurnsReached n -> "maximum turn limit reached (" <> T.pack (show n) <> ")"
-                  AgentBudgetExceeded spent budget ->
-                    "spending budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"
-                  _ -> "condition not satisfied"
-              extraFields = case result of
-                AgentCompleted ans | not (T.null ans) -> ["answer" .= ans]
-                AgentMaxTurnsReached n -> ["turns" .= n]
-                AgentBudgetExceeded spent budget -> ["spent" .= spent, "budget" .= budget]
-                AgentFailed err -> ["failure_error" .= err]
-                _ -> []
-          in Aeson.object
-            ( [ "error"   .= outcome
-              , "reason"  .= errReason
-              ]
-              ++ baseFields
-              ++ extraFields
-            )
+    TE.decodeUtf8 . LBS.toStrict . Aeson.encode . Aeson.object $
+      runOutcomeFields outcome ++ unmetFields ++
+        [ "status"      .= statusText
+        , "goal_status" .= statusText
+        ]
+  where
+    outcome = runOutcome result (Just gs)
+    statusText = goalStatusName (gsStatus gs)
+    unmetFields
+      | gsStatus gs == GoalAchieved = []
+      | otherwise =
+          ("reason" .= goalUnmetReason gs) : case result of
+            AgentCompleted ans | not (T.null ans) -> ["answer" .= ans]
+            _                                     -> []
 
 -- | One documented command-line option. 'cliFlags' sits beside
 -- 'parseCliArgs' so the help text and the parser are kept in step; the test
