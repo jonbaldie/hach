@@ -27,7 +27,7 @@ module Hach.TUI.App
 
 import Hach.Clipboard (copyToClipboard)
 import Hach.Core
-import Hach.Env (buildSystemPromptWithAppend, formatUsd, loadProjectInstructions, loadProjectInstructionsFile)
+import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions, loadProjectInstructionsFile, renderRunOutcome)
 import Hach.Git (getGitDiff)
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
@@ -478,14 +478,8 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
       case res of
         Left (ex :: SomeException) ->
           writeBChan eventChan (EvError (T.pack (show ex)))
-        Right (AgentCompleted ans, _) ->
-          writeBChan eventChan (EvDone ans)
-        Right (AgentMaxTurnsReached n, _) ->
-          writeBChan eventChan (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
-        Right (AgentBudgetExceeded spent budget, _) ->
-          writeBChan eventChan (EvError ("Budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"))
-        Right (AgentFailed err, _) ->
-          writeBChan eventChan (EvError err)
+        Right (result, _) ->
+          writeBChan eventChan (runOutcomeEvent (runOutcome result Nothing))
 
     atomically $ writeTVar workerVar (Just newWorker)
 
@@ -516,14 +510,15 @@ runGoalWorker algebra agentConfig condition historyItems emitEvent = do
   case res of
     Left (ex :: SomeException) ->
       emitEvent (EvError (T.pack (show ex)))
-    Right (AgentCompleted ans, _, _) ->
-      emitEvent (EvDone ans)
-    Right (AgentMaxTurnsReached n, _, _) ->
-      emitEvent (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
-    Right (AgentBudgetExceeded spent budget, _, _) ->
-      emitEvent (EvError ("Budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"))
-    Right (AgentFailed err, _, _) ->
-      emitEvent (EvError err)
+    Right (result, _, goalState) ->
+      emitEvent (runOutcomeEvent (runOutcome result (Just goalState)))
+
+-- | The terminal TUI event for a finished run: only success ends the run as
+-- done; a stopped or failed run, including an unmet goal, ends in error.
+runOutcomeEvent :: RunOutcome -> AgentEvent
+runOutcomeEvent outcome = case outcome of
+  RunSucceeded ans -> EvDone ans
+  _                -> EvError (renderRunOutcome outcome)
 
 -- | Trigger background goal-directed agent execution.
 triggerGoalRun

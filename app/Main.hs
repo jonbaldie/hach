@@ -196,21 +196,8 @@ runHach = do
                 if optPrint
                   then TIO.putStrLn (formatPrintGoalResult optOutputFormat goalState result)
                   else do
-                    let outcome = formatHeadlessGoalOutcome goalState result
-                    case result of
-                      AgentCompleted _ans -> do
-                        putStrLn ("\n" <> T.unpack outcome)
-                        putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
-                        printGoalSummary goalState
-                      AgentMaxTurnsReached turns -> do
-                        putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
-                        printGoalSummary goalState
-                      AgentBudgetExceeded spent budget -> do
-                        putStrLn ("\n" <> T.unpack (formatPrintResult OutputText (AgentBudgetExceeded spent budget)))
-                        printGoalSummary goalState
-                      AgentFailed err -> do
-                        putStrLn ("\nAgent failed with error: " <> T.unpack err)
-                        printGoalSummary goalState
+                    reportHeadlessOutcome "Task completed." finalHistory (runOutcome result (Just goalState))
+                    printGoalSummary goalState
 
                 exitOnHeadlessFailureWith (Just goalState) result
 
@@ -231,18 +218,21 @@ runHach = do
 
           if optPrint
             then TIO.putStrLn (formatPrintResult optOutputFormat result)
-            else case result of
-              AgentCompleted _ans -> do
-                putStrLn "\nTask successfully completed!"
-                putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
-              AgentMaxTurnsReached turns -> do
-                putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
-              AgentBudgetExceeded spent budget ->
-                putStrLn ("\n" <> T.unpack (formatPrintResult OutputText (AgentBudgetExceeded spent budget)))
-              AgentFailed err -> do
-                putStrLn ("\nAgent failed with error: " <> T.unpack err)
+            else reportHeadlessOutcome "Task successfully completed!" finalHistory (runOutcome result Nothing)
 
           exitOnHeadlessFailure result
+
+-- | Print how a headless (non-'--print') run ended, from its classified
+-- outcome.
+reportHeadlessOutcome :: String -> [Message] -> RunOutcome -> IO ()
+reportHeadlessOutcome successBanner finalHistory outcome = case outcome of
+  RunSucceeded _ -> do
+    putStrLn ("\n" <> successBanner)
+    putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
+  RunFailed (AgentError err) ->
+    putStrLn ("\nAgent failed with error: " <> T.unpack err)
+  _ ->
+    putStrLn ("\n" <> T.unpack (renderRunOutcome outcome))
 
 -- | Headless failures must be visible to shell callers through the process
 -- status, after the result has been rendered in the requested format.

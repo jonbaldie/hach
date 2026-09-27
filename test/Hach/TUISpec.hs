@@ -1629,11 +1629,11 @@ spec = do
             config = goalAgentConfig mockIOEnv "sys" Nothing Nothing
         runGoalWorker mockAlgebra config "All tests pass" [] (\ev -> modifyIORef' eventsRef (ev :))
         events <- readIORef eventsRef
-        events `shouldNotContain` [EvError "Maximum turns reached (20)"]
+        events `shouldNotContain` [EvError "Agent reached maximum turn limit of 20."]
         events `shouldContain` [EvDone "All tests pass."]
 
-    describe "runGoalWorker terminal event handling (Issue #49)" $ do
-      it "emits EvDone instead of EvError when goal is blocked (GoalActive)" $ do
+    describe "runGoalWorker terminal event handling (Issues #49, #232)" $ do
+      it "ends a blocked goal (GoalActive) in failure with the evaluator's reason, not the answer" $ do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
         eventsRef <- newIORef []
         let promptAction _ _ = pure $ Right (AssistantResponse (Just "Completed progress.") [] Nothing)
@@ -1648,9 +1648,9 @@ spec = do
         runGoalWorker mockAlgebra config "reach condition" [] (\ev -> modifyIORef' eventsRef (ev :))
         events <- readIORef eventsRef
         events `shouldNotContain` [EvError "Completed progress."]
-        events `shouldContain` [EvDone "Completed progress."]
+        take 1 events `shouldBe` [EvError "Goal not met: Need more work"]
 
-      it "emits EvDone instead of EvError when goal is impossible (GoalFailed)" $ do
+      it "ends an impossible goal (GoalFailed) in failure with the evaluator's reason" $ do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
         eventsRef <- newIORef []
         let promptAction _ _ = pure $ Right (AssistantResponse (Just "Goal cannot be met.") [] Nothing)
@@ -1665,7 +1665,40 @@ spec = do
         runGoalWorker mockAlgebra config "impossible condition" [] (\ev -> modifyIORef' eventsRef (ev :))
         events <- readIORef eventsRef
         events `shouldNotContain` [EvError "Goal cannot be met."]
-        events `shouldContain` [EvDone "Goal cannot be met."]
+        take 1 events `shouldBe` [EvError "Goal not met: Reason impossible"]
+
+      it "ends an achieved goal successfully with the assistant's answer" $ do
+        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+        eventsRef <- newIORef []
+        let promptAction _ _ = pure $ Right (AssistantResponse (Just "Created the file.") [] Nothing)
+            evalAction _ _ = pure (GoalEvaluation GoalMet "File exists")
+            mockAlgebra = (ioAlgebra mockIOEnv)
+              { interpPrompt   = promptAction
+              , interpTool     = \_ -> pure (ToolSuccess "ok")
+              , interpLog      = \ev -> modifyIORef' eventsRef (ev :)
+              , interpEvaluate = evalAction
+              }
+            config = goalAgentConfig mockIOEnv "sys" (Just 5) Nothing
+        runGoalWorker mockAlgebra config "file exists" [] (\ev -> modifyIORef' eventsRef (ev :))
+        events <- readIORef eventsRef
+        take 1 events `shouldBe` [EvDone "Created the file."]
+        [e | e@EvError{} <- events] `shouldBe` []
+
+      it "ends a goal run stopped by the turn limit in a stopped state, not done" $ do
+        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+        eventsRef <- newIORef []
+        let call = ToolCall "c1" "read_file" "{}"
+            promptAction _ _ = pure $ Right (AssistantResponse Nothing [call] Nothing)
+            mockAlgebra = (ioAlgebra mockIOEnv)
+              { interpPrompt   = promptAction
+              , interpTool     = \_ -> pure (ToolSuccess "ok")
+              , interpLog      = \ev -> modifyIORef' eventsRef (ev :)
+              }
+            config = goalAgentConfig mockIOEnv "sys" (Just 2) Nothing
+        runGoalWorker mockAlgebra config "never finishes" [] (\ev -> modifyIORef' eventsRef (ev :))
+        events <- readIORef eventsRef
+        take 1 events `shouldBe` [EvError "Agent reached maximum turn limit of 2."]
+        [e | e@EvDone{} <- events] `shouldBe` []
 
 
     describe "Built-in Slash Commands" $ do
