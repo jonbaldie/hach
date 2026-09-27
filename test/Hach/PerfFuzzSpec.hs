@@ -13,15 +13,11 @@
 --
 -- * 'matchGlob' — permission / memory-rule globs ('*', '**', '**/')
 -- * 'matchStarGlob' — find_files / Glob tool '*' matching
--- * 'transcriptItemsToMessages' — adjacent-item collapse
 -- * 'mergeSettings' — allowlist / working-dir unique
 module Hach.PerfFuzzSpec (spec) where
 
 import Hach.Permissions
 import Hach.Settings
-import Hach.TUI.App (transcriptItemsToMessages, dialogueToMessages)
-import Hach.TUI.Types
-import Hach.Types
 
 
 import Data.List (nub)
@@ -99,17 +95,6 @@ matchStarNaive budget pat str = go pat str 0
         Nothing -> Nothing
         Just (True, n1) -> Just (True, n1)
         Just (False, n1) -> goStar ps cs n1
-
--- | Left-folding @a <> sep <> b@ copies the growing prefix each time.
--- The returned cost is the number of characters copied.
-naiveCollapseCost :: [Text] -> Int
-naiveCollapseCost []     = 0
-naiveCollapseCost (x:xs) = go (T.length x) xs
-  where
-    go _ [] = 0
-    go acc (y:ys) =
-      let copied = acc + 2 + T.length y
-      in copied + go copied ys
 
 -- ---------------------------------------------------------------------------
 -- * Generators
@@ -263,95 +248,6 @@ spec = do
         (pathologicalStarTarget 10)
         `shouldBe` Nothing
 
-  describe "PerfFuzz: transcript collapse is linear in total text" $ do
-    it "n adjacent assistant items become one intercalated AssistantMsg" $ vigorous $
-      forAll (choose (1, 40) :: Gen Int) $ \n ->
-      forAll (T.pack <$> listOf1 (elements ['a'..'z'])) $ \t ->
-        let items = replicate n (TiAssistant t)
-            msgs  = transcriptItemsToMessages items
-            joined = T.intercalate "\n\n" (replicate n t)
-        in collect (collapseBucket n) $
-             msgs === [AssistantMsg (Just joined) []]
-
-    it "n adjacent user items become one intercalated UserMsg" $ vigorous $
-      forAll (choose (1, 40) :: Gen Int) $ \n ->
-      forAll (T.pack <$> listOf1 (elements ['a'..'z'])) $ \t ->
-        let items = replicate n (TiUser t)
-            msgs  = transcriptItemsToMessages items
-            joined = T.intercalate "\n\n" (replicate n t)
-        in msgs === [UserMsg joined]
-
-    it "naive left-fold concat is superlinear; production still agrees" $
-      forAll (choose (8, 60) :: Gen Int) $ \n ->
-        let chunk = "ab" :: Text
-            items = replicate n (TiAssistant chunk)
-            joined = T.intercalate "\n\n" (replicate n chunk)
-            cost = naiveCollapseCost (replicate n chunk)
-            joinedLen = T.length joined
-        in collect (collapseBucket n) $
-             transcriptItemsToMessages items === [AssistantMsg (Just joined) []]
-             .&&. counterexample ("naive cost " <> show cost <> " vs total " <> show joinedLen)
-                    (cost > 2 * joinedLen)
-
-    it "headline: 500 adjacent assistant items collapse correctly" $ do
-      let n = 500
-          t = "x" :: Text
-          items = replicate n (TiAssistant t)
-          joined = T.intercalate "\n\n" (replicate n t)
-      transcriptItemsToMessages items `shouldBe` [AssistantMsg (Just joined) []]
-      naiveCollapseCost (replicate n t) `shouldSatisfy` (> 2 * T.length joined)
-
-    it "headline: 10000 adjacent assistant items collapse correctly in linear time" $ do
-      let n = 10000
-          t = "x" :: Text
-          items = replicate n (TiAssistant t)
-          joined = T.intercalate "\n\n" (replicate n t)
-      transcriptItemsToMessages items `shouldBe` [AssistantMsg (Just joined) []]
-      naiveCollapseCost (replicate n t) `shouldSatisfy` (> 10000000)
-
-    it "headline: 10000 adjacent user items collapse correctly in linear time" $ do
-      let n = 10000
-          t = "u" :: Text
-          items = replicate n (TiUser t)
-          joined = T.intercalate "\n\n" (replicate n t)
-      transcriptItemsToMessages items `shouldBe` [UserMsg joined]
-
-    it "mixed transcript items collapse adjacent same-role items across notices" $ do
-      let c1 = ToolCard "call_1" "read_file" "{\"path\":\"foo.hs\"}" (Finished (ToolSuccess "file content")) False
-          items =
-            [ TiNotice "Session started"
-            , TiUser "first prompt"
-            , TiNotice "Switching mode"
-            , TiUser "second prompt"
-            , TiAssistant "thought 1"
-            , TiNotice "background job"
-            , TiAssistant "thought 2"
-            , TiToolCard c1
-            , TiAssistant "final response"
-            ]
-          msgs = transcriptItemsToMessages items
-      msgs `shouldBe`
-        [ UserMsg "first prompt\n\nsecond prompt"
-        , AssistantMsg (Just "thought 1\n\nthought 2") [ToolCall "call_1" "read_file" "{\"path\":\"foo.hs\"}"]
-        , ToolMsg "call_1" "read_file" "file content"
-        , AssistantMsg (Just "final response") []
-        ]
-
-    it "dialogueToMessages strictly maintains role alternation on long mixed transcripts" $ do
-      let n = 1000
-          assts = replicate n (TiAssistant "step")
-          items = TiUser "init" : assts
-          msgs = dialogueToMessages "sys" "done" items
-          isAsst AssistantMsg{} = True
-          isAsst _              = False
-          isUser UserMsg{}      = True
-          isUser _              = False
-          pairs = zip msgs (drop 1 msgs)
-          hasConsecutiveAsst = any (\(a, b) -> isAsst a && isAsst b) pairs
-          hasConsecutiveUser = any (\(a, b) -> isUser a && isUser b) pairs
-      hasConsecutiveAsst `shouldBe` False
-      hasConsecutiveUser `shouldBe` False
-
   describe "PerfFuzz: settings allowlist unique is order-preserving" $ do
     it "later layer wins; first occurrence of each name is kept" $ vigorous $
       forAll (listOf genSeg) $ \earlier ->
@@ -387,13 +283,6 @@ bucket n
   | n < 1024  = "1k"
   | n < 4096  = "4k"
   | otherwise = "4k+"
-
-collapseBucket :: Int -> String
-collapseBucket n
-  | n < 4     = "tiny-run"
-  | n < 16    = "short-run"
-  | n < 32    = "medium-run"
-  | otherwise = "long-run"
 
 allowBucket :: Int -> String
 allowBucket n

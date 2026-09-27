@@ -9,15 +9,14 @@ import Hach.Skills (SkillSource(..), mkSkill)
 import Hach.TUI.App
   ( buildTuiSystemPrompt
   , brickToUserKey
-  , cancelledToolCallPlaceholder
-  , dialogueToMessages
   , goalAgentConfig
   , runEnvForModel
   , initialTuiLaunch
+  , runAgentWorker
   , runGoalWorker
-  , transcriptToMessages
   , vtyToUserKey
   )
+import Hach.Sessions (buildSessionHistory)
 import Test.QuickCheck
 import Hach.Tools (TaskCreateArgs(..), executeTaskCreate, executeTaskList)
 import Hach.TUI.State
@@ -31,12 +30,15 @@ import Hach.Types
   , GoalState(..)
   , GoalStatus(..)
   , GoalVerdict(..)
+  , HookEvent(..)
+  , HookResult(..)
   , Message(..)
   , SessionTokenUsage(..)
   , TokenUsage(..)
   , ToolCall(..)
   , ToolResult(..)
   , contextSaturationPercent
+  , defaultHookResult
   , initialGoalState
   , initialSessionTokenUsage
   , mkTokenUsage
@@ -101,6 +103,33 @@ instance Arbitrary TranscriptItem where
 
 spec :: Spec
 spec = do
+  describe "Resumed TUI conversation (Issue #231)" $ do
+    let saved =
+          [ SystemMsg "OLD SYS"
+          , UserMsg "list files"
+          , AssistantMsg Nothing [ToolCall "c1" "list_dir" "{\"path\":\".\"}"]
+          , ToolMsg "c1" "list_dir" "a.txt"
+          , AssistantMsg (Just "done") []
+          ]
+    it "shows one tool card per saved call, with its arguments and result" $
+      messagesToTranscriptItems saved `shouldBe`
+        [ TiUser "list files"
+        , TiToolCard (ToolCard "c1" "list_dir" "{\"path\":\".\"}" (Finished (ToolSuccess "a.txt")) False)
+        , TiAssistant "done"
+        ]
+    it "sends the saved conversation once, under only the current system prompt" $ do
+      seenRef <- newIORef ([] :: [Message])
+      mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+      let mockAlgebra = (ioAlgebra mockIOEnv)
+            { interpPrompt   = \msgs _ -> do
+                writeIORef seenRef msgs
+                pure (Right (AssistantResponse (Just "ok") [] Nothing))
+            , interpLog      = \_ -> pure ()
+            , interpEvaluate = \_ _ -> pure (GoalEvaluation GoalMet "met")
+            }
+          config = goalAgentConfig mockIOEnv "NEW SYS" Nothing Nothing
+      runGoalWorker mockAlgebra config "next" saved (\_ -> pure ())
+      readIORef seenRef `shouldReturn` buildSessionHistory "NEW SYS" (Just saved) "next"
   let baseState = initialTuiState "meta/muse-glimmer-30b" (Just 10)
 
   describe "TUI Pure State Reducer (Pre-agreed Seam)" $ do
@@ -1102,176 +1131,112 @@ spec = do
           any (\case DiUser u -> "/to-spec create auth" `T.isInfixOf` u; _ -> False) h
           && any (\case DiNotice n -> "Activated skill: to-spec" `T.isInfixOf` n; _ -> False) h
 
-      it "does not duplicate user message in dialogueToMessages when skills or notices are in history" $ do
-        let items = [DiUser "/to-spec auth", DiNotice "Activated skill: to-spec"]
-            msgs = dialogueToMessages "system prompt" "expanded <skill> auth" items
-        msgs `shouldBe` [SystemMsg "system prompt", UserMsg "expanded <skill> auth"]
+    describe "Canonical TUI conversation (Issue #231)" $ do
+      let mockAlgebraWith env promptAction = (ioAlgebra env)
+            { interpPrompt   = promptAction
+            , interpTool     = \_ -> pure (ToolSuccess "ok")
+            , interpLog      = \_ -> pure ()
+            , interpEvaluate = \_ _ -> pure (GoalEvaluation GoalMet "met")
+            }
+          finalConversation events = last [ msgs | EvConversationUpdated msgs <- events ]
+          prior =
+            [ SystemMsg "sys"
+            , UserMsg "read README.md"
+            , AssistantMsg (Just "I will read the file.") [ToolCall "c1" "read_file" "{\"path\":\"README.md\"}"]
+            , ToolMsg "c1" "read_file" "Project documentation"
+            , AssistantMsg (Just "Read it.") []
+            ]
 
-    describe "Transcript Context Round-Tripping (Issue #24)" $ do
-      it "rebuilds messages from transcript with user text, assistant text, cards in every lifecycle state and notices" $ do
-        let cFinished = ToolCard "call_1" "read_file" "{\"path\":\"foo.txt\"}" (Finished (ToolSuccess "file contents")) False
-            cDenied   = ToolCard "call_2" "write_file" "{\"path\":\"bar.txt\"}" (Denied "Permission denied by policy") False
-            cPending  = ToolCard "call_3" "bash" "{\"cmd\":\"ls\"}" Pending False
-            cRunning  = ToolCard "call_4" "bash" "{\"cmd\":\"pwd\"}" Running False
-            cCancelled = ToolCard "call_5" "browser" "{}" Cancelled False
-            items =
-              [ TiUser "first user message"
-              , TiNotice "Notice: skill activated"
-              , TiAssistant "Let me check that for you."
-              , TiToolCard cFinished
-              , TiNotice "Notice: tool running"
-              , TiToolCard cDenied
-              , TiToolCard cPending
-              , TiToolCard cRunning
-              , TiToolCard cCancelled
-              , TiNotice "Notice: turn complete"
-              ]
-            msgs = dialogueToMessages "system prompt" "follow-up prompt" items
-            expected =
-              [ SystemMsg "system prompt"
-              , UserMsg "first user message"
-              , AssistantMsg (Just "Let me check that for you.")
-                  [ ToolCall "call_1" "read_file" "{\"path\":\"foo.txt\"}"
-                  , ToolCall "call_2" "write_file" "{\"path\":\"bar.txt\"}"
-                  , ToolCall "call_3" "bash" "{\"cmd\":\"ls\"}"
-                  , ToolCall "call_4" "bash" "{\"cmd\":\"pwd\"}"
-                  , ToolCall "call_5" "browser" "{}"
-                  ]
-              , ToolMsg "call_1" "read_file" "file contents"
-              , ToolMsg "call_2" "write_file" "Permission denied by policy"
-              , ToolMsg "call_3" "bash" cancelledToolCallPlaceholder
-              , ToolMsg "call_4" "bash" cancelledToolCallPlaceholder
-              , ToolMsg "call_5" "browser" cancelledToolCallPlaceholder
-              , UserMsg "follow-up prompt"
-              ]
-        msgs `shouldBe` expected
-        transcriptToMessages "system prompt" "follow-up prompt" items `shouldBe` expected
+      it "sends a normal run the prior conversation, including tool results" $ do
+        seenRef <- newIORef ([] :: [Message])
+        env <- newIOEnv "test" "test-model" "/tmp" False
+        let alg = mockAlgebraWith env $ \msgs _ -> do
+              writeIORef seenRef msgs
+              pure (Right (AssistantResponse (Just "summary") [] Nothing))
+            config = goalAgentConfig env "sys" Nothing Nothing
+        runAgentWorker alg config "summarise it" prior (\_ -> pure ())
+        readIORef seenRef `shouldReturn` (prior ++ [UserMsg "summarise it"])
 
-      it "yields an assistant message with calls when tool cards stand alone with assistant text blank" $ do
-        let c1 = ToolCard "call_1" "read_file" "{\"path\":\"a.txt\"}" (Finished (ToolSuccess "alpha")) False
-            c2 = ToolCard "call_2" "read_file" "{\"path\":\"b.txt\"}" (Finished (ToolSuccess "beta")) False
-            itemsStandalone =
-              [ TiUser "read files"
-              , TiToolCard c1
-              , TiToolCard c2
-              ]
-            msgsStandalone = dialogueToMessages "sys" "next turn" itemsStandalone
-            expectedStandalone =
-              [ SystemMsg "sys"
-              , UserMsg "read files"
-              , AssistantMsg Nothing
-                  [ ToolCall "call_1" "read_file" "{\"path\":\"a.txt\"}"
-                  , ToolCall "call_2" "read_file" "{\"path\":\"b.txt\"}"
-                  ]
-              , ToolMsg "call_1" "read_file" "alpha"
-              , ToolMsg "call_2" "read_file" "beta"
-              , UserMsg "next turn"
-              ]
-        msgsStandalone `shouldBe` expectedStandalone
+      it "reports the finished conversation, with the answer, before the run ends" $ do
+        eventsRef <- newIORef []
+        env <- newIOEnv "test" "test-model" "/tmp" False
+        let alg = mockAlgebraWith env $ \_ _ ->
+              pure (Right (AssistantResponse (Just "summary") [] Nothing))
+            config = goalAgentConfig env "sys" Nothing Nothing
+        runAgentWorker alg config "summarise it" prior (\ev -> modifyIORef' eventsRef (++ [ev]))
+        events <- readIORef eventsRef
+        finalConversation events `shouldBe`
+          prior ++ [UserMsg "summarise it", AssistantMsg (Just "summary") []]
+        last events `shouldBe` EvDone "summary"
 
-        let itemsBlankAssistant =
-              [ TiUser "read files"
-              , TiAssistant ""
-              , TiToolCard c1
-              ]
-            msgsBlankAssistant = dialogueToMessages "sys" "next turn" itemsBlankAssistant
-            expectedBlankAssistant =
-              [ SystemMsg "sys"
-              , UserMsg "read files"
-              , AssistantMsg Nothing [ToolCall "call_1" "read_file" "{\"path\":\"a.txt\"}"]
-              , ToolMsg "call_1" "read_file" "alpha"
-              , UserMsg "next turn"
-              ]
-        msgsBlankAssistant `shouldBe` expectedBlankAssistant
-
-      it "produces placeholder tool message for unresolved cards and denial text for denied cards" $ do
-        let cPending   = ToolCard "c_p" "bash" "ls" Pending False
-            cRunning   = ToolCard "c_r" "bash" "pwd" Running False
-            cCancelled = ToolCard "c_c" "bash" "top" Cancelled False
-            cDenied    = ToolCard "c_d" "rm" "rf" (Denied "Policy violation: forbidden command") False
-            cFinishedErr = ToolCard "c_fe" "grep" "foo" (Finished (ToolError "file not found")) False
-            items =
-              [ TiToolCard cPending
-              , TiToolCard cRunning
-              , TiToolCard cCancelled
-              , TiToolCard cDenied
-              , TiToolCard cFinishedErr
-              ]
-            msgs = dialogueToMessages "sys" "prompt" items
-            expected =
-              [ SystemMsg "sys"
-              , AssistantMsg Nothing
-                  [ ToolCall "c_p" "bash" "ls"
-                  , ToolCall "c_r" "bash" "pwd"
-                  , ToolCall "c_c" "bash" "top"
-                  , ToolCall "c_d" "rm" "rf"
-                  , ToolCall "c_fe" "grep" "foo"
-                  ]
-              , ToolMsg "c_p" "bash" "Tool call was cancelled before completion."
-              , ToolMsg "c_r" "bash" "Tool call was cancelled before completion."
-              , ToolMsg "c_c" "bash" "Tool call was cancelled before completion."
-              , ToolMsg "c_d" "rm" "Policy violation: forbidden command"
-              , ToolMsg "c_fe" "grep" "Error: file not found"
-              , UserMsg "prompt"
-              ]
-        msgs `shouldBe` expected
-
-      it "never contains an assistant tool call without a following tool message with the same id (property test)" $
-        property $ \items (NonEmpty sysPrompt) (NonEmpty currentPrompt) ->
-          let msgs = dialogueToMessages (T.pack sysPrompt) (T.pack currentPrompt) items
-              checkCallsAnswered [] = True
-              checkCallsAnswered (AssistantMsg _ calls : rest) =
-                let subsequentToolIds = [cid | ToolMsg cid _ _ <- rest]
-                    allPresent = all (\tc -> callId tc `elem` subsequentToolIds) calls
-                in allPresent && checkCallsAnswered rest
-              checkCallsAnswered (_ : rest) = checkCallsAnswered rest
-          in checkCallsAnswered msgs
-
-      it "builds context via dialogueToMessages for normal run and preserves prior tool results" $ do
-        let cFinished = ToolCard "c1" "read_file" "{\"path\":\"README.md\"}" (Finished (ToolSuccess "Project documentation")) False
-            priorHistory =
-              [ TiUser "read README.md"
-              , TiAssistant "I will read the file."
-              , TiToolCard cFinished
-              ]
-            msgs = dialogueToMessages "system prompt" "summarise what you just read" priorHistory
-        msgs `shouldBe`
-          [ SystemMsg "system prompt"
-          , UserMsg "read README.md"
-          , AssistantMsg (Just "I will read the file.") [ToolCall "c1" "read_file" "{\"path\":\"README.md\"}"]
-          , ToolMsg "c1" "read_file" "Project documentation"
-          , UserMsg "summarise what you just read"
-          ]
-
-      it "builds context via dialogueToMessages for goal run and passes tool results to loop" $ do
-        historySeenRef <- newIORef ([] :: [Message])
-        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
-        let promptAction msgs _ = do
-              writeIORef historySeenRef msgs
-              pure (Right (AssistantResponse (Just "Goal achieved successfully.") [] Nothing))
-            evalAction _ _ = pure (GoalEvaluation GoalMet "All conditions satisfied")
-            mockAlgebra = (ioAlgebra mockIOEnv)
-              { interpPrompt   = promptAction
-              , interpTool     = \_ -> pure (ToolSuccess "ok")
-              , interpLog      = \_ -> pure ()
-              , interpEvaluate = evalAction
+      it "keeps context a prompt hook added, which the Transcript never shows" $ do
+        eventsRef <- newIORef []
+        env <- newIOEnv "test" "test-model" "/tmp" False
+        let alg = (mockAlgebraWith env $ \_ _ ->
+                      pure (Right (AssistantResponse (Just "ok") [] Nothing)))
+              { interpRunHook = \ev _ -> pure $ case ev of
+                  HookUserPromptSubmit -> defaultHookResult { hrAdditionalContext = Just "HOOK CONTEXT" }
+                  _ -> defaultHookResult
               }
-            config = goalAgentConfig mockIOEnv "system prompt" Nothing Nothing
-            cFinished = ToolCard "call_g1" "read_file" "{}" (Finished (ToolSuccess "sample goal data")) False
-            historyItems =
-              [ TiUser "fetch information"
-              , TiAssistant "fetching"
-              , TiToolCard cFinished
+            config = goalAgentConfig env "sys" Nothing Nothing
+        runAgentWorker alg config "hello" [] (\ev -> modifyIORef' eventsRef (++ [ev]))
+        events <- readIORef eventsRef
+        [ u | UserMsg u <- finalConversation events ] `shouldSatisfy`
+          any ("HOOK CONTEXT" `T.isInfixOf`)
+
+      it "does not grow when a session is resumed and saved repeatedly" $ do
+        env <- newIOEnv "test" "test-model" "/tmp" False
+        let alg = mockAlgebraWith env $ \_ _ ->
+              pure (Right (AssistantResponse (Just "ok") [] Nothing))
+            config = goalAgentConfig env "sys" Nothing Nothing
+            resumeOnce conversation = do
+              eventsRef <- newIORef []
+              runAgentWorker alg config "again" conversation (\ev -> modifyIORef' eventsRef (++ [ev]))
+              finalConversation <$> readIORef eventsRef
+        c1 <- resumeOnce prior
+        c2 <- resumeOnce c1
+        length [ () | SystemMsg _ <- c2 ] `shouldBe` 1
+        [ callId c | AssistantMsg _ calls <- c2, c <- calls ] `shouldBe` ["c1"]
+        length [ () | ToolMsg{} <- c2 ] `shouldBe` 1
+        length c2 `shouldBe` length prior + 4
+
+      it "stores the conversation a run reports" $ do
+        let s1 = handleAgentEvent (EvConversationUpdated prior) baseState { tsStatus = StatusThinking }
+        tsConversation s1 `shouldBe` prior
+
+      it "forgets the conversation on /clear and ignores a late report from the cancelled run" $ do
+        let busy = baseState { tsStatus = StatusThinking, tsConversation = prior, tsInputBuffer = "/clear" }
+            (cleared, _) = updateTui (EvUserKey KeyEnter) busy
+            late = handleAgentEvent (EvConversationUpdated prior) cleared
+        tsConversation cleared `shouldBe` []
+        tsConversation late `shouldBe` []
+
+      it "compacts the conversation and redraws the Transcript from it" $ do
+        let longConversation =
+              [ SystemMsg "sys"
+              , UserMsg "one", AssistantMsg (Just "a1") []
+              , UserMsg "two", AssistantMsg Nothing [ToolCall "t2" "bash" "{}"], ToolMsg "t2" "bash" "out"
+              , AssistantMsg (Just "a2") []
+              , UserMsg "three", AssistantMsg (Just "a3") []
               ]
-        runGoalWorker mockAlgebra config "All conditions satisfied" historyItems (\_ -> pure ())
-        historySeen <- readIORef historySeenRef
-        historySeen `shouldBe`
-          [ SystemMsg "system prompt"
-          , UserMsg "fetch information"
-          , AssistantMsg (Just "fetching") [ToolCall "call_g1" "read_file" "{}"]
-          , ToolMsg "call_g1" "read_file" "sample goal data"
-          , UserMsg "All conditions satisfied"
-          ]
+            s0 = baseState { tsConversation = longConversation, tsInputBuffer = "/compact" }
+            (s1, actions) = updateTui (EvUserKey KeyEnter) s0
+            kept = SystemMsg "sys" : drop 3 longConversation
+        actions `shouldBe` []
+        tsConversation s1 `shouldBe` kept
+        tsTranscript s1 `shouldBe`
+          DiNotice "Prior conversation turns compacted for context efficiency."
+            : messagesToTranscriptItems kept
+
+      it "refuses to compact while a turn is running" $ do
+        let s0 = baseState { tsStatus = StatusThinking, tsConversation = prior, tsInputBuffer = "/compact" }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+        tsConversation s1 `shouldBe` prior
+        tsTranscript s1 `shouldSatisfy` elem (DiNotice "Cannot compact while a turn is running.")
+
+      it "shows a saved call that never got a result as cancelled" $
+        messagesToTranscriptItems [UserMsg "go", AssistantMsg Nothing [ToolCall "c9" "bash" "{}"]]
+          `shouldBe` [TiUser "go", TiToolCard (ToolCard "c9" "bash" "{}" Cancelled False)]
 
     describe "Transcript Auto-Scroll Policy and Thinking Indicator (Issue #25)" $ do
       describe "Auto-Scroll Policy (shouldAutoScroll)" $ do

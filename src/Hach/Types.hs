@@ -620,6 +620,8 @@ data AgentEvent
   | EvHookTriggered !Text !Text
   | EvSessionSaved !Text
   | EvNotificationSent !Text
+  | EvConversationUpdated ![Message]
+    -- ^ The run's conversation so far, for a front end that keeps it between runs.
   deriving (Show, Eq)
 
 --------------------------------------------------------------------------------
