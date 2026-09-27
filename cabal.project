@@ -1,2 +1,7 @@
 packages: .
 tests: True
+
+if os(osx) && arch(x86_64)
+  -- crypton 2.1.2's s2n-bignum x86 assembly fails on Intel macOS.
+  -- Keep its C fallback until crypton fixes the assembler issue (#237).
+  constraints: crypton -support_s2n_bignum
