@@ -44,6 +44,12 @@ module Hach.Core
     -- * Goal-Directed Loop
   , goalLoop
   , defaultBlockCap
+
+    -- * Run Outcome
+  , RunOutcome(..)
+  , StopReason(..)
+  , RunFailure(..)
+  , runOutcome
   , historyBlockedByHeadlessAsks
   , headlessAskBlockedMessageForHistory
   ) where
@@ -584,6 +590,41 @@ goalLoop cfg tools condition blockCap initialHistory = do
                 pure (result, finalHist, g')
               _ ->
                 pure (result, finalHist, gs)
+
+-- | Why a run stopped before finishing: a configured limit was reached.
+data StopReason
+  = StopMaxTurns !Int
+  | StopBudget !Double !Double  -- ^ spent, budget
+  deriving (Show, Eq)
+
+-- | Why a run failed.
+data RunFailure
+  = AgentError !Text  -- ^ the agent loop itself failed
+  | GoalNotMet !Text  -- ^ the run finished but its goal was not achieved
+  deriving (Show, Eq)
+
+-- | What a finished run means for the user, shared by every front-end.
+data RunOutcome
+  = RunSucceeded !Text
+  | RunStopped !StopReason
+  | RunFailed !RunFailure
+  deriving (Show, Eq)
+
+-- | Classify a finished run from its result and, for goal runs, the final
+-- goal state returned by 'goalLoop'. A completed answer only counts as
+-- success when there is no goal or the goal was achieved.
+runOutcome :: AgentResult -> Maybe GoalState -> RunOutcome
+runOutcome result mGs = case result of
+  AgentMaxTurnsReached n           -> RunStopped (StopMaxTurns n)
+  AgentBudgetExceeded spent budget -> RunStopped (StopBudget spent budget)
+  AgentFailed err                  -> RunFailed (AgentError err)
+  AgentCompleted ans -> case mGs of
+    Just gs | gsStatus gs /= GoalAchieved -> RunFailed (GoalNotMet (goalShortfall gs))
+    _                                     -> RunSucceeded ans
+  where
+    goalShortfall gs = case gsLastReason gs of
+      Just r | not (T.null (T.strip r)) -> r
+      _                                 -> "condition not satisfied"
 
 -- | True when the run requested at least one write/command that was denied
 -- because headless mode cannot prompt, and no such mutation actually ran.

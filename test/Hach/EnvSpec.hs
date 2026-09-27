@@ -2,6 +2,7 @@
 
 module Hach.EnvSpec (spec) where
 
+import Hach.Core (RunFailure(..), RunOutcome(..), StopReason(..), runOutcome)
 import Hach.Env
 import Hach.Settings (Settings(..), defaultSettings)
 import Hach.Types
@@ -605,6 +606,33 @@ spec = do
 
     it "exits non-zero for normal agent failure without goal" $ do
       resolveHeadlessExitCode (AgentFailed "err") Nothing `shouldBe` ExitFailure 1
+
+  describe "run outcome classification (Issue #232)" $ do
+    let goal status = (initialGoalState "unicorn.txt exists")
+          { gsStatus = status, gsLastReason = Just "unicorn.txt is missing" }
+
+    it "succeeds for a completed run without a goal or with an achieved goal" $ do
+      runOutcome (AgentCompleted "done") Nothing `shouldBe` RunSucceeded "done"
+      runOutcome (AgentCompleted "done") (Just (goal GoalAchieved)) `shouldBe` RunSucceeded "done"
+
+    it "fails with the evaluator's reason for a completed run whose goal was not achieved" $ do
+      runOutcome (AgentCompleted "done") (Just (goal GoalFailed))
+        `shouldBe` RunFailed (GoalNotMet "unicorn.txt is missing")
+      runOutcome (AgentCompleted "done") (Just (goal GoalActive))
+        `shouldBe` RunFailed (GoalNotMet "unicorn.txt is missing")
+
+    it "stops, rather than succeeds, at the turn and budget limits" $ do
+      runOutcome (AgentMaxTurnsReached 3) (Just (goal GoalAchieved)) `shouldBe` RunStopped (StopMaxTurns 3)
+      runOutcome (AgentBudgetExceeded 0.6 0.5) Nothing `shouldBe` RunStopped (StopBudget 0.6 0.5)
+
+    it "renders the same text for --print and the other front-ends" $ do
+      let unmet = goal GoalFailed
+      formatPrintGoalResult OutputText unmet (AgentCompleted "done")
+        `shouldBe` renderRunOutcome (runOutcome (AgentCompleted "done") (Just unmet))
+      formatPrintResult OutputText (AgentMaxTurnsReached 3)
+        `shouldBe` renderRunOutcome (RunStopped (StopMaxTurns 3))
+      renderRunOutcome (RunFailed (GoalNotMet "unicorn.txt is missing"))
+        `shouldBe` "Goal not met: unicorn.txt is missing"
 
   describe "headless goal outcome and print formatting (Issue #223)" $ do
     it "renders Task completed. for GoalAchieved" $ do
