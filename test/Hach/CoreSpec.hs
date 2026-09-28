@@ -4,7 +4,7 @@
 module Hach.CoreSpec (spec) where
 
 import Hach.Core
-import Hach.Env (isHeadlessGoalSuccess, resolveHeadlessExitCode)
+import Hach.CLI (isHeadlessGoalSuccess, resolveHeadlessExitCode)
 import Hach.Interpreter.Pure
 import Hach.Tools
 import Hach.Types

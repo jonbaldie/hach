@@ -12,7 +12,7 @@
 module Hach.Campaign2Spec (spec) where
 
 import Hach.Core
-import Hach.Env
+import Hach.CLI
 import Hach.Hooks
 import Hach.Interpreter.Pure
 import Hach.MCP

@@ -4,6 +4,7 @@
 module Main (main) where
 
 import Hach.Core
+import Hach.CLI
 import Hach.Env
 import qualified Hach.Git as Git
 import Hach.Interpreter.IO

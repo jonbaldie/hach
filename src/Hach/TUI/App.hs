@@ -29,7 +29,8 @@ module Hach.TUI.App
 
 import Hach.Clipboard (copyToClipboard)
 import Hach.Core
-import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions, loadProjectInstructionsFile, renderRunOutcome)
+import Hach.CLI (renderRunOutcome)
+import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions, loadProjectInstructionsFile)
 import Hach.Git (getGitDiff)
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
