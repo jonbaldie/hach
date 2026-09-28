@@ -15,6 +15,7 @@
 -- * hook exit-2 protocol, env-file round-trips, porcelain partition
 module Hach.Campaign3Spec (spec) where
 
+import Hach.CLI
 import Hach.Env
 import Hach.Git
 import Hach.Hooks

@@ -34,6 +34,7 @@ library
         Hach.Interpreter.IO
         Hach.Interpreter.Pure
         Hach.Env
+        Hach.CLI
         Hach.TUI.Types
         Hach.TUI.State
         Hach.TUI.UI

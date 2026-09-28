@@ -3,7 +3,7 @@
 
 module Hach.PropertySpec (spec) where
 
-import Hach.Env
+import Hach.CLI
 import Hach.OpenRouter
 import Hach.Paths (workspaceAt)
 import Hach.Tools
