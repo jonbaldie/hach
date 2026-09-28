@@ -51,6 +51,8 @@ library
         Hach.Tasks
         Hach.Notifications
         Hach.Clipboard
+    other-modules:
+        Hach.TUI.Conversation
     build-depends:
         base >= 4.18 && < 5,
         text,
