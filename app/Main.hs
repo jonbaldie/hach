@@ -3,8 +3,8 @@
 
 module Main (main) where
 
-import Hach.CLI
 import Hach.Core
+import Hach.CLI
 import Hach.Env
 import qualified Hach.Git as Git
 import Hach.Interpreter.IO
@@ -21,7 +21,7 @@ import Hach.Tools
 import Hach.TUI.App (runTui)
 import Hach.TUI.Types (ProjectInitializationResult(..))
 import Hach.Types
-import Control.Exception (tryJust)
+import Control.Exception (finally, tryJust)
 import Control.Monad (when)
 import Data.Maybe (isJust)
 import qualified Data.Text as T
@@ -30,12 +30,17 @@ import System.Directory (getCurrentDirectory, makeAbsolute)
 import System.Environment (getArgs)
 import Data.Version (showVersion)
 import qualified Paths_hach as Paths
-import System.Exit (exitFailure, exitSuccess, exitWith)
+import System.Exit (ExitCode(..), exitFailure, exitSuccess, exitWith)
 import System.IO (stderr)
 import System.IO.Error (isEOFError)
 
+-- | Background tasks run in their own process groups, so nothing else would
+-- stop them when Hach exits, however it exits.
 main :: IO ()
-main = do
+main = runHach `finally` stopBackgroundTasks
+
+runHach :: IO ()
+runHach = do
   rawArgs <- getArgs
   cwd     <- getCurrentDirectory
 
@@ -190,23 +195,12 @@ main = do
                 saveRunSession currentWorkspace activeSid envModel mPrevInfo finalHistory
 
                 if optPrint
-                  then TIO.putStrLn (formatPrintResult optOutputFormat result)
-                  else case result of
-                    AgentCompleted _ans -> do
-                      putStrLn "\nTask completed."
-                      putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
-                      printGoalSummary goalState
-                    AgentMaxTurnsReached turns -> do
-                      putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
-                      printGoalSummary goalState
-                    AgentBudgetExceeded spent budget -> do
-                      putStrLn ("\n" <> T.unpack (formatPrintResult OutputText (AgentBudgetExceeded spent budget)))
-                      printGoalSummary goalState
-                    AgentFailed err -> do
-                      putStrLn ("\nAgent failed with error: " <> T.unpack err)
-                      printGoalSummary goalState
+                  then TIO.putStrLn (formatPrintGoalResult optOutputFormat goalState result)
+                  else do
+                    reportHeadlessOutcome "Task completed." finalHistory (runOutcome result (Just goalState))
+                    printGoalSummary goalState
 
-                exitOnHeadlessFailure result
+                exitOnHeadlessFailureWith (Just goalState) result
 
         else do
           finalPrompt <- expandSlashInvokedPrompt currentWorkspace skills trimmedPrompt
@@ -225,27 +219,33 @@ main = do
 
           if optPrint
             then TIO.putStrLn (formatPrintResult optOutputFormat result)
-            else case result of
-              AgentCompleted _ans -> do
-                putStrLn "\nTask successfully completed!"
-                putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
-              AgentMaxTurnsReached turns -> do
-                putStrLn ("\nAgent reached maximum turn limit of " <> show turns <> ".")
-              AgentBudgetExceeded spent budget ->
-                putStrLn ("\n" <> T.unpack (formatPrintResult OutputText (AgentBudgetExceeded spent budget)))
-              AgentFailed err -> do
-                putStrLn ("\nAgent failed with error: " <> T.unpack err)
+            else reportHeadlessOutcome "Task successfully completed!" finalHistory (runOutcome result Nothing)
 
           exitOnHeadlessFailure result
+
+-- | Print how a headless (non-'--print') run ended, from its classified
+-- outcome.
+reportHeadlessOutcome :: String -> [Message] -> RunOutcome -> IO ()
+reportHeadlessOutcome successBanner finalHistory outcome = case outcome of
+  RunSucceeded _ -> do
+    putStrLn ("\n" <> successBanner)
+    putStrLn ("Total dialogue messages in history: " <> show (length finalHistory))
+  RunFailed (AgentError err) ->
+    putStrLn ("\nAgent failed with error: " <> T.unpack err)
+  _ ->
+    putStrLn ("\n" <> T.unpack (renderRunOutcome outcome))
 
 -- | Headless failures must be visible to shell callers through the process
 -- status, after the result has been rendered in the requested format.
 exitOnHeadlessFailure :: AgentResult -> IO ()
-exitOnHeadlessFailure result = case result of
-  AgentCompleted _         -> pure ()
-  AgentMaxTurnsReached _   -> exitFailure
-  AgentBudgetExceeded _ _  -> exitFailure
-  AgentFailed _            -> exitFailure
+exitOnHeadlessFailure = exitOnHeadlessFailureWith Nothing
+
+-- | Headless failure exit taking optional goal state into account.
+exitOnHeadlessFailureWith :: Maybe GoalState -> AgentResult -> IO ()
+exitOnHeadlessFailureWith mGs result =
+  case resolveHeadlessExitCode result mGs of
+    ExitSuccess      -> pure ()
+    ExitFailure code -> exitWith (ExitFailure code)
 
 -- | Resolve the workspace selected by the CLI before any task, command, or TUI
 -- work begins. The process remains rooted at the repository checkout so the

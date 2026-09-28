@@ -11,9 +11,11 @@ module Hach.TUI.App
   , transcriptItemsToMessages
   , messagesToTranscriptItems
   , cancelledToolCallPlaceholder
+  , runAgentWorker
   , shouldAutoScroll
   , isTranscriptAppendingEvent
   , runGoalWorker
+  , runGoalWorkerWithHistory
   , goalAgentConfig
   , runEnvForModel
   , initialTuiLaunch
@@ -27,12 +29,17 @@ module Hach.TUI.App
 
 import Hach.Clipboard (copyToClipboard)
 import Hach.Core
-import Hach.CLI (formatUsd)
+import Hach.CLI (renderRunOutcome)
 import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions, loadProjectInstructionsFile)
 import Hach.Git (getGitDiff)
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
-import Hach.Sessions (saveRunSession)
+import Hach.Sessions (buildSessionHistory, saveRunSession)
+import Hach.TUI.Conversation
+  ( cancelledToolCallPlaceholder
+  , messagesToTranscriptItems
+  , transcriptItemsToMessages
+  )
 import Hach.Tools
 import Hach.TUI.State
 import Hach.TUI.Types
@@ -55,7 +62,7 @@ import Control.Concurrent.STM
   , writeTVar
   )
 import Control.Exception (SomeAsyncException(..), SomeException, fromException, tryJust)
-import Control.Monad (forM_, void, when)
+import Control.Monad (forM_, void)
 import System.Timeout (timeout)
 import Control.Monad.IO.Class (liftIO)
 import Data.Maybe (fromMaybe, listToMaybe)
@@ -169,9 +176,15 @@ awaitPermissionAsk gate usec = do
       Nothing  -> retry
       Just ask -> pure (paId ask, paTool ask, paArgs ask, paReason ask)
 
--- | Algebra that pipes every agent execution event into the Brick BChan.
-tuiAlgebra :: BChan AgentEvent -> IOEnv -> AgentAlgebra IO
-tuiAlgebra chan env = ioAlgebraWithLog (writeBChan chan) env
+-- | Pipe live events to Brick. The worker sends terminal events after the
+-- final canonical conversation has reached the reducer.
+tuiAlgebra :: BChan TuiEvent -> IOEnv -> AgentAlgebra IO
+tuiAlgebra chan env = ioAlgebraWithLog emit env
+  where
+    emit event = case event of
+      EvDone{}  -> pure ()
+      EvError{} -> pure ()
+      _         -> writeBChan chan (EvHarness event)
 
 -- | Compute starting state and initial actions from an optional CLI prompt.
 initialTuiLaunch :: Maybe Text -> TuiState -> (TuiState, [TuiAction])
@@ -182,7 +195,7 @@ initialTuiLaunch (Just p) st
 
 -- | Execute one side-effecting action requested by the pure reducer.
 runTuiAction
-  :: BChan AgentEvent
+  :: BChan TuiEvent
   -> TVar (Maybe (Async ()))
   -> PermissionGate
   -> IOEnv
@@ -225,11 +238,11 @@ runTuiAction eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd = \case
     interruptWorker mWorker
   ActionRunAgent prompt -> do
     currentState <- get
-    triggerAgentRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) mMaxBudgetUsd prompt (tsHistory currentState)
+    triggerAgentRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) mMaxBudgetUsd prompt (tsConversation currentState)
     vScrollToEnd (viewportScroll VpTranscript)
   ActionRunGoal condition -> do
     currentState <- get
-    triggerGoalRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) mMaxBudgetUsd condition (tsHistory currentState)
+    triggerGoalRun eventChan workerVar gate ioEnv (tsModelName currentState) sysPrompt (tsMaxTurns currentState) mMaxBudgetUsd condition (tsConversation currentState)
     vScrollToEnd (viewportScroll VpTranscript)
   ActionScrollTranscript delta ->
     vScrollBy (viewportScroll VpTranscript) delta
@@ -242,29 +255,13 @@ buildTuiSystemPrompt workspace mAppendPrompt = do
   mGuidelines <- loadProjectInstructions workspace
   pure (buildSystemPromptWithAppend mGuidelines mAppendPrompt)
 
--- | Convert loaded messages into transcript items for displaying past conversation.
-messagesToTranscriptItems :: [Message] -> [TranscriptItem]
-messagesToTranscriptItems msgs = concatMap msgToItems msgs
-  where
-    msgToItems = \case
-      SystemMsg s -> [TiSystem s]
-      UserMsg u   -> [TiUser u]
-      AssistantMsg mText calls ->
-        let textItems = maybe [] (\t -> [TiAssistant t]) mText
-            cardItems = [ TiToolCard (ToolCard (callId c) (functionName c) (callArgsRaw c) (Finished (ToolSuccess "")) False)
-                        | c <- calls
-                        ]
-        in textItems ++ cardItems
-      ToolMsg cid name content ->
-        [TiToolCard (ToolCard cid name "" (Finished (ToolSuccess content)) False)]
-
 -- | Run the full modern TUI application.
 runTui :: IOEnv -> Maybe Text -> Maybe Int -> Maybe Double -> Maybe Text -> Maybe Text -> Text -> Maybe (SessionInfo, [Message]) -> IO ()
 runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeSid mLoadedSession = do
   eventChan <- newBChan 100
   workerVar <- newTVarIO (Nothing :: Maybe (Async ()))
   gate <- newPermissionGate
-  let ioEnv = ioEnv0 { ioResolveAsk = resolveAskWithGate gate (writeBChan eventChan) }
+  let ioEnv = ioEnv0 { ioResolveAsk = resolveAskWithGate gate (writeBChan eventChan . EvHarness) }
 
   activeWorkspace <- currentIOWorkspace ioEnv
   skills <- discoverSkills activeWorkspace
@@ -275,9 +272,8 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
         [ file | Just (file, content) <- [mInstructions], not (T.null (T.strip content)) ]
   initialMode <- currentIOPermissionMode ioEnv
 
-  let loadedTranscript = case mLoadedSession of
-        Just (_, msgs) -> messagesToTranscriptItems msgs
-        Nothing        -> []
+  let loadedConversation = maybe [] snd mLoadedSession
+      loadedTranscript = messagesToTranscriptItems loadedConversation
       loadedTurns = case mLoadedSession of
         Just (info, _) -> siTurns info
         Nothing        -> 0
@@ -285,13 +281,14 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
         { tsSkills = skills
         , tsPermissionMode = initialMode
         , tsTranscript = loadedTranscript
+        , tsConversation = loadedConversation
         , tsCurrentTurn = loadedTurns
         , tsTheme = mTheme
         , tsProjectInstructions = listToMaybe loadedInstructions
         }
       (startingState, initialActions) = initialTuiLaunch initialPrompt baseState
 
-  let app :: App TuiState AgentEvent Name
+  let app :: App TuiState TuiEvent Name
       app = App
         { appDraw         = drawUI
         , appChooseCursor = showFirstCursor
@@ -317,8 +314,7 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
   mWorker <- atomically $ readTVar workerVar
   mapM_ cancel mWorker
 
-  let finalMsgs = transcriptItemsToMessages (tsTranscript finalState)
-  saveRunSession activeWorkspace activeSid (ioModel ioEnv) (fmap fst mLoadedSession) finalMsgs
+  saveRunSession activeWorkspace activeSid (ioModel ioEnv) (fmap fst mLoadedSession) (tsConversation finalState)
 
 -- | Collapse a run of same-role text items with one intercalate so the
 -- copy is linear in the total text rather than quadratic in the run length.
@@ -342,9 +338,9 @@ collapseAdjacent view wrap = go
       Just t  -> spanView (t : acc) ys
       Nothing -> (reverse acc, y : ys)
 
--- | Convert dialogue history into LLM messages for multi-turn context.
--- Uses the expanded prompt for the latest turn so that skill instructions
--- reach the model while preserving clean display history in the UI.
+-- | Convert display transcript items into messages for compatibility and
+-- focused tests. Live TUI workers build requests from 'tsConversation', since
+-- the transcript cannot represent all Core history.
 dialogueToMessages :: Text -> Text -> [DialogueItem] -> [Message]
 dialogueToMessages sysPrompt currentPrompt items =
   let priorItems = dropLastUser items
@@ -366,78 +362,6 @@ dialogueToMessages sysPrompt currentPrompt items =
 transcriptToMessages :: Text -> Text -> [TranscriptItem] -> [Message]
 transcriptToMessages = dialogueToMessages
 
--- | Convert a chronological list of transcript items into LLM messages.
--- A run of consecutive tool cards following an assistant text item (or standing alone)
--- becomes one assistant message carrying the text plus those tool calls,
--- followed by one tool message per card keyed by call id.
--- Notices remain omitted. Consecutive assistant or user text items
--- (including those that become adjacent after notices are dropped) are
--- collapsed so the resulting message list never contains two adjoining
--- 'AssistantMsg' or 'UserMsg' values.
-transcriptItemsToMessages :: [TranscriptItem] -> [Message]
-transcriptItemsToMessages = go . collapseAdjacentTextItems . filter (not . isNotice)
-  where
-    isNotice (TiNotice _) = True
-    isNotice _            = False
-
-    collapseAdjacentTextItems =
-      collapseAdjacent (\case TiAssistant t -> Just t; _ -> Nothing) TiAssistant
-      . collapseAdjacent (\case TiUser t -> Just t; _ -> Nothing) TiUser
-
-    extractCards (TiToolCard c : rest) =
-      let (cs, remItems) = extractCards rest
-      in (c : cs, remItems)
-    extractCards remItems = ([], remItems)
-
-    go [] = []
-    go (TiAssistant text : rest) =
-      let (cards, remaining) = extractCards rest
-          mText = if T.null text then Nothing else Just text
-      in if null cards
-           then AssistantMsg mText [] : go remaining
-           else
-             let toolCalls = map cardToToolCall cards
-                 toolMsgs  = map cardToToolMsg cards
-             in AssistantMsg mText toolCalls : toolMsgs ++ go remaining
-    go (TiToolCard card : rest) =
-      let (cards, remaining) = extractCards rest
-          allCards = card : cards
-          toolCalls = map cardToToolCall allCards
-          toolMsgs  = map cardToToolMsg allCards
-      in AssistantMsg Nothing toolCalls : toolMsgs ++ go remaining
-    go (TiUser u : rest) =
-      UserMsg u : go rest
-    go (TiSystem s : rest) =
-      SystemMsg s : go rest
-    go (TiNotice _ : rest) =
-      go rest
-
--- | Convert a 'ToolCard' into a provider-facing 'ToolCall'.
-cardToToolCall :: ToolCard -> ToolCall
-cardToToolCall tc = ToolCall
-  { callId       = tcId tc
-  , functionName = tcName tc
-  , callArgsRaw  = tcArgs tc
-  }
-
--- | Convert a 'ToolCard' into a provider-facing 'ToolMsg'.
-cardToToolMsg :: ToolCard -> Message
-cardToToolMsg tc =
-  ToolMsg (tcId tc) (tcName tc) (toolCardContent (tcLifecycle tc))
-
--- | Placeholder text for unresolved tool calls (Pending, Running, Cancelled).
-cancelledToolCallPlaceholder :: Text
-cancelledToolCallPlaceholder = "Tool call was cancelled before completion."
-
--- | Extract tool message content based on card lifecycle.
-toolCardContent :: ToolLifecycle -> Text
-toolCardContent = \case
-  Finished res  -> toolResultToText res
-  Denied reason -> reason
-  Pending       -> cancelledToolCallPlaceholder
-  Running       -> cancelledToolCallPlaceholder
-  Cancelled     -> cancelledToolCallPlaceholder
-
 -- | Per-run interpreter environment: the TUI's live model selection (changed
 -- via @/model@) overrides the model captured in the startup environment. The
 -- update is a snapshot, so a run already in flight keeps the model it started
@@ -447,7 +371,7 @@ runEnvForModel model ioEnv = ioEnv { ioModel = model }
 
 -- | Trigger background agent task execution.
 triggerAgentRun
-  :: BChan AgentEvent
+  :: BChan TuiEvent
   -> TVar (Maybe (Async ()))
   -> PermissionGate
   -> IOEnv
@@ -456,9 +380,9 @@ triggerAgentRun
   -> Maybe Int
   -> Maybe Double
   -> Text
-  -> [DialogueItem]
+  -> [Message]
   -> EventM Name TuiState ()
-triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd currentPrompt historyItems = do
+triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd currentPrompt priorHistory = do
   st <- get
   liftIO $ do
     cancelPermissionAsk gate
@@ -474,19 +398,10 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
     newWorker <- async $ do
       let runEnv = runEnvForModel selectedModel ioEnv
           agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns mMaxBudgetUsd
-          initHistory = dialogueToMessages sysPrompt finalPrompt historyItems
-      res <- trySync (foldAgentProgram (tuiAlgebra eventChan runEnv) (agentLoop agentConfig allToolDefs initHistory))
-      case res of
-        Left (ex :: SomeException) ->
-          writeBChan eventChan (EvError (T.pack (show ex)))
-        Right (AgentCompleted ans, _) ->
-          writeBChan eventChan (EvDone ans)
-        Right (AgentMaxTurnsReached n, _) ->
-          writeBChan eventChan (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
-        Right (AgentBudgetExceeded spent budget, _) ->
-          writeBChan eventChan (EvError ("Budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"))
-        Right (AgentFailed err, _) ->
-          writeBChan eventChan (EvError err)
+          emit history event = do
+            writeBChan eventChan (EvConversation history)
+            writeBChan eventChan (EvHarness event)
+      runAgentWorker (tuiAlgebra eventChan runEnv) agentConfig finalPrompt priorHistory emit
 
     atomically $ writeTVar workerVar (Just newWorker)
 
@@ -501,34 +416,66 @@ goalAgentConfig ioEnv sysPrompt mMaxTurns mMaxBudgetUsd = AgentConfig
   , cfgMaxBudgetUsd = mMaxBudgetUsd
   }
 
+-- | Run a normal agent turn from the canonical conversation and return the
+-- final history before emitting its terminal event.
+runAgentWorker
+  :: AgentAlgebra IO
+  -> AgentConfig
+  -> Text
+  -> [Message]
+  -> ([Message] -> AgentEvent -> IO ())
+  -> IO ()
+runAgentWorker algebra agentConfig prompt priorHistory emit = do
+  let sysPrompt = fromMaybe "" (cfgSystemPrompt agentConfig)
+      initHistory = buildSessionHistory sysPrompt (Just priorHistory) prompt
+  res <- trySync (foldAgentProgram algebra (agentLoop agentConfig allToolDefs initHistory))
+  case res of
+    Left (ex :: SomeException) ->
+      emit initHistory (EvError (T.pack (show ex)))
+    Right (result, finalHistory) ->
+      emit finalHistory (runOutcomeEvent (runOutcome result Nothing))
+
 -- | Execute a goal-directed agent run using the given algebra and emit events.
 runGoalWorker
   :: AgentAlgebra IO
   -> AgentConfig
   -> Text
-  -> [DialogueItem]
+  -> [Message]
   -> (AgentEvent -> IO ())
   -> IO ()
-runGoalWorker algebra agentConfig condition historyItems emitEvent = do
+runGoalWorker algebra agentConfig condition priorHistory emitEvent =
+  runGoalWorkerWithHistory algebra agentConfig condition priorHistory (\_ event -> emitEvent event)
+
+-- | Goal worker variant that returns canonical history before its terminal
+-- event so the TUI can save and resume the exact model conversation.
+runGoalWorkerWithHistory
+  :: AgentAlgebra IO
+  -> AgentConfig
+  -> Text
+  -> [Message]
+  -> ([Message] -> AgentEvent -> IO ())
+  -> IO ()
+runGoalWorkerWithHistory algebra agentConfig condition priorHistory emit = do
   let sysPrompt = fromMaybe "" (cfgSystemPrompt agentConfig)
-      initHistory = dialogueToMessages sysPrompt condition historyItems
+      initHistory = buildSessionHistory sysPrompt (Just priorHistory) condition
   res <- trySync (foldAgentProgram algebra
               (goalLoop agentConfig allToolDefs condition defaultBlockCap initHistory))
   case res of
     Left (ex :: SomeException) ->
-      emitEvent (EvError (T.pack (show ex)))
-    Right (AgentCompleted ans, _, _) ->
-      emitEvent (EvDone ans)
-    Right (AgentMaxTurnsReached n, _, _) ->
-      emitEvent (EvError ("Maximum turns reached (" <> T.pack (show n) <> ")"))
-    Right (AgentBudgetExceeded spent budget, _, _) ->
-      emitEvent (EvError ("Budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"))
-    Right (AgentFailed err, _, _) ->
-      emitEvent (EvError err)
+      emit initHistory (EvError (T.pack (show ex)))
+    Right (result, finalHistory, goalState) ->
+      emit finalHistory (runOutcomeEvent (runOutcome result (Just goalState)))
+
+-- | The terminal TUI event for a finished run: only success ends the run as
+-- done; a stopped or failed run, including an unmet goal, ends in error.
+runOutcomeEvent :: RunOutcome -> AgentEvent
+runOutcomeEvent outcome = case outcome of
+  RunSucceeded ans -> EvDone ans
+  _                -> EvError (renderRunOutcome outcome)
 
 -- | Trigger background goal-directed agent execution.
 triggerGoalRun
-  :: BChan AgentEvent
+  :: BChan TuiEvent
   -> TVar (Maybe (Async ()))
   -> PermissionGate
   -> IOEnv
@@ -537,9 +484,9 @@ triggerGoalRun
   -> Maybe Int
   -> Maybe Double
   -> Text          -- ^ goal condition (also used as the first-turn directive)
-  -> [DialogueItem]
+  -> [Message]
   -> EventM Name TuiState ()
-triggerGoalRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd condition historyItems = liftIO $ do
+triggerGoalRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd condition priorHistory = liftIO $ do
   cancelPermissionAsk gate
   mOldWorker <- atomically $ do
     w <- readTVar workerVar
@@ -550,26 +497,31 @@ triggerGoalRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns 
   newWorker <- async $ do
     let runEnv = runEnvForModel selectedModel ioEnv
         agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns mMaxBudgetUsd
-    runGoalWorker (tuiAlgebra eventChan runEnv) agentConfig condition historyItems (writeBChan eventChan)
+        emit history event = do
+          writeBChan eventChan (EvConversation history)
+          writeBChan eventChan (EvHarness event)
+    runGoalWorkerWithHistory (tuiAlgebra eventChan runEnv) agentConfig condition priorHistory emit
 
   atomically $ writeTVar workerVar (Just newWorker)
 
 -- | Handle Brick UI events.
 handleBrickEvent
-  :: BChan AgentEvent
+  :: BChan TuiEvent
   -> TVar (Maybe (Async ()))
   -> PermissionGate
   -> IOEnv
   -> Text
   -> Maybe Double
-  -> BrickEvent Name AgentEvent
+  -> BrickEvent Name TuiEvent
   -> EventM Name TuiState ()
 handleBrickEvent eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd = \case
-  AppEvent agentEv -> do
+  AppEvent tuiEvent -> do
     currentState <- get
-    modify (handleAgentEvent agentEv)
-    when (shouldAutoScroll currentState agentEv) $
-      vScrollToEnd (viewportScroll VpTranscript)
+    modify (fst . updateTui tuiEvent)
+    case tuiEvent of
+      EvHarness agentEv | shouldAutoScroll currentState agentEv ->
+        vScrollToEnd (viewportScroll VpTranscript)
+      _ -> pure ()
 
   event -> do
     case brickToUserKey event of

@@ -113,6 +113,7 @@ module Hach.Tools
   , executeReplaceFileContent
   , executeRunCommand
   , runExecCommand
+  , stopBackgroundTasks
   , executeListDir
   , executeFindFiles
   , matchPattern
@@ -158,6 +159,8 @@ import Hach.Tasks
   , spawnBackgroundProcess
   , getBackgroundOutput
   , stopBackgroundProcess
+  , stopAllBackgroundProcesses
+  , signalGroup
   )
 import Hach.Types
 import Control.Applicative ((<|>))
@@ -196,7 +199,7 @@ import System.FilePath
   , takeFileName
   )
 import System.IO (hClose, hGetContents')
-import System.Posix.Signals (sigKILL, signalProcessGroup)
+import System.Posix.Signals (sigKILL)
 import System.Process (CreateProcess(..), StdStream(CreatePipe), cleanupProcess, createProcess, getPid, shell, waitForProcess)
 import System.Timeout (timeout)
 
@@ -1008,7 +1011,7 @@ toolRegistry =
   , registration "EnterWorktree" ["EnterWorktree", "enter_worktree", "enterworktree"] AuthorityCommand [enterWorktreeToolDef] (target parseEnterWorktreeArgs worktreeName) noTarget (run parseEnterWorktreeArgs (executeEnterWorktree . wsRoot))
   , registration "ExitWorktree" ["ExitWorktree", "exit_worktree", "exitworktree"] AuthorityCommand [exitWorktreeToolDef] (noArgs (const (Right ()))) noTarget (\ws _ -> executeExitWorktree (wsRoot ws))
   , registration "EnterPlanMode" ["EnterPlanMode", "enter_plan_mode"] AuthorityInteraction [enterPlanModeToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Entered plan mode. The agent is now in read-only planning mode."))))
-  , registration "ExitPlanMode" ["ExitPlanMode", "exit_plan_mode"] AuthorityInteraction [exitPlanModeToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Exited plan mode. The agent is now in standard execution mode."))))
+  , registration "ExitPlanMode" ["ExitPlanMode", "exit_plan_mode"] AuthorityInteraction [exitPlanModeToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Exited plan mode."))))
   , registration "EndConversation" ["EndConversation", "end_conversation"] AuthorityInteraction [endConversationToolDef] (noArgs (const (Right ()))) noTarget (const (const (pure (ToolSuccess "Conversation completed by agent."))))
   ]
   where
@@ -1256,7 +1259,7 @@ runGroupWithTimeout micros cp = do
   -- but its backgrounded children still live in the group it led.
   mPid <- getPid ph
   let killGroup = do
-        mapM_ (\pid -> try (signalProcessGroup sigKILL pid) :: IO (Either SomeException ())) mPid
+        mapM_ (signalGroup sigKILL) mPid
         cleanupProcess procs
       collect = case (mIn, mOut, mErr) of
         (Just hIn, Just hOut, Just hErr) -> do
@@ -1441,7 +1444,7 @@ executeWebFetch (WebFetchArgs url) = do
       case reqRes of
         Left ex -> pure $ ToolError ("Invalid URL '" <> url <> "': " <> T.pack (show ex))
         Right req -> do
-          let req' = req { requestHeaders = [("User-Agent", "hach/0.1.10.0")] }
+          let req' = req { requestHeaders = [("User-Agent", "hach/0.1.12.0")] }
           respRes <- try (httpLbs req' mgr) :: IO (Either SomeException (Response BSL.ByteString))
           case respRes of
             Left ex -> pure $ ToolError ("HTTP fetch error: " <> T.pack (show ex))
@@ -1504,6 +1507,10 @@ globalBgRegistry :: BackgroundRegistry
 globalBgRegistry = unsafePerformIO newBackgroundRegistry
 {-# NOINLINE globalBgRegistry #-}
 
+-- | Stop every background task this process started, so none outlive Hach.
+stopBackgroundTasks :: IO ()
+stopBackgroundTasks = stopAllBackgroundProcesses globalBgRegistry
+
 globalTaskStore :: TVar TaskStore
 globalTaskStore = unsafePerformIO (newTVarIO emptyTaskStore)
 {-# NOINLINE globalTaskStore #-}
@@ -1551,12 +1558,12 @@ executeTaskUpdate (TaskUpdateArgs (TaskId tid) st) = do
 
 executeTaskStop :: TaskStopArgs -> IO ToolResult
 executeTaskStop (TaskStopArgs tid) = do
-  ok <- stopBackgroundProcess globalBgRegistry tid
-  if ok
-    then do
+  res <- stopBackgroundProcess globalBgRegistry tid
+  case res of
+    Right () -> do
       atomically $ modifyTVar' globalTaskStore (\s -> updateTask s (unTaskId tid) "stopped")
       pure $ ToolSuccess ("Stopped task " <> unTaskId tid)
-    else pure $ ToolError ("Failed to stop task " <> unTaskId tid)
+    Left err -> pure $ ToolError ("Failed to stop task " <> unTaskId tid <> ": " <> err)
 
 executeMonitor :: MonitorArgs -> IO ToolResult
 executeMonitor (MonitorArgs tid) = do

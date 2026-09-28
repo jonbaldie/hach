@@ -22,7 +22,7 @@ import Hach.TUI.State (updateTui)
 import Hach.TUI.Types
 import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (SomeException, finally, try)
-import Control.Monad (when)
+import Control.Monad (forM_, when)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
@@ -171,7 +171,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
       it "keeps headless unresolved asks denied" $ do
         env <- newIOEnv "k" "test-model" testDir False
         interpCheckPermission (ioAlgebra env) "write_file" "{\"path\":\"hello.txt\"}"
-          `shouldReturn` Just headlessAskDeniedReason
+          `shouldReturn` Just (headlessAskDeniedReason ModeDefault AuthorityWorkspaceWrite)
 
       it "does not consult the ask resolver for explicit policy denies" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
@@ -268,12 +268,13 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         createDirectoryIfMissing True skillDir
         TIO.writeFile (skillDir </> "SKILL.md") "---\nname: plan-command-guard\n---\n!touch dynamic-command-ran\n"
         env0 <- newIOEnv "k" "test-model" testDir False
-        let env = env0 { ioResolveAsk = \tool _ _ ->
-              if tool == "Skill" then pure Nothing else pure (Just headlessAskDeniedReason)
+        let defaultDeny = headlessAskDeniedReason ModeDefault AuthorityWorkspaceWrite
+            env = env0 { ioResolveAsk = \tool _ _ ->
+              if tool == "Skill" then pure Nothing else pure (Just defaultDeny)
             }
         events <- runSkillLoop env
         doesFileExist marker `shouldReturn` True
-        events `shouldNotContain` [EvPermissionDenied "Skill" headlessAskDeniedReason]
+        events `shouldNotContain` [EvPermissionDenied "Skill" defaultDeny]
 
     describe "permission-to-TUI ask path (Issue #91)" $ do
       let writeCall = ToolCall "c1" "write_file" "{\"path\":\"hello.txt\",\"content\":\"hello\"}"
@@ -306,17 +307,19 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
       it "executes the pending write once when the ask is approved" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
         let env = env0 { ioResolveAsk = \_ _ _ -> pure Nothing }
+            defaultDeny = headlessAskDeniedReason ModeDefault AuthorityWorkspaceWrite
         (_result, events) <- runWriteLoop env
         doesFileExist (testDir </> "hello.txt") `shouldReturn` True
-        events `shouldNotContain` [EvPermissionDenied "write_file" headlessAskDeniedReason]
+        events `shouldNotContain` [EvPermissionDenied "write_file" defaultDeny]
         events `shouldNotContain` [EvPermissionDenied "write_file" interactiveAskDeniedReason]
 
       it "leaves the write unapplied when the ask is denied" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
-        let env = env0 { ioResolveAsk = \_ _ _ -> pure (Just headlessAskDeniedReason) }
+        let defaultDeny = headlessAskDeniedReason ModeDefault AuthorityWorkspaceWrite
+            env = env0 { ioResolveAsk = \_ _ _ -> pure (Just defaultDeny) }
         (_result, events) <- runWriteLoop env
         doesFileExist (testDir </> "hello.txt") `shouldReturn` False
-        events `shouldContain` [EvPermissionDenied "write_file" headlessAskDeniedReason]
+        events `shouldContain` [EvPermissionDenied "write_file" defaultDeny]
 
       it "pauses on PermAsk until the TUI gate answers, then approves" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
@@ -398,9 +401,9 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
 
     describe "headless default permission asks (Issue #154)" $ do
       let writeCall = ToolCall "c1" "write_file" "{\"path\":\"hello.txt\",\"content\":\"hi\"}"
-          runHeadlessWrite env = do
+          runHeadlessTool env call prompt = do
             stepsRef <- newIORef
-              [ \_ _ -> Right (AssistantResponse Nothing [writeCall] Nothing)
+              [ \_ _ -> Right (AssistantResponse Nothing [call] Nothing)
               , \_ _ -> Right (AssistantResponse (Just "done") [] Nothing)
               ] :: IO (IORef [[Message] -> [ToolDef] -> Either Text AssistantResponse])
             eventsRef <- newIORef [] :: IO (IORef [AgentEvent])
@@ -420,9 +423,10 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
                   , cfgMaxTurns     = Nothing
                   , cfgMaxBudgetUsd = Nothing
                   }
-            result <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write hello.txt"])
+            result <- foldAgentProgram alg (agentLoop cfg [] [UserMsg prompt])
             events <- readIORef eventsRef
             pure (result, events)
+          runHeadlessWrite env = runHeadlessTool env writeCall "write hello.txt"
           namesHeadlessFlag msg =
             T.isInfixOf "--no-tui" msg && T.isInfixOf "--permission-mode" msg
 
@@ -448,7 +452,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
           AgentBudgetExceeded _ _ -> expectationFailure
             "headless default-mode denials must not look like a budget abort"
           AgentFailed err ->
-            err `shouldBe` headlessAskBlockedMessage
+            err `shouldBe` headlessAskBlockedMessage ModeDefault [AuthorityWorkspaceWrite]
 
       it "still completes writes under acceptEdits" $ do
         env <- newIOEnvWithPermissions
@@ -457,6 +461,72 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         ((result, _), _) <- runHeadlessWrite env
         doesFileExist (testDir </> "hello.txt") `shouldReturn` True
         result `shouldBe` AgentCompleted "done"
+
+      it "recommends dontAsk and not acceptEdits when a command is denied under acceptEdits (Issue #221)" $ do
+        env <- newIOEnvWithPermissions
+          (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
+          "k" "test-model" testDir False
+        let cmdCall = ToolCall "c1" "run_command" "{\"command\":\"echo 42\"}"
+        ((result, _hist), events) <- runHeadlessTool env cmdCall "run echo 42"
+        events `shouldSatisfy` any (\case
+          EvPermissionDenied "run_command" reason ->
+            T.isInfixOf "dontAsk" reason && not (T.isInfixOf "acceptEdits" reason)
+          _ -> False)
+        case result of
+          AgentFailed err -> do
+            err `shouldSatisfy` (\msg -> T.isInfixOf "dontAsk" msg && not (T.isInfixOf "acceptEdits" msg))
+          other -> expectationFailure ("Expected AgentFailed, got " <> show other)
+
+      it "recommends dontAsk and not acceptEdits when a command is denied under default mode (Issue #221)" $ do
+        env <- newIOEnv "k" "test-model" testDir False
+        let cmdCall = ToolCall "c1" "run_command" "{\"command\":\"echo 42\"}"
+        ((result, _hist), events) <- runHeadlessTool env cmdCall "run echo 42"
+        events `shouldSatisfy` any (\case
+          EvPermissionDenied "run_command" reason ->
+            T.isInfixOf "dontAsk" reason && not (T.isInfixOf "acceptEdits" reason)
+          _ -> False)
+        case result of
+          AgentFailed err -> do
+            err `shouldBe` headlessAskBlockedMessage ModeDefault [AuthorityCommand]
+          other -> expectationFailure ("Expected AgentFailed, got " <> show other)
+
+      it "recommends dontAsk for TaskCreate with a command under acceptEdits (Issue #221)" $ do
+        env <- newIOEnvWithPermissions
+          (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
+          "k" "test-model" testDir False
+        let taskCall = ToolCall "c1" "TaskCreate" "{\"name\":\"bg task\",\"command\":\"echo bg\"}"
+        ((result, _hist), events) <- runHeadlessTool env taskCall "create task"
+        events `shouldSatisfy` any (\case
+          EvPermissionDenied "TaskCreate" reason ->
+            T.isInfixOf "dontAsk" reason && not (T.isInfixOf "acceptEdits" reason)
+          _ -> False)
+        case result of
+          AgentFailed err -> do
+            err `shouldBe` headlessAskBlockedMessage ModeAcceptEdits [AuthorityCommand]
+          other -> expectationFailure ("Expected AgentFailed, got " <> show other)
+
+      it "recommends dontAsk for mixed write and command denials in default mode (Issue #221)" $ do
+        env <- newIOEnv "k" "test-model" testDir False
+        let cmdCall = ToolCall "c2" "run_command" "{\"command\":\"echo 42\"}"
+        stepsRef <- newIORef
+          [ \_ _ -> Right (AssistantResponse Nothing [writeCall, cmdCall] Nothing)
+          , \_ _ -> Right (AssistantResponse (Just "done") [] Nothing)
+          ] :: IO (IORef [[Message] -> [ToolDef] -> Either Text AssistantResponse])
+        let alg = (ioAlgebra env)
+              { interpPrompt = \msgs tools -> do
+                  steps <- readIORef stepsRef
+                  case steps of
+                    (step : rest) -> do
+                      writeIORef stepsRef rest
+                      pure (step msgs tools)
+                    [] -> pure (Right (AssistantResponse (Just "done") [] Nothing))
+              }
+            cfg = AgentConfig "test-model" Nothing Nothing Nothing
+        (result, _) <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "do mixed"])
+        case result of
+          AgentFailed err ->
+            err `shouldBe` headlessAskBlockedMessage ModeDefault [AuthorityWorkspaceWrite, AuthorityCommand]
+          other -> expectationFailure ("Expected AgentFailed, got " <> show other)
 
       it "keeps --max-turns aborts distinct from permission blocks" $ do
         env <- newIOEnv "k" "test-model" testDir False
@@ -532,6 +602,25 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         tsPermissionMode s `shouldBe` ModePlan
         actions `shouldContain` [ActionSetPermissionMode ModePlan]
 
+      it "tracks permission mode changes emitted by plan-mode tools" $ do
+        let initial = (initialTuiState "test-model" Nothing) { tsPermissionMode = ModeAcceptEdits }
+            (planned, _) = updateTui (EvSubmit "/plan") initial
+            (restored, _) = updateTui (EvHarness (EvPermissionModeChanged ModeAcceptEdits)) planned
+        tsPermissionMode planned `shouldBe` ModePlan
+        tsPermissionMode restored `shouldBe` ModeAcceptEdits
+
+      it "emits live permission mode changes from plan-mode tools" $ do
+        modes <- newIORef []
+        let perms = defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits }
+        env <- newIOEnvWithPermissions perms "k" "test-model" testDir False
+        let logger event = case event of
+              EvPermissionModeChanged mode -> modifyIORef' modes (<> [mode])
+              _ -> pure ()
+            alg = ioAlgebraWithLog logger env
+        _ <- interpTool alg (ToolCall "p1" "EnterPlanMode" "{}")
+        _ <- interpTool alg (ToolCall "p2" "ExitPlanMode" "{}")
+        readIORef modes `shouldReturn` [ModePlan, ModeAcceptEdits]
+
       it "reports the current permission mode in /permissions" $ do
         let planned = (initialTuiState "test-model" Nothing) { tsPermissionMode = ModePlan }
             (s, _) = updateTui (EvSubmit "/permissions") planned
@@ -551,13 +640,32 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
           currentIOPermissionMode env `shouldReturn` ModePlan)
           ["EnterPlanMode", "enter_plan_mode"]
 
-      it "restores the default permission mode for ExitPlanMode aliases" $ do
+      it "restores the previous mode for ExitPlanMode aliases" $ do
+        forM_ [("ExitPlanMode", ModeAcceptEdits), ("exit_plan_mode", ModeDontAsk)] $ \(exitName, initialMode) -> do
+          let perms = defaultIOEnvPermissions { iopInitialMode = initialMode }
+          env <- newIOEnvWithPermissions perms "k" "test-model" testDir False
+          let alg = ioAlgebra env
+          _ <- interpTool alg (ToolCall "p1" "EnterPlanMode" "{}")
+          result <- interpTool alg (ToolCall "p2" exitName "{}")
+          currentIOPermissionMode env `shouldReturn` initialMode
+          result `shouldBe` ToolSuccess
+            ("Exited plan mode. Restored " <> permissionModeName initialMode <> " permissions.")
+
+      it "does not overwrite the saved mode when EnterPlanMode is called twice" $ do
+        env <- newIOEnvWithPermissions
+          (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
+          "k" "test-model" testDir False
+        let alg = ioAlgebra env
+        _ <- interpTool alg (ToolCall "p1" "EnterPlanMode" "{}")
+        _ <- interpTool alg (ToolCall "p2" "EnterPlanMode" "{}")
+        _ <- interpTool alg (ToolCall "p3" "ExitPlanMode" "{}")
+        currentIOPermissionMode env `shouldReturn` ModeAcceptEdits
+
+      it "falls back to default when the session starts in plan mode" $ do
         env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
         let alg = ioAlgebra env
-        mapM_ (\name -> do
-          _ <- interpTool alg (ToolCall "p1" name "{}")
-          currentIOPermissionMode env `shouldReturn` ModeDefault)
-          ["ExitPlanMode", "exit_plan_mode"]
+        _ <- interpTool alg (ToolCall "p1" "ExitPlanMode" "{}")
+        currentIOPermissionMode env `shouldReturn` ModeDefault
 
     describe "worktree switching in IO interpreter" $ do
       it "fails ExitWorktree when not inside a worktree" $ do
@@ -741,6 +849,14 @@ renderEventQuietSpec = describe "renderEventIO in quiet (--print) mode" $ do
     (out, _) <- captureStdStreams (renderEventIO True (EvDone "4"))
     out `shouldContain` "Final Answer"
     out `shouldContain` "4"
+
+  it "does not claim goal is still active when goal is blocked (Issue #223)" $ do
+    (out, _) <- captureStdStreams (renderEventIO True (EvGoalBlocked "the file unicorn.txt exists"))
+    out `shouldNotContain` "Goal still active"
+    out `shouldContain` "Goal not met in this run: the file unicorn.txt exists"
+    (_, err) <- captureStdStreams (renderEventIO False (EvGoalBlocked "the file unicorn.txt exists"))
+    err `shouldNotContain` "Goal still active"
+    err `shouldContain` "Goal not met in this run: the file unicorn.txt exists"
 
 captureStdStreams :: IO () -> IO (String, String)
 captureStdStreams action = do

@@ -44,6 +44,14 @@ module Hach.Core
     -- * Goal-Directed Loop
   , goalLoop
   , defaultBlockCap
+
+    -- * Run Outcome
+  , RunOutcome(..)
+  , StopReason(..)
+  , RunFailure(..)
+  , runOutcome
+  , historyBlockedByHeadlessAsks
+  , headlessAskBlockedMessageForHistory
   ) where
 
 import Hach.Types
@@ -382,7 +390,7 @@ agentStep cfg tools turn spent currentHistory
                   finalHistory = currentHistory ++ [AssistantMsg (respContent resp) []]
                   result
                     | historyBlockedByHeadlessAsks finalHistory =
-                        AgentFailed headlessAskBlockedMessage
+                        AgentFailed (headlessAskBlockedMessageForHistory finalHistory)
                     | otherwise = AgentCompleted content
               case result of
                 AgentCompleted answer -> logEvent (EvDone answer)
@@ -583,19 +591,77 @@ goalLoop cfg tools condition blockCap initialHistory = do
               _ ->
                 pure (result, finalHist, gs)
 
+-- | Why a run stopped before finishing: a configured limit was reached.
+data StopReason
+  = StopMaxTurns !Int
+  | StopBudget !Double !Double  -- ^ spent, budget
+  deriving (Show, Eq)
+
+-- | Why a run failed.
+data RunFailure
+  = AgentError !Text  -- ^ the agent loop itself failed
+  | GoalNotMet !Text  -- ^ the run finished but its goal was not achieved
+  deriving (Show, Eq)
+
+-- | What a finished run means for the user, shared by every front-end.
+data RunOutcome
+  = RunSucceeded !Text
+  | RunStopped !StopReason
+  | RunFailed !RunFailure
+  deriving (Show, Eq)
+
+-- | Classify a finished run from its result and, for goal runs, the final
+-- goal state returned by 'goalLoop'. A completed answer only counts as
+-- success when there is no goal or the goal was achieved.
+runOutcome :: AgentResult -> Maybe GoalState -> RunOutcome
+runOutcome result mGs = case result of
+  AgentMaxTurnsReached n           -> RunStopped (StopMaxTurns n)
+  AgentBudgetExceeded spent budget -> RunStopped (StopBudget spent budget)
+  AgentFailed err                  -> RunFailed (AgentError err)
+  AgentCompleted ans -> case mGs of
+    Just gs | gsStatus gs /= GoalAchieved -> RunFailed (GoalNotMet (goalShortfall gs))
+    _                                     -> RunSucceeded ans
+  where
+    goalShortfall gs = case gsLastReason gs of
+      Just r | not (T.null (T.strip r)) -> r
+      _                                 -> "condition not satisfied"
+
 -- | True when the run requested at least one write/command that was denied
 -- because headless mode cannot prompt, and no such mutation actually ran.
 historyBlockedByHeadlessAsks :: [Message] -> Bool
 historyBlockedByHeadlessAsks hist =
   let mutationMsgs = [ content | ToolMsg _ name content <- hist, isMutationTool name ]
-      headlessDenies = filter (T.isInfixOf headlessAskDeniedReason) mutationMsgs
+      headlessDenies = filter isHeadlessAskDeniedReason mutationMsgs
       successes = filter (not . isDeniedToolOutput) mutationMsgs
   in not (null headlessDenies) && null successes
+
+-- | Format the blocked task error message based on the mutations that were
+-- denied in history. If any command was denied or if acceptEdits was already
+-- in effect, recommends dontAsk or allow rules; otherwise recommends acceptEdits.
+headlessAskBlockedMessageForHistory :: [Message] -> Text
+headlessAskBlockedMessageForHistory hist =
+  let deniedEntries =
+        [ (name, content)
+        | ToolMsg _ name content <- hist
+        , isMutationTool name
+        , isHeadlessAskDeniedReason content
+        ]
+      authorities =
+        [ if T.isInfixOf "dontAsk" content
+            then AuthorityCommand
+            else case resolveToolIdentity name of
+                   Just (_, auth) -> auth
+                   Nothing        -> AuthorityCommand
+        | (name, content) <- deniedEntries
+        ]
+      isAcceptEditsMode = any (\(_, content) -> not (T.isInfixOf "acceptEdits" content)) deniedEntries
+      mode = if isAcceptEditsMode then ModeAcceptEdits else ModeDefault
+  in headlessAskBlockedMessage mode authorities
 
 isDeniedToolOutput :: Text -> Bool
 isDeniedToolOutput content =
   let lower = T.toLower content
-  in T.isInfixOf headlessAskDeniedReason content
+  in isHeadlessAskDeniedReason content
      || T.isInfixOf "denied" lower
      || T.isInfixOf "blocked" lower
 

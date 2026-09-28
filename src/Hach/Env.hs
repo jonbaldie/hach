@@ -1,8 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Runtime environment resolution: OpenRouter credentials and model from the
--- process environment and @.env@, layered settings, and the system prompt.
--- Command-line parsing lives in "Hach.CLI".
 module Hach.Env
   ( EnvConfig(..)
   , EnvError(..)
@@ -30,7 +27,11 @@ import Hach.Settings
   , loadLayeredSettings
   , renderSettingsError
   )
-import Hach.Types (EffortLevel, PermissionMode(..), parseEffortLevel)
+import Hach.Types
+  ( EffortLevel
+  , PermissionMode(..)
+  , parseEffortLevel
+  )
 import Control.Applicative ((<|>))
 import Control.Exception (try, SomeException)
 import Data.Bifunctor (first)

@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               hach
-version:            0.1.10.0
+version:            0.1.12.0
 synopsis:           A minimal agentic coding harness in Haskell
 license:            MIT
 author:             Jonathan Baldie
@@ -33,8 +33,8 @@ library
         Hach.OpenRouter
         Hach.Interpreter.IO
         Hach.Interpreter.Pure
-        Hach.CLI
         Hach.Env
+        Hach.CLI
         Hach.TUI.Types
         Hach.TUI.State
         Hach.TUI.UI
@@ -52,6 +52,8 @@ library
         Hach.Tasks
         Hach.Notifications
         Hach.Clipboard
+    other-modules:
+        Hach.TUI.Conversation
     build-depends:
         base >= 4.18 && < 5,
         text,

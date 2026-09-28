@@ -1,13 +1,13 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
--- | Command-line interface: option parsing, help text, startup intent and
--- @--print@ result presentation. Runtime environment resolution lives in
--- "Hach.Env".
 module Hach.CLI
   ( CliOptions(..)
   , OutputFormat(..)
   , defaultCliOptions
+  , parseOutputFormat
+  , parsePermMode
   , parseCliArgs
   , CliFlag(..)
   , cliFlags
@@ -18,10 +18,23 @@ module Hach.CLI
   , headlessEmitsBanners
   , headlessVerbose
   , formatPrintResult
+  , renderRunOutcome
+  , isHeadlessGoalSuccess
+  , resolveHeadlessExitCode
+  , formatHeadlessGoalOutcome
+  , formatPrintGoalResult
   , formatUsd
   ) where
 
-import Hach.Types (AgentResult(..), PermissionMode(..))
+import Hach.Core (RunFailure(..), RunOutcome(..), StopReason(..), runOutcome)
+import Hach.Types
+  ( AgentResult(..)
+  , GoalState(..)
+  , GoalStatus(..)
+  , goalStatusName
+  , PermissionMode(..)
+  )
+import System.Exit (ExitCode(..))
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
@@ -148,17 +161,7 @@ headlessVerbose CliOptions{..} = not optPrint
 -- | Format the agent result for '--print' / '-p' stdout.
 formatPrintResult :: OutputFormat -> AgentResult -> Text
 formatPrintResult fmt result = case fmt of
-  OutputText -> case result of
-    AgentCompleted ans -> ans
-    AgentMaxTurnsReached turns ->
-      T.pack ("Agent reached maximum turn limit of " <> show turns <> ".")
-    AgentBudgetExceeded spent budget ->
-      "Agent reached the spending budget of "
-        <> formatUsd budget
-        <> " (spent "
-        <> formatUsd spent
-        <> ")."
-    AgentFailed err -> err
+  OutputText -> renderRunOutcome (runOutcome result Nothing)
   OutputJson ->
     TE.decodeUtf8 . LBS.toStrict . Aeson.encode $ case result of
       AgentCompleted ans ->
@@ -176,6 +179,102 @@ formatPrintResult fmt result = case fmt of
           ]
       AgentFailed err ->
         Aeson.object ["error" .= err]
+
+-- | Plain-text description of a run outcome. Success renders the answer
+-- itself; every other outcome renders the reason the run did not succeed.
+renderRunOutcome :: RunOutcome -> Text
+renderRunOutcome = \case
+  RunSucceeded ans -> ans
+  RunStopped (StopMaxTurns turns) ->
+    T.pack ("Agent reached maximum turn limit of " <> show turns <> ".")
+  RunStopped (StopBudget spent budget) ->
+    "Agent reached the spending budget of "
+      <> formatUsd budget
+      <> " (spent "
+      <> formatUsd spent
+      <> ")."
+  RunFailed (AgentError err)    -> err
+  RunFailed (GoalNotMet reason) -> "Goal not met: " <> reason
+
+-- | Check if a headless goal execution completed successfully (goal was achieved and agent did not fail).
+isHeadlessGoalSuccess :: AgentResult -> GoalState -> Bool
+isHeadlessGoalSuccess result gs = case runOutcome result (Just gs) of
+  RunSucceeded _ -> True
+  _              -> False
+
+-- | Determine the process exit code for a headless run, taking goal state into account if present.
+resolveHeadlessExitCode :: AgentResult -> Maybe GoalState -> ExitCode
+resolveHeadlessExitCode result mGs = case runOutcome result mGs of
+  RunSucceeded _ -> ExitSuccess
+  _              -> ExitFailure 1
+
+-- | Why a goal run fell short: the evaluator's last reason, else the
+-- reason the agent loop stopped.
+goalShortfallReason :: GoalState -> AgentResult -> Text
+goalShortfallReason gs result = case gsLastReason gs of
+  Just r | not (T.null (T.strip r)) -> r
+  _ -> case result of
+    AgentFailed err -> err
+    AgentMaxTurnsReached n -> "maximum turn limit reached (" <> T.pack (show n) <> ")"
+    AgentBudgetExceeded spent budget ->
+      "spending budget exceeded (" <> formatUsd spent <> " spent of " <> formatUsd budget <> ")"
+    AgentCompleted _ -> "condition not satisfied"
+
+-- | Formats the final outcome message for a headless goal run.
+formatHeadlessGoalOutcome :: GoalState -> AgentResult -> Text
+formatHeadlessGoalOutcome gs result =
+  case gsStatus gs of
+    GoalAchieved -> "Task completed."
+    _            -> "Goal not met: " <> goalShortfallReason gs result
+
+-- | Format the goal result for '--print' / '-p' stdout.
+formatPrintGoalResult :: OutputFormat -> GoalState -> AgentResult -> Text
+formatPrintGoalResult fmt gs result = case fmt of
+  OutputText -> renderRunOutcome (runOutcome result (Just gs))
+  OutputJson ->
+    TE.decodeUtf8 . LBS.toStrict . Aeson.encode $
+      let statusText = goalStatusName (gsStatus gs)
+          baseFields =
+            [ "status"      .= statusText
+            , "goal_status" .= statusText
+            ]
+      in case gsStatus gs of
+        GoalAchieved -> case result of
+          AgentCompleted ans ->
+            Aeson.object (("answer" .= ans) : baseFields)
+          AgentMaxTurnsReached turns ->
+            Aeson.object
+              ( [ "error" .= ("max_turns" :: Text)
+                , "turns" .= turns
+                ]
+                ++ baseFields
+              )
+          AgentBudgetExceeded spent budget ->
+            Aeson.object
+              ( [ "error" .= ("max_budget" :: Text)
+                , "spent" .= spent
+                , "budget" .= budget
+                ]
+                ++ baseFields
+              )
+          AgentFailed err ->
+            Aeson.object (("error" .= err) : baseFields)
+        _ ->
+          let outcome = formatHeadlessGoalOutcome gs result
+              errReason = goalShortfallReason gs result
+              extraFields = case result of
+                AgentCompleted ans | not (T.null ans) -> ["answer" .= ans]
+                AgentMaxTurnsReached n -> ["turns" .= n]
+                AgentBudgetExceeded spent budget -> ["spent" .= spent, "budget" .= budget]
+                AgentFailed err -> ["failure_error" .= err]
+                _ -> []
+          in Aeson.object
+            ( [ "error"   .= outcome
+              , "reason"  .= errReason
+              ]
+              ++ baseFields
+              ++ extraFields
+            )
 
 -- | One documented command-line option. 'cliFlags' sits beside
 -- 'parseCliArgs' so the help text and the parser are kept in step; the test

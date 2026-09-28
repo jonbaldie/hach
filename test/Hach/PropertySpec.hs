@@ -41,6 +41,7 @@ instance Arbitrary TuiEvent where
   arbitrary = oneof
     [ EvUserKey <$> arbitrary
     , EvSubmit . T.pack <$> arbitrary
+    , EvConversation . pure . UserMsg . T.pack <$> arbitrary
     , EvHarness . EvTurnStart <$> choose (1, 20)
     , EvHarness . EvDone . T.pack <$> arbitrary
     , EvHarness . EvError . T.pack <$> arbitrary

@@ -4,7 +4,10 @@ module Hach.EnvSpec (spec) where
 
 import Hach.Env
 import Hach.Settings (Settings(..), defaultSettings)
-import Hach.Types (EffortLevel(..), parseEffortLevel)
+import Hach.Types
+  ( EffortLevel(..)
+  , parseEffortLevel
+  )
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO

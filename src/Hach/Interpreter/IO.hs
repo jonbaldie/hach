@@ -124,9 +124,10 @@ defaultIOEnvPermissions = IOEnvPermissions ModeDefault [] Map.empty
 -- | Live permission runtime. Rules and hooks are fixed for the session; the
 -- mode is mutable so slash commands can switch enforcement mid-session.
 data PermissionRuntime = PermissionRuntime
-  { prtMode  :: !(IORef PermissionMode)
-  , prtRules :: ![PermissionRule]
-  , prtHooks :: !(Map HookEvent [HookHandler])
+  { prtMode           :: !(IORef PermissionMode)
+  , prtModeBeforePlan :: !(IORef (Maybe PermissionMode))
+  , prtRules          :: ![PermissionRule]
+  , prtHooks          :: !(Map HookEvent [HookHandler])
   }
 
 -- | Runtime environment for executing an agent harness in real IO.
@@ -154,6 +155,7 @@ newIOEnvWithPermissions
 newIOEnvWithPermissions perms apiKey model workspace verbose = do
   mgr <- newManager tlsManagerSettings
   modeRef <- newIORef (iopInitialMode perms)
+  modeBeforePlanRef <- newIORef Nothing
   wsRef <- newIORef workspace
   wtRef <- newIORef Nothing
   pure IOEnv
@@ -165,15 +167,41 @@ newIOEnvWithPermissions perms apiKey model workspace verbose = do
     , ioCurrentWorkspace = wsRef
     , ioCurrentWorktree  = wtRef
     , ioVerbose          = verbose
-    , ioPerms            = PermissionRuntime modeRef (iopRules perms) (iopHooks perms)
+    , ioPerms            = PermissionRuntime modeRef modeBeforePlanRef (iopRules perms) (iopHooks perms)
     , ioEffortLevel      = Nothing
-    , ioResolveAsk       = \_ _ _ -> pure (Just headlessAskDeniedReason)
+    , ioResolveAsk       = \tool args _ -> do
+        mode <- readIORef modeRef
+        let auth = case resolveTool (ToolCall "" tool args) of
+              Just (Right resolved) -> resolvedToolAuthority resolved
+              _ | Just (_, a) <- resolveToolIdentity tool -> a
+              _ -> AuthorityCommand
+        pure (Just (headlessAskDeniedReason mode auth))
     }
 
 -- | Switch the live permission mode; subsequent tool calls are checked
--- against the new mode.
+-- against the new mode. Entering plan mode remembers the prior mode once,
+-- while any other explicit selection replaces it and clears that saved mode.
 setIOPermissionMode :: IOEnv -> PermissionMode -> IO ()
-setIOPermissionMode env mode = writeIORef (prtMode (ioPerms env)) mode
+setIOPermissionMode env mode = do
+  let runtime = ioPerms env
+  current <- readIORef (prtMode runtime)
+  if mode == ModePlan
+    then when (current /= ModePlan) $
+      writeIORef (prtModeBeforePlan runtime) (Just current)
+    else writeIORef (prtModeBeforePlan runtime) Nothing
+  writeIORef (prtMode runtime) mode
+
+-- | Leave plan mode and restore the permission mode that was active before it.
+-- Sessions that started in plan mode have no saved mode, so they return to the
+-- ordinary default policy.
+restoreIOPermissionMode :: IOEnv -> IO PermissionMode
+restoreIOPermissionMode env = do
+  let runtime = ioPerms env
+  saved <- readIORef (prtModeBeforePlan runtime)
+  let restored = fromMaybe ModeDefault saved
+  writeIORef (prtModeBeforePlan runtime) Nothing
+  writeIORef (prtMode runtime) restored
+  pure restored
 
 -- | Read the currently active permission mode.
 currentIOPermissionMode :: IOEnv -> IO PermissionMode
@@ -269,7 +297,7 @@ renderEventIO verbose = \case
     notice ("\n[Goal] Cleared: " <> T.unpack cond)
 
   EvGoalBlocked cond ->
-    notice ("\n[Goal] No progress detected. Goal still active: " <> T.unpack cond)
+    notice ("\n[Goal] No progress detected. Goal not met in this run: " <> T.unpack cond)
 
   EvPartialResponse delta ->
     when verbose $ TIO.putStr delta
@@ -291,6 +319,8 @@ renderEventIO verbose = \case
 
   EvNotificationSent msg ->
     notice ("\n[Notification] " <> T.unpack msg)
+
+  EvPermissionModeChanged _ -> pure ()
   where
     -- Quiet runs ('--print' / '-p') reserve stdout for the final answer,
     -- so notices move to stderr instead of disappearing.
@@ -372,12 +402,18 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
         _ -> case functionName call of
           name | name `elem` ["EnterPlanMode", "enter_plan_mode"] -> do
             setIOPermissionMode env ModePlan
+            logger (EvPermissionModeChanged ModePlan)
             scope <- currentIOWorkspaceScope env
             executeCodingTool scope call
           name | name `elem` ["ExitPlanMode", "exit_plan_mode"] -> do
-            setIOPermissionMode env ModeDefault
+            restored <- restoreIOPermissionMode env
+            logger (EvPermissionModeChanged restored)
             scope <- currentIOWorkspaceScope env
-            executeCodingTool scope call
+            result <- executeCodingTool scope call
+            pure $ case result of
+              ToolSuccess _ -> ToolSuccess
+                ("Exited plan mode. Restored " <> permissionModeName restored <> " permissions.")
+              ToolError _ -> result
           _ -> do
             scope <- currentIOWorkspaceScope env
             executeCodingTool scope call
