@@ -14,6 +14,7 @@ module Hach.TUI.State
 
 import Hach.Sessions (estimateCostUsd)
 import Hach.Skills (inputSlashCompletion, parseSkillInvocations, skillName)
+import Hach.TUI.Conversation (compactTranscriptHistory)
 import Hach.TUI.Types
 import Hach.TUI.UI (formatTokens)
 import Hach.Types
@@ -105,6 +106,10 @@ updateTui event state = case event of
   EvHarness agentEv ->
     (handleAgentEvent agentEv state, [])
 
+  EvConversation messages
+    | tsCancelRequested state -> (state, [])
+    | otherwise -> (state { tsConversation = messages }, [])
+
 -- | Whether the agent harness is currently busy running an inference turn or tool.
 isBusy :: TuiStatus -> Bool
 isBusy = \case
@@ -159,6 +164,7 @@ handleSubmitPrompt rawPrompt state
           actions = if busy then [ActionCancelAgent] else []
           newStatus = if busy then StatusIdle else tsStatus state
       in ( state { tsTranscript         = []
+                 , tsConversation       = []
                  , tsTranscriptScroll   = 0
                  , tsTranscriptManualScroll = False
                  , tsSelectedToolIndex  = 0
@@ -212,10 +218,16 @@ handleSubmitPrompt rawPrompt state
          )
   | trimmed == "/compact" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = if length (tsTranscript state) > 4
-            then DiNotice "Prior conversation turns compacted for context efficiency." : drop (length (tsTranscript state) - 4) (tsTranscript state)
+          hasEarlierTranscript = length (tsTranscript state) > 4
+          retainedTranscript = drop (length (tsTranscript state) - 4) (tsTranscript state)
+          newTranscript = if hasEarlierTranscript
+            then DiNotice "Prior conversation turns compacted for context efficiency." : retainedTranscript
             else tsTranscript state ++ [DiNotice "Conversation history compacted."]
+          newConversation = if hasEarlierTranscript
+            then compactTranscriptHistory (tsConversation state) retainedTranscript
+            else tsConversation state
       in ( state { tsTranscript         = newTranscript
+                 , tsConversation       = newConversation
                  , tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
@@ -776,7 +788,7 @@ handleTranscriptKey key state@TuiState{..} =
           (state, [])
       | otherwise ->
           -- Clear transcript and reset context window tokens when explicitly idle.
-          (state { tsTranscript = [], tsTranscriptScroll = 0, tsTranscriptManualScroll = False, tsSelectedToolIndex = 0, tsContextTokens = 0, tsTokenUsage = Nothing, tsUsageStatus = UsageVerified }, [])
+          (state { tsTranscript = [], tsConversation = [], tsTranscriptScroll = 0, tsTranscriptManualScroll = False, tsSelectedToolIndex = 0, tsContextTokens = 0, tsTokenUsage = Nothing, tsUsageStatus = UsageVerified }, [])
 
     _ ->
       (state, [])

@@ -5,6 +5,7 @@ module Hach.TUISpec (spec) where
 
 import Hach.Core (AgentAlgebra(..))
 import Hach.Interpreter.IO (ioAlgebra, ioModel, newIOEnv)
+import Hach.Sessions (buildSessionHistory)
 import Hach.Skills (SkillSource(..), mkSkill)
 import Hach.TUI.App
   ( buildTuiSystemPrompt
@@ -14,6 +15,8 @@ import Hach.TUI.App
   , goalAgentConfig
   , runEnvForModel
   , initialTuiLaunch
+  , messagesToTranscriptItems
+  , runAgentWorker
   , runGoalWorker
   , transcriptToMessages
   , vtyToUserKey
@@ -1029,9 +1032,14 @@ spec = do
 
     describe "Local Slash Commands and Skill Invocations" $ do
       it "handles /clear locally by emptying dialogue history without running agent" $ do
-        let s0 = baseState { tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
+        let s0 = baseState
+              { tsTranscript = [DiUser "Hello"]
+              , tsConversation = [SystemMsg "system", UserMsg "Hello"]
+              , tsInputBuffer = "/clear"
+              }
             (s1, actions) = updateTui (EvUserKey KeyEnter) s0
         tsTranscript s1 `shouldBe` []
+        tsConversation s1 `shouldBe` []
         tsInputBuffer s1 `shouldBe` ""
         actions `shouldBe` []
 
@@ -1060,6 +1068,17 @@ spec = do
             (s1, _) = updateTui (EvUserKey KeyEnter) s0
             (s2, _) = updateTui (EvHarness (EvError "stale error")) s1
         tsTranscript s2 `shouldBe` []
+
+      it "drops stale canonical conversation updates after /clear while busy" $ do
+        let s0 = baseState
+              { tsStatus = StatusThinking
+              , tsTranscript = [DiUser "Hello"]
+              , tsConversation = [SystemMsg "system", UserMsg "Hello"]
+              , tsInputBuffer = "/clear"
+              }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+            (s2, _) = updateTui (EvConversation [SystemMsg "system", UserMsg "stale"]) s1
+        tsConversation s2 `shouldBe` []
 
       it "resets tsCancelRequested when user submits a new prompt" $ do
         let s0 = baseState { tsStatus = StatusThinking, tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
@@ -1090,6 +1109,33 @@ spec = do
         actions `shouldBe` []
         tsHistory s1 `shouldSatisfy` \h -> any (\case DiNotice msg -> "compacted" `T.isInfixOf` msg; _ -> False) h
 
+      it "compacts model history to the retained transcript while keeping one system prompt" $ do
+        let card = ToolCard "call_1" "list_dir" "{\"path\":\".\"}" (Finished (ToolSuccess "file")) False
+            transcript =
+              [ TiUser "old turn"
+              , TiAssistant "checking"
+              , TiToolCard card
+              , TiUser "recent turn"
+              , TiAssistant "recent answer"
+              ]
+            s0 = baseState
+              { tsTranscript = transcript
+              , tsConversation =
+                  [ SystemMsg "current system"
+                  , UserMsg "hidden hook context"
+                  , AssistantMsg (Just "hidden skill context") []
+                  ]
+              , tsInputBuffer = "/compact"
+              }
+            (s1, _) = updateTui (EvUserKey KeyEnter) s0
+        tsConversation s1 `shouldBe`
+          [ SystemMsg "current system"
+          , AssistantMsg (Just "checking") [ToolCall "call_1" "list_dir" "{\"path\":\".\"}"]
+          , ToolMsg "call_1" "list_dir" "file"
+          , UserMsg "recent turn"
+          , AssistantMsg (Just "recent answer") []
+          ]
+
       it "invokes discovered skill when user types /skill-name" $ do
         let skillA = mkSkill "to-spec" "Generate spec" "Spec rules here" "/p" SkillGlobal
             s0 = baseState
@@ -1108,6 +1154,29 @@ spec = do
         msgs `shouldBe` [SystemMsg "system prompt", UserMsg "expanded <skill> auth"]
 
     describe "Transcript Context Round-Tripping (Issue #24)" $ do
+      it "resumes a saved tool call as one card and one provider call with the current system prompt (Issue #231)" $ do
+        let saved =
+              [ SystemMsg "Old system prompt"
+              , UserMsg "list files"
+              , AssistantMsg Nothing [ToolCall "call_1" "list_dir" "{\"path\":\".\"}"]
+              , ToolMsg "call_1" "list_dir" "MARKER.txt"
+              , AssistantMsg (Just "done") []
+              ]
+            transcript = messagesToTranscriptItems saved
+            cards = [card | TiToolCard card <- transcript]
+            nextConversation = buildSessionHistory "Current system prompt" (Just saved) "next turn"
+        cards `shouldBe`
+          [ ToolCard "call_1" "list_dir" "{\"path\":\".\"}" (Finished (ToolSuccess "MARKER.txt")) False
+          ]
+        nextConversation `shouldBe`
+          [ SystemMsg "Current system prompt"
+          , UserMsg "list files"
+          , AssistantMsg Nothing [ToolCall "call_1" "list_dir" "{\"path\":\".\"}"]
+          , ToolMsg "call_1" "list_dir" "MARKER.txt"
+          , AssistantMsg (Just "done") []
+          , UserMsg "next turn"
+          ]
+
       it "rebuilds messages from transcript with user text, assistant text, cards in every lifecycle state and notices" $ do
         let cFinished = ToolCard "call_1" "read_file" "{\"path\":\"foo.txt\"}" (Finished (ToolSuccess "file contents")) False
             cDenied   = ToolCard "call_2" "write_file" "{\"path\":\"bar.txt\"}" (Denied "Permission denied by policy") False
@@ -1243,7 +1312,7 @@ spec = do
           , UserMsg "summarise what you just read"
           ]
 
-      it "builds context via dialogueToMessages for goal run and passes tool results to loop" $ do
+      it "builds goal context from canonical history, including context absent from the transcript" $ do
         historySeenRef <- newIORef ([] :: [Message])
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
         let promptAction msgs _ = do
@@ -1257,21 +1326,71 @@ spec = do
               , interpEvaluate = evalAction
               }
             config = goalAgentConfig mockIOEnv "system prompt" Nothing Nothing
-            cFinished = ToolCard "call_g1" "read_file" "{}" (Finished (ToolSuccess "sample goal data")) False
-            historyItems =
-              [ TiUser "fetch information"
-              , TiAssistant "fetching"
-              , TiToolCard cFinished
+            priorHistory =
+              [ SystemMsg "old system prompt"
+              , UserMsg "hook context"
+              , AssistantMsg (Just "skill context") []
+              , UserMsg "fetch information"
+              , AssistantMsg (Just "fetching") [ToolCall "call_g1" "read_file" "{}"]
+              , ToolMsg "call_g1" "read_file" "sample goal data"
               ]
-        runGoalWorker mockAlgebra config "All conditions satisfied" historyItems (\_ -> pure ())
+        runGoalWorker mockAlgebra config "All conditions satisfied" priorHistory (\_ -> pure ())
         historySeen <- readIORef historySeenRef
         historySeen `shouldBe`
           [ SystemMsg "system prompt"
+          , UserMsg "hook context"
+          , AssistantMsg (Just "skill context") []
           , UserMsg "fetch information"
           , AssistantMsg (Just "fetching") [ToolCall "call_g1" "read_file" "{}"]
           , ToolMsg "call_g1" "read_file" "sample goal data"
           , UserMsg "All conditions satisfied"
           ]
+
+      it "returns the final canonical history from a normal run" $ do
+        historySeenRef <- newIORef ([] :: [Message])
+        resultRef <- newIORef Nothing
+        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+        let promptAction messages _ = do
+              writeIORef historySeenRef messages
+              pure (Right (AssistantResponse (Just "answer") [] Nothing))
+            mockAlgebra = (ioAlgebra mockIOEnv)
+              { interpPrompt = promptAction
+              , interpLog = \_ -> pure ()
+              }
+            config = goalAgentConfig mockIOEnv "current system" Nothing Nothing
+            priorHistory =
+              [ SystemMsg "stale system"
+              , UserMsg "hook context"
+              , AssistantMsg (Just "skill context") []
+              , UserMsg "list files"
+              , AssistantMsg Nothing [ToolCall "call_1" "list_dir" "{\"path\":\".\"}"]
+              , ToolMsg "call_1" "list_dir" "MARKER.txt"
+              ]
+            captureResult history event = writeIORef resultRef (Just (history, event))
+        runAgentWorker mockAlgebra config "next task" priorHistory captureResult
+        historySeen <- readIORef historySeenRef
+        historySeen `shouldBe`
+          [ SystemMsg "current system"
+          , UserMsg "hook context"
+          , AssistantMsg (Just "skill context") []
+          , UserMsg "list files"
+          , AssistantMsg Nothing [ToolCall "call_1" "list_dir" "{\"path\":\".\"}"]
+          , ToolMsg "call_1" "list_dir" "MARKER.txt"
+          , UserMsg "next task"
+          ]
+        result <- readIORef resultRef
+        result `shouldBe` Just
+          ( [ SystemMsg "current system"
+            , UserMsg "hook context"
+            , AssistantMsg (Just "skill context") []
+            , UserMsg "list files"
+            , AssistantMsg Nothing [ToolCall "call_1" "list_dir" "{\"path\":\".\"}"]
+            , ToolMsg "call_1" "list_dir" "MARKER.txt"
+            , UserMsg "next task"
+            , AssistantMsg (Just "answer") []
+            ]
+          , EvDone "answer"
+          )
 
     describe "Transcript Auto-Scroll Policy and Thinking Indicator (Issue #25)" $ do
       describe "Auto-Scroll Policy (shouldAutoScroll)" $ do
