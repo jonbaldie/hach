@@ -64,7 +64,7 @@ genNonEmptyTxt = T.pack <$> listOf1 (elements ['a'..'z'])
 genModel :: Gen Text
 genModel = T.pack <$> elements
   [ "anthropic/claude-3-opus"
-  , "anthropic/claude-3.5-sonnet"
+  , "~openai/gpt-luna-latest"
   , "anthropic/claude-3-haiku"
   , "openai/gpt-4o-mini"
   , "openai/gpt-4o"
