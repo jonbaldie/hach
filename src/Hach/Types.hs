@@ -446,10 +446,12 @@ instance FromJSON GoalVerdict where
       "impossible"   -> pure GoalImpossible
       other          -> fail ("Unknown goal verdict: " <> show other)
 
--- | Full evaluation result: verdict plus a short reason.
+-- | Full evaluation result: verdict, a short reason, and the evaluator
+-- request's reported token usage (which carries its cost).
 data GoalEvaluation = GoalEvaluation
   { geVerdict :: !GoalVerdict
   , geReason  :: !Text
+  , geUsage   :: !(Maybe TokenUsage)
   } deriving (Show, Eq, Generic)
 
 instance FromJSON GoalEvaluation where
@@ -457,6 +459,7 @@ instance FromJSON GoalEvaluation where
     GoalEvaluation
       <$> o .: "verdict"
       <*> o .:? "reason" .!= ""
+      <*> pure Nothing
 
 -- | Lifecycle status of a session goal.
 data GoalStatus

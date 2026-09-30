@@ -398,8 +398,8 @@ spec = do
         _ -> False
 
     it "dispatches each event once across a multi-turn goal loop" $ do
-      let eval1 _ _ = GoalEvaluation GoalNotYetMet "Not yet."
-          eval2 _ _ = GoalEvaluation GoalMet "Met."
+      let eval1 _ _ = GoalEvaluation GoalNotYetMet "Not yet." Nothing
+          eval2 _ _ = GoalEvaluation GoalMet "Met." Nothing
           env = emptyMockEnv
             { mockLLMSteps = [answer, answer]
             , mockGoalEvaluations = [eval1, eval2]
@@ -414,8 +414,8 @@ spec = do
     it "continues when evaluator says not yet met, then stops when met" $ do
       let step1 _ _ = Right $ AssistantResponse (Just "Working on it.") [] Nothing
           step2 _ _ = Right $ AssistantResponse (Just "All tests pass now.") [] Nothing
-          eval1 _ _ = GoalEvaluation GoalNotYetMet "Tests not run yet."
-          eval2 _ _ = GoalEvaluation GoalMet "Tests pass."
+          eval1 _ _ = GoalEvaluation GoalNotYetMet "Tests not run yet." Nothing
+          eval2 _ _ = GoalEvaluation GoalMet "Tests pass." Nothing
           env = emptyMockEnv
             { mockLLMSteps = [step1, step2]
             , mockGoalEvaluations = [eval1, eval2]
@@ -431,7 +431,7 @@ spec = do
 
     it "stops and marks goal failed when evaluator says impossible" $ do
       let step1 _ _ = Right $ AssistantResponse (Just "I cannot do this.") [] Nothing
-          eval1 _ _ = GoalEvaluation GoalImpossible "The test framework is missing."
+          eval1 _ _ = GoalEvaluation GoalImpossible "The test framework is missing." Nothing
           env = emptyMockEnv
             { mockLLMSteps = [step1]
             , mockGoalEvaluations = [eval1]
@@ -447,7 +447,7 @@ spec = do
 
     it "stops with block cap warning when agent makes no progress for consecutive turns" $ do
       let step _ _ = Right $ AssistantResponse (Just "Thinking...") [] Nothing
-          eval _ _ = GoalEvaluation GoalNotYetMet "Not done yet."
+          eval _ _ = GoalEvaluation GoalNotYetMet "Not done yet." Nothing
           cap = 2
           env = emptyMockEnv
             { mockLLMSteps = repeat step
@@ -464,7 +464,7 @@ spec = do
 
     it "ends in a state the headless path maps to failure when evaluator always returns GoalNotYetMet with no progress (Issue #223)" $ do
       let step _ _ = Right $ AssistantResponse (Just "Thinking...") [] Nothing
-          eval _ _ = GoalEvaluation GoalNotYetMet "Not done yet."
+          eval _ _ = GoalEvaluation GoalNotYetMet "Not done yet." Nothing
           cap = 2
           env = emptyMockEnv
             { mockLLMSteps = repeat step
@@ -492,9 +492,9 @@ spec = do
           step3 _ _ = Right $ AssistantResponse (Just "Done reading.") [] Nothing
           -- Turn 4: agent completes without tools, goal met
           step4 _ _ = Right $ AssistantResponse (Just "All done.") [] Nothing
-          eval1 _ _ = GoalEvaluation GoalNotYetMet "Keep going."
-          eval2 _ _ = GoalEvaluation GoalNotYetMet "Almost there."
-          eval3 _ _ = GoalEvaluation GoalMet "Done."
+          eval1 _ _ = GoalEvaluation GoalNotYetMet "Keep going." Nothing
+          eval2 _ _ = GoalEvaluation GoalNotYetMet "Almost there." Nothing
+          eval3 _ _ = GoalEvaluation GoalMet "Done." Nothing
           cap = 2
           env = emptyMockEnv
             { mockLLMSteps = [step1, step2, step3, step4]
@@ -552,7 +552,7 @@ spec = do
 
     it "logs EvGoalSet when the goal loop starts" $ do
       let step1 _ _ = Right $ AssistantResponse (Just "Done.") [] Nothing
-          eval1 _ _ = GoalEvaluation GoalMet "Done."
+          eval1 _ _ = GoalEvaluation GoalMet "Done." Nothing
           env = emptyMockEnv
             { mockLLMSteps = [step1]
             , mockGoalEvaluations = [eval1]
@@ -565,8 +565,8 @@ spec = do
 
     it "logs EvGoalEvaluated for each evaluation" $ do
       let step1 _ _ = Right $ AssistantResponse (Just "Working.") [] Nothing
-          eval1 _ _ = GoalEvaluation GoalNotYetMet "Not done."
-          eval2 _ _ = GoalEvaluation GoalMet "Done."
+          eval1 _ _ = GoalEvaluation GoalNotYetMet "Not done." Nothing
+          eval2 _ _ = GoalEvaluation GoalMet "Done." Nothing
           step2 _ _ = Right $ AssistantResponse (Just "Done.") [] Nothing
           env = emptyMockEnv
             { mockLLMSteps = [step1, step2]
@@ -581,7 +581,7 @@ spec = do
 
     it "logs EvGoalEvaluationUsage when evaluator reports token usage" $ do
       let step1 _ _ = Right $ AssistantResponse (Just "Finished.") [] Nothing
-          eval1 _ _ = GoalEvaluation GoalMet "All good."
+          eval1 _ _ = GoalEvaluation GoalMet "All good." Nothing
           evalUsage = mkTokenUsage 500 50 550
           env = emptyMockEnv
             { mockLLMSteps = [step1]
@@ -594,6 +594,42 @@ spec = do
 
       mockEvents endEnv `shouldContain` [EvGoalEvaluationUsage evalUsage]
 
+    it "stops with AgentBudgetExceeded when evaluator spend brings the total to the budget" $ do
+      let cfg = goalConfig { cfgMaxBudgetUsd = Just 1 }
+          turnUsage = (mkTokenUsage 10 5 15) { tuCost = Just 0.25 }
+          evalUsage = (mkTokenUsage 500 50 550) { tuCost = Just 0.75 }
+          step1 _ _ = Right $ AssistantResponse (Just "Working.") [] (Just turnUsage)
+          step2 _ _ = Right $ AssistantResponse (Just "should not run") [] Nothing
+          eval1 _ _ = GoalEvaluation GoalNotYetMet "Keep going." Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockGoalEvaluations = [eval1]
+            , mockGoalEvaluationUsages = [Just evalUsage]
+            }
+          ((result, _, gs), endEnv) =
+            runPure env (goalLoop cfg [] condition defaultBlockCap [UserMsg condition])
+
+      result `shouldBe` AgentBudgetExceeded 1 1
+      gsStatus gs `shouldBe` GoalActive
+      mockEvents endEnv `shouldNotContain` [EvTurnStart 2]
+
+    it "accumulates evaluator spend across several goal turns" $ do
+      let cfg = goalConfig { cfgMaxBudgetUsd = Just 1 }
+          evalUsage = (mkTokenUsage 500 50 550) { tuCost = Just 0.5 }
+          workingStep _ _ = Right $ AssistantResponse (Just "Working.") [] Nothing
+          notYetMet _ _ = GoalEvaluation GoalNotYetMet "Keep going." Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = replicate 3 workingStep
+            , mockGoalEvaluations = replicate 3 notYetMet
+            , mockGoalEvaluationUsages = replicate 3 (Just evalUsage)
+            }
+          ((result, _, _), endEnv) =
+            runPure env (goalLoop cfg [] condition 10 [UserMsg condition])
+
+      result `shouldBe` AgentBudgetExceeded 1 1
+      mockEvents endEnv `shouldContain` [EvTurnStart 2]
+      mockEvents endEnv `shouldNotContain` [EvTurnStart 3]
+
     it "injects evaluator reason as guidance for the next turn" $ do
       let step1 _ _ = Right $ AssistantResponse (Just "Working.") [] Nothing
           step2 hist _ =
@@ -602,8 +638,8 @@ spec = do
                 Right $ AssistantResponse (Just ("Received: " <> guidance)) [] Nothing
               _ ->
                 Right $ AssistantResponse (Just "No guidance received.") [] Nothing
-          eval1 _ _ = GoalEvaluation GoalNotYetMet "Run the tests."
-          eval2 _ _ = GoalEvaluation GoalMet "Tests pass."
+          eval1 _ _ = GoalEvaluation GoalNotYetMet "Run the tests." Nothing
+          eval2 _ _ = GoalEvaluation GoalMet "Tests pass." Nothing
           env = emptyMockEnv
             { mockLLMSteps = [step1, step2]
             , mockGoalEvaluations = [eval1, eval2]
@@ -627,7 +663,7 @@ spec = do
                   }
             in Right $ AssistantResponse Nothing [toolCall] Nothing
           stepFinal _ _ = Right $ AssistantResponse (Just "Finally done!") [] Nothing
-          evalFinal _ _ = GoalEvaluation GoalMet "Done."
+          evalFinal _ _ = GoalEvaluation GoalMet "Done." Nothing
           unlimitedConfig = baseConfig { cfgMaxTurns = Nothing }
           -- 25 tool-calling turns, then completion on turn 26.
           env = emptyMockEnv
@@ -651,7 +687,7 @@ spec = do
                   }
             in Right $ AssistantResponse Nothing [toolCall] Nothing
           stepFinal _ _ = Right $ AssistantResponse (Just "Done") [] Nothing
-          evalFinal _ _ = GoalEvaluation GoalMet "Done."
+          evalFinal _ _ = GoalEvaluation GoalMet "Done." Nothing
           unlimitedConfig = baseConfig { cfgMaxTurns = Nothing }
           env = emptyMockEnv
             { mockLLMSteps = replicate 50 stepLoop ++ [stepFinal]
@@ -682,7 +718,7 @@ spec = do
     it "parses a valid met verdict" $ do
       let json = "{\"verdict\":\"met\",\"reason\":\"Tests pass.\"}"
       case Aeson.decodeStrict (TE.encodeUtf8 json) of
-        Just (GoalEvaluation v r) -> do
+        Just (GoalEvaluation v r _) -> do
           v `shouldBe` GoalMet
           r `shouldBe` "Tests pass."
         Nothing -> expectationFailure "Failed to parse GoalEvaluation"
@@ -690,19 +726,19 @@ spec = do
     it "parses a valid not_yet_met verdict" $ do
       let json = "{\"verdict\":\"not_yet_met\",\"reason\":\"Still working.\"}"
       case Aeson.decodeStrict (TE.encodeUtf8 json) of
-        Just (GoalEvaluation v _) -> v `shouldBe` GoalNotYetMet
+        Just (GoalEvaluation v _ _) -> v `shouldBe` GoalNotYetMet
         Nothing -> expectationFailure "Failed to parse GoalEvaluation"
 
     it "parses a valid impossible verdict" $ do
       let json = "{\"verdict\":\"impossible\",\"reason\":\"Missing framework.\"}"
       case Aeson.decodeStrict (TE.encodeUtf8 json) of
-        Just (GoalEvaluation v _) -> v `shouldBe` GoalImpossible
+        Just (GoalEvaluation v _ _) -> v `shouldBe` GoalImpossible
         Nothing -> expectationFailure "Failed to parse GoalEvaluation"
 
     it "parses with a missing reason field" $ do
       let json = "{\"verdict\":\"met\"}"
       case Aeson.decodeStrict (TE.encodeUtf8 json) of
-        Just (GoalEvaluation v r) -> do
+        Just (GoalEvaluation v r _) -> do
           v `shouldBe` GoalMet
           r `shouldBe` ""
         Nothing -> expectationFailure "Failed to parse GoalEvaluation"

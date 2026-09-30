@@ -468,6 +468,10 @@ agentStep cfg tools turn spent currentHistory
 responseCostUsd :: AssistantResponse -> Double
 responseCostUsd resp = fromMaybe 0 (respUsage resp >>= tuCost)
 
+-- | Reported cost of a goal-evaluator request, or 0 when not reported.
+evaluationCostUsd :: GoalEvaluation -> Double
+evaluationCostUsd eval = fromMaybe 0 (geUsage eval >>= tuCost)
+
 -- | The pure, recursive agent harness loop.
 -- Unfolds turns until completion or the maximum turn limit is reached.
 agentLoop
@@ -574,7 +578,8 @@ goalLoop cfg tools condition blockCap initialHistory = do
                               ( "Goal not yet met. " <> reason
                               <> " Continue working toward: " <> condition )
                             newHist = finalHist ++ [guidance]
-                        loop (turn + 1) spent' g1 newHist
+                        -- The evaluator request is billable too.
+                        loop (turn + 1) (spent' + evaluationCostUsd eval) g1 newHist
 
           AgentMaxTurnsReached _n ->
             pure (result, finalHist, gs)

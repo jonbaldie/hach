@@ -91,8 +91,11 @@ writeDotenv :: FilePath -> [Text] -> IO ()
 writeDotenv ws = writeWorkspaceFile ws ".env" . T.unlines
 
 evaluatorReply :: Text -> Text -> FixtureReply
-evaluatorReply verdict reason =
-  completion (TE.decodeUtf8 (LBC.toStrict (Aeson.encode (object ["verdict" .= verdict, "reason" .= reason]))))
+evaluatorReply verdict reason = completion (verdictJson verdict reason)
+
+verdictJson :: Text -> Text -> Text
+verdictJson verdict reason =
+  TE.decodeUtf8 (LBC.toStrict (Aeson.encode (object ["verdict" .= verdict, "reason" .= reason])))
 
 -- | A loopback port with nothing listening on it.
 closedPort :: IO Int
@@ -733,6 +736,17 @@ budgetSpec = describe "budgets" $ do
       result <- runWith ws [] (compatible fx <> ["--max-budget-usd", "1", "hi"])
       hrExit result `shouldBe` ExitSuccess
       hrStdout result `shouldSatisfy` ("pricey answer" `isInfixOf`)
+
+  it "counts a goal evaluator's reported cost toward the budget" $
+    withSandbox $ \ws -> withInferenceFixture
+      [ completionWith "first" (Just (usage 10 10 (Just 0.25)))
+      , completionWith (verdictJson "not_yet_met" "keep going") (Just (usage 10 10 (Just 0.75)))
+      , completion "should not be requested" ] $ \fx -> do
+        result <- runWith ws [] (compatible fx <> ["--max-budget-usd", "1", "/goal finish"])
+        hrExit result `shouldNotBe` ExitSuccess
+        output result `shouldSatisfy` ("budget" `isInfixOf`)
+        reqs <- fixtureRequests fx
+        length reqs `shouldBe` 2
 
 --------------------------------------------------------------------------------
 -- Local-only intents

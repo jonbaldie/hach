@@ -1318,7 +1318,7 @@ spec = do
         let promptAction msgs _ = do
               writeIORef historySeenRef msgs
               pure (Right (AssistantResponse (Just "Goal achieved successfully.") [] Nothing))
-            evalAction _ _ = pure (GoalEvaluation GoalMet "All conditions satisfied")
+            evalAction _ _ = pure (GoalEvaluation GoalMet "All conditions satisfied" Nothing)
             mockAlgebra = (ioAlgebra mockIOEnv)
               { interpPrompt   = promptAction
               , interpTool     = \_ -> pure (ToolSuccess "ok")
@@ -1738,7 +1738,7 @@ spec = do
               if toolTurns < 21
                 then pure $ Right (AssistantResponse Nothing [mockTool] Nothing)
                 else pure $ Right (AssistantResponse (Just "All tests pass.") [] Nothing)
-            evalAction _ _ = pure (GoalEvaluation GoalMet "Done.")
+            evalAction _ _ = pure (GoalEvaluation GoalMet "Done." Nothing)
             mockAlgebra = (ioAlgebra mockIOEnv)
               { interpPrompt   = promptAction
               , interpTool     = \_ -> pure (ToolSuccess "ok")
@@ -1756,7 +1756,7 @@ spec = do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
         eventsRef <- newIORef []
         let promptAction _ _ = pure $ Right (AssistantResponse (Just "Completed progress.") [] Nothing)
-            evalAction _ _ = pure (GoalEvaluation GoalNotYetMet "Need more work")
+            evalAction _ _ = pure (GoalEvaluation GoalNotYetMet "Need more work" Nothing)
             mockAlgebra = (ioAlgebra mockIOEnv)
               { interpPrompt   = promptAction
               , interpTool     = \_ -> pure (ToolSuccess "ok")
@@ -1773,7 +1773,7 @@ spec = do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
         eventsRef <- newIORef []
         let promptAction _ _ = pure $ Right (AssistantResponse (Just "Goal cannot be met.") [] Nothing)
-            evalAction _ _ = pure (GoalEvaluation GoalImpossible "Reason impossible")
+            evalAction _ _ = pure (GoalEvaluation GoalImpossible "Reason impossible" Nothing)
             mockAlgebra = (ioAlgebra mockIOEnv)
               { interpPrompt   = promptAction
               , interpTool     = \_ -> pure (ToolSuccess "ok")
@@ -1790,7 +1790,7 @@ spec = do
         mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
         eventsRef <- newIORef []
         let promptAction _ _ = pure $ Right (AssistantResponse (Just "Created the file.") [] Nothing)
-            evalAction _ _ = pure (GoalEvaluation GoalMet "File exists")
+            evalAction _ _ = pure (GoalEvaluation GoalMet "File exists" Nothing)
             mockAlgebra = (ioAlgebra mockIOEnv)
               { interpPrompt   = promptAction
               , interpTool     = \_ -> pure (ToolSuccess "ok")
