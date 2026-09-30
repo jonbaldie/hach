@@ -8,7 +8,7 @@ FROM haskell:9.12-bookworm AS builder
 WORKDIR /build
 
 # Pre-cache Cabal dependencies
-COPY hach.cabal ./
+COPY hach.cabal cabal.project ./
 RUN cabal update && \
     cabal build --only-dependencies lib:hach
 

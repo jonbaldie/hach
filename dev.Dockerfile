@@ -38,7 +38,7 @@ RUN useradd -m -u 1000 -U -s /bin/bash hach && \
 
 # Pre-cache Cabal dependencies for external libraries
 WORKDIR /tmp/cabal-cache
-COPY hach.cabal ./
+COPY hach.cabal cabal.project ./
 RUN cabal update && \
     cabal build --only-dependencies lib:hach && \
     rm -rf /tmp/cabal-cache
