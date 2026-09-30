@@ -535,6 +535,21 @@ spec = do
         (code, _, _) <- runExecCommand testSandbox "sh -c 'exit 7'"
         code `shouldBe` ExitFailure 7
 
+      it "runExecCommand leniently decodes non-UTF-8 output and keeps the exit status (issue #240)" $ do
+        (code, out, err) <- runExecCommand testSandbox "printf 'hello \\377\\376 world\\n'; printf 'e\\377\\n' >&2; exit 3"
+        code `shouldBe` ExitFailure 3
+        out `shouldBe` "hello \xFFFD\xFFFD world\n"
+        err `shouldBe` "e\xFFFD\n"
+
+      it "run_command returns leniently decoded non-UTF-8 output (issue #240)" $ do
+        root <- canonicalizePath testSandbox
+        res <- executeRunCommand root (RunCommandArgs "printf 'hello \\377\\376 world\\n'" Nothing)
+        case res of
+          ToolSuccess out -> do
+            out `shouldSatisfy` ("Exit Code: 0" `T.isInfixOf`)
+            out `shouldSatisfy` ("hello \xFFFD\xFFFD world" `T.isInfixOf`)
+          ToolError err -> expectationFailure ("run_command failed: " ++ T.unpack err)
+
       it "executes Bash command via executeCodingTool" $ do
         let call = ToolCall "c_b" "Bash" "{\"command\":\"echo hello-bash\"}"
         res <- executeCodingTool (workspaceAt ".") call

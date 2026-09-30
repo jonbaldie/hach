@@ -26,11 +26,13 @@ import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, try)
 import Data.Aeson (FromJSON, ToJSON)
+import qualified Data.ByteString.Char8 as BS8
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
+import qualified Data.Text.Encoding as TE
+import qualified Data.Text.Encoding.Error as TE
 import GHC.Clock (getMonotonicTime)
 import GHC.Generics (Generic)
 import System.Exit (ExitCode)
@@ -157,7 +159,8 @@ spawnBackgroundProcess reg root cmd = do
           if eof
             then pure ()
             else do
-              lineRes <- try (TIO.hGetLine h) :: IO (Either SomeException Text)
+              -- Decode leniently so non-UTF-8 output cannot end the reader.
+              lineRes <- try (TE.decodeUtf8With TE.lenientDecode <$> BS8.hGetLine h) :: IO (Either SomeException Text)
               case lineRes of
                 Left _ -> pure ()
                 Right line -> do

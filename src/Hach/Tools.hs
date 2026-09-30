@@ -198,7 +198,7 @@ import System.FilePath
   , takeDirectory
   , takeFileName
   )
-import System.IO (hClose, hGetContents')
+import System.IO (hClose)
 import System.Posix.Signals (sigKILL)
 import System.Process (CreateProcess(..), StdStream(CreatePipe), cleanupProcess, createProcess, getPid, shell, waitForProcess)
 import System.Timeout (timeout)
@@ -1235,7 +1235,7 @@ trySync = tryJust $ \e ->
 
 -- | Run a shell command in the workspace, killing its whole process group
 -- (the shell plus anything it backgrounded) if it times out or is interrupted.
-runWorkspaceShell :: FilePath -> Text -> Maybe Int -> IO (Either Text (ExitCode, String, String))
+runWorkspaceShell :: FilePath -> Text -> Maybe Int -> IO (Either Text (ExitCode, Text, Text))
 runWorkspaceShell root cmd mTimeout = do
   let secs = maybe 60 (max 1) mTimeout
       sh = (shell (T.unpack cmd))
@@ -1252,7 +1252,7 @@ runWorkspaceShell root cmd mTimeout = do
       pure $ Left ("Command timed out after " <> T.pack (show secs) <> " seconds: " <> cmd)
     Right (Just triple) -> pure $ Right triple
 
-runGroupWithTimeout :: Int -> CreateProcess -> IO (Maybe (ExitCode, String, String))
+runGroupWithTimeout :: Int -> CreateProcess -> IO (Maybe (ExitCode, Text, Text))
 runGroupWithTimeout micros cp = do
   procs@(mIn, mOut, mErr, ph) <- createProcess cp
   -- Capture the pid now: once the shell is reaped 'getPid' returns Nothing,
@@ -1264,8 +1264,11 @@ runGroupWithTimeout micros cp = do
       collect = case (mIn, mOut, mErr) of
         (Just hIn, Just hOut, Just hErr) -> do
           hClose hIn
-          withAsync (hGetContents' hOut) $ \outA ->
-            withAsync (hGetContents' hErr) $ \errA -> do
+          -- Read raw bytes and decode leniently: commands may emit output that
+          -- is not valid UTF-8, which must not abort the whole call.
+          let readLenient h = TE.decodeUtf8With TE.lenientDecode <$> BS.hGetContents h
+          withAsync (readLenient hOut) $ \outA ->
+            withAsync (readLenient hErr) $ \errA -> do
               -- Drain the pipes before waiting: 'waitForProcess' is a blocking
               -- foreign call the timeout cannot always interrupt.
               out <- wait outA
@@ -1284,12 +1287,10 @@ executeRunCommand root (RunCommandArgs cmd mTimeout) = do
   outcome <- runWorkspaceShell root cmd mTimeout
   case outcome of
     Left err -> pure $ ToolError err
-    Right (exitCode, stdoutStr, stderrStr) ->
+    Right (exitCode, outTxt, errTxt) ->
       let codeInt = case exitCode of
             ExitSuccess   -> 0
             ExitFailure c -> c
-          outTxt = T.pack stdoutStr
-          errTxt = T.pack stderrStr
           summary = T.unlines
             [ "Exit Code: " <> T.pack (show codeInt)
             , "STDOUT:\n" <> if T.null outTxt then "(empty)" else outTxt
@@ -1303,7 +1304,7 @@ runExecCommand root cmd = do
   outcome <- runWorkspaceShell root cmd Nothing
   case outcome of
     Left err -> pure (ExitFailure 1, T.empty, err)
-    Right (code, out, err) -> pure (code, T.pack out, T.pack err)
+    Right triple -> pure triple
 
 executeListDir :: Workspace -> ListDirArgs -> IO ToolResult
 executeListDir ws (ListDirArgs path) = do
