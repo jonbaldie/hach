@@ -355,9 +355,10 @@ cliHelpText = unlines $
   , "Inference (each setting: flag > process environment > .env > settings.json):"
   , "  Provider  --provider, HACH_PROVIDER, or llm_provider; openrouter by default."
   , "  openrouter         key OPENROUTER_API_KEY (required), model OPENROUTER_MODEL;"
-  , "                     endpoint https://openrouter.ai/api/v1."
-  , "  openai-compatible  API root --base-url, OPENAI_BASE_URL, or llm_base_url (required);"
-  , "                     key OPENAI_API_KEY (optional), model OPENAI_MODEL."
+  , "                     API root --base-url, else https://openrouter.ai/api/v1."
+  , "  openai-compatible  key OPENAI_API_KEY (optional), model OPENAI_MODEL;"
+  , "                     API root --base-url, OPENAI_BASE_URL, or llm_base_url,"
+  , "                     else https://api.openai.com/v1."
   , "  The API root ends before /chat/completions, which Hach appends."
   , "  Keys and models never carry over from one provider to the other."
   ]
@@ -367,6 +368,11 @@ cliHelpText = unlines $
     width = maximum (map (length . label) cliFlags)
     row flag = "  " ++ padRight width (label flag) ++ "  " ++ cliFlagSummary flag
     padRight n s = s ++ replicate (n - length s) ' '
+
+-- | A value that is really the next option: any long flag, or one of the
+-- documented short flags.
+isFlagLike :: String -> Bool
+isFlagLike val = "--" `isPrefixOf` val || val `elem` concatMap cliFlagNames cliFlags
 
 -- | Usage shown after an argument error.
 cliUsageHint :: String
@@ -433,7 +439,7 @@ parseCliArgs args = go args defaultCliOptions []
           case rest of
             (val : rest')
               | null (dropWhile isSpace val) -> Left (arg ++ " requires a non-empty argument")
-              | "--" `isPrefixOf` val -> Left (arg ++ " requires a non-flag argument")
+              | isFlagLike val -> Left (arg ++ " requires a non-flag argument")
               | otherwise -> go rest' (setter (T.strip (T.pack val)) opts) promptWords
             [] -> Left (arg ++ " requires an argument")
 
@@ -447,7 +453,7 @@ parseCliArgs args = go args defaultCliOptions []
           case rest of
             (val : rest')
               | null (dropWhile isSpace val) -> Left (arg ++ " requires a non-empty argument")
-              | "--" `isPrefixOf` val -> Left (arg ++ " requires a non-flag argument")
+              | isFlagLike val -> Left (arg ++ " requires a non-flag argument")
               | otherwise ->
                   go rest' opts { optModel = Just (T.strip (T.pack val)) } promptWords
             [] -> Left (arg ++ " requires an argument")

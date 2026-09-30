@@ -112,9 +112,9 @@ The two providers use separate variables. Hach does not fall back from one provi
 | --- | --- | --- |
 | API key | `OPENROUTER_API_KEY` (required) | `OPENAI_API_KEY` (optional; sent as a bearer token when set) |
 | Model | `--model`, `OPENROUTER_MODEL`, line 2 of `.env`, `model` in settings | `--model`, `OPENAI_MODEL`, `model` in settings |
-| API root | fixed | `--base-url`, `OPENAI_BASE_URL`, or `llm_base_url` in settings (required) |
+| API root | `--base-url`, else `https://openrouter.ai/api/v1` | `--base-url`, `OPENAI_BASE_URL`, `llm_base_url` in settings, else `https://api.openai.com/v1` |
 
-Hach passes the model identifier to the API exactly as you give it.
+Hach passes the model identifier to the API exactly as you give it. OpenRouter mode ignores `OPENAI_BASE_URL` and `llm_base_url`, so only an explicit `--base-url` changes where an OpenRouter key is sent.
 
 ### OpenRouter
 

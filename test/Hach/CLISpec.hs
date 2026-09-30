@@ -220,9 +220,9 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
   describe "--print stdout contract (Issue #116)" $ do
     -- A rejected key makes the agent fail on its first request, which drives
     -- agent events through the real renderer without a live model.
-    let runPrint executable workspace args = withRejectingEndpoint workspace 1 $ \testEnvironment -> do
+    let runPrint executable workspace args = withRejectingEndpoint workspace 1 $ \testEnvironment endpointArgs -> do
           let command =
-                (proc executable (args <> ["--model", "test-model", "What is 2+2?"]))
+                (proc executable (endpointArgs <> args <> ["--model", "test-model", "What is 2+2?"]))
                   { cwd = Just workspace
                   , env = Just testEnvironment
                   }
@@ -251,9 +251,9 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
 
     it "returns a failure status for a failed --no-tui agent" $ do
       executable <- hachExecutable
-      withTemporaryWorkspace $ \workspace -> withRejectingEndpoint workspace 1 $ \testEnvironment -> do
+      withTemporaryWorkspace $ \workspace -> withRejectingEndpoint workspace 1 $ \testEnvironment endpointArgs -> do
         let command =
-              (proc executable ["--no-tui", "--model", "test-model", "Answer in one sentence."])
+              (proc executable (endpointArgs <> ["--no-tui", "--model", "test-model", "Answer in one sentence."]))
                 { cwd = Just workspace
                 , env = Just testEnvironment
                 }
@@ -266,9 +266,9 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
 
     it "returns a failure status for a failed headless goal loop" $ do
       executable <- hachExecutable
-      withTemporaryWorkspace $ \workspace -> withRejectingEndpoint workspace 1 $ \testEnvironment -> do
+      withTemporaryWorkspace $ \workspace -> withRejectingEndpoint workspace 1 $ \testEnvironment endpointArgs -> do
         let command =
-              (proc executable
+              (proc executable $ endpointArgs <>
                 [ "--print"
                 , "--output-format"
                 , "json"
@@ -291,9 +291,9 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
 
     it "returns a failure status and does not print Task completed for an unmet headless goal (Issue #223)" $ do
       executable <- hachExecutable
-      withTemporaryWorkspace $ \workspace -> withRejectingEndpoint workspace 1 $ \testEnvironment -> do
+      withTemporaryWorkspace $ \workspace -> withRejectingEndpoint workspace 1 $ \testEnvironment endpointArgs -> do
         let command =
-              (proc executable
+              (proc executable $ endpointArgs <>
                 [ "--no-tui"
                 , "--max-turns"
                 , "1"
@@ -462,9 +462,9 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         stdoutText `shouldContain` "hach --help"
 
   describe "--max-budget-usd enforcement (Issue #150)" $ do
-    let runBudget executable workspace requests args = withRejectingEndpoint workspace requests $ \testEnvironment -> do
+    let runBudget executable workspace requests args = withRejectingEndpoint workspace requests $ \testEnvironment endpointArgs -> do
           let command =
-                (proc executable args)
+                (proc executable (endpointArgs <> args))
                   { cwd = Just workspace
                   , env = Just testEnvironment
                   }
@@ -482,8 +482,8 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
 
         exitCode `shouldBe` ExitFailure 1
         namesBudget (stdoutText <> stderrText) `shouldBe` True
-        stdoutText `shouldNotContain` "OpenAI-compatible API error"
-        stderrText `shouldNotContain` "OpenAI-compatible API error"
+        stdoutText `shouldNotContain` "OpenRouter API error"
+        stderrText `shouldNotContain` "OpenRouter API error"
         stdoutText `shouldNotContain` "pong"
 
     it "reports the budget abort as JSON under --output-format json" $ do
@@ -502,7 +502,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
             ]
 
         exitCode `shouldBe` ExitFailure 1
-        stderrText `shouldNotContain` "OpenAI-compatible API error"
+        stderrText `shouldNotContain` "OpenRouter API error"
         (Aeson.eitherDecode (LBS.pack stdoutText) :: Either String Aeson.Value)
           `shouldSatisfy` isRight
         stdoutText `shouldContain` "max_budget"
@@ -518,7 +518,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
 
         exitCode `shouldBe` ExitFailure 1
         namesBudget (stdoutText <> stderrText) `shouldBe` True
-        stdoutText `shouldNotContain` "OpenAI-compatible API error"
+        stdoutText `shouldNotContain` "OpenRouter API error"
 
     it "keeps --max-turns aborts distinct when no budget is set" $ do
       executable <- hachExecutable
@@ -529,15 +529,15 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
 
         exitCode `shouldBe` ExitFailure 1
         namesBudget (stdoutText <> stderrText) `shouldBe` False
-        (stdoutText <> stderrText) `shouldContain` "OpenAI-compatible API error"
+        (stdoutText <> stderrText) `shouldContain` "OpenRouter API error"
 
   describe "unparseable settings files (Issue #165)" $ do
     let runWithSettings executable workspace requests settings args = do
           createDirectoryIfMissing True (workspace </> ".claude")
           writeFile (workspace </> ".claude" </> "settings.json") settings
-          withRejectingEndpoint workspace requests $ \testEnvironment -> do
+          withRejectingEndpoint workspace requests $ \testEnvironment endpointArgs -> do
             let command =
-                  (proc executable args)
+                  (proc executable (endpointArgs <> args))
                     { cwd = Just workspace
                     , env = Just testEnvironment
                     }
@@ -561,7 +561,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
           exitCode `shouldBe` ExitFailure 1
           combined `shouldContain` (".claude" </> "settings.json")
           combined `shouldNotContain` "Starting agent loop"
-          combined `shouldNotContain` "OpenAI-compatible API error"
+          combined `shouldNotContain` "OpenRouter API error"
 
     it "still starts when the settings file parses" $ do
       executable <- hachExecutable
@@ -576,9 +576,9 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         combined `shouldContain` "Starting agent loop"
 
   describe "session persistence and continuation (Issue #151)" $ do
-    let runWithEnv executable workspace requests args = withRejectingEndpoint workspace requests $ \testEnvironment -> do
+    let runWithEnv executable workspace requests args = withRejectingEndpoint workspace requests $ \testEnvironment endpointArgs -> do
           let command =
-                (proc executable args)
+                (proc executable (endpointArgs <> args))
                   { cwd = Just workspace
                   , env = Just testEnvironment
                   }
@@ -641,9 +641,9 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         runWithHooks executable workspace requests settings args = do
           createDirectoryIfMissing True (workspace </> ".claude")
           writeFile (workspace </> ".claude" </> "settings.json") settings
-          withRejectingEndpoint workspace requests $ \testEnvironment -> do
+          withRejectingEndpoint workspace requests $ \testEnvironment endpointArgs -> do
             let command =
-                  (proc executable args)
+                  (proc executable (endpointArgs <> args))
                     { cwd = Just workspace
                     , env = Just testEnvironment
                     }
@@ -681,7 +681,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
 
         exitCode `shouldBe` ExitFailure 1
         combined `shouldContain` "prompt rejected by policy"
-        combined `shouldNotContain` "OpenAI-compatible API error"
+        combined `shouldNotContain` "OpenRouter API error"
 
 -- | Process environment for a spawned hach: stub credentials, and a user
 -- settings layer pointed at a directory that does not exist, so the
@@ -699,21 +699,18 @@ isolatedEnvironment workspace = do
       name `elem` ["OPENROUTER_API_KEY", "OPENROUTER_MODEL", "CLAUDE_CONFIG_DIR", "HACH_PROVIDER"]
         || "OPENAI_" `isPrefixOf` name
 
--- | Run with the isolated environment pointed at a loopback endpoint that
--- rejects every request as a real service rejects a stub key, then check
+-- | Run in the default OpenRouter mode, with the isolated environment and
+-- the given @--base-url@ arguments pointing at a loopback endpoint that
+-- rejects every request as the real service rejects a stub key; then check
 -- that exactly the expected number of requests reached it.
-withRejectingEndpoint :: FilePath -> Int -> ([(String, String)] -> IO a) -> IO a
+withRejectingEndpoint :: FilePath -> Int -> ([(String, String)] -> [String] -> IO a) -> IO a
 withRejectingEndpoint workspace requests action =
   withInferenceFixture (replicate requests rejectedKey) $ \fixture -> do
     environment <- isolatedEnvironment workspace
-    result <- action $
-      [ ("HACH_PROVIDER", "openai-compatible")
-      , ("OPENAI_BASE_URL", T.unpack (fixtureBaseUrl fixture))
-      , ("OPENAI_API_KEY", "test")
-      , ("OPENAI_MODEL", "test-model")
-      , ("NO_PROXY", "*")
-      , ("no_proxy", "*")
-      ] <> filter ((`notElem` ["NO_PROXY", "no_proxy"]) . fst) environment
+    let loopback = [("NO_PROXY", "*"), ("no_proxy", "*")]
+    result <- action
+      (loopback <> filter ((`notElem` map fst loopback) . fst) environment)
+      ["--base-url", T.unpack (fixtureBaseUrl fixture)]
     length <$> fixtureRequests fixture `shouldReturn` requests
     pure result
 
@@ -955,6 +952,8 @@ cliModuleSpec = do
       rejects ["--base-url"] "--base-url requires an argument"
       rejects ["--provider", "--model", "m"] "--provider requires a non-flag argument"
       rejects ["--base-url", "--print"] "--base-url requires a non-flag argument"
+      rejects ["--provider", "-p", "hi"] "--provider requires a non-flag argument"
+      rejects ["--base-url", "-m", "m"] "--base-url requires a non-flag argument"
       rejects ["--provider", "  "] "--provider requires a non-empty argument"
       rejects ["--provider="] "--provider= requires a non-empty argument"
       rejects ["--base-url="] "--base-url= requires a non-empty argument"
@@ -1012,7 +1011,7 @@ cliModuleSpec = do
         [ "HACH_PROVIDER", "openrouter", "openai-compatible"
         , "OPENROUTER_API_KEY", "OPENROUTER_MODEL"
         , "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL"
-        , "llm_provider", "llm_base_url", "https://openrouter.ai/api/v1"
+        , "llm_provider", "llm_base_url", "https://openrouter.ai/api/v1", "https://api.openai.com/v1"
         , "/chat/completions", "flag > process environment > .env > settings.json"
         ] $ \needle -> cliHelpText `shouldContain` needle
 

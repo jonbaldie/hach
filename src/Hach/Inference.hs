@@ -42,6 +42,7 @@ import Data.Aeson
   ( FromJSON(..), ToJSON(..), Value, object, withObject, (.:), (.:?), (.=)
   )
 import qualified Data.Aeson as Aeson
+import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Aeson.Types as AesonTypes
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isAlphaNum, isAscii, isControl, isDigit, isHexDigit, isSpace)
@@ -246,7 +247,7 @@ encodeChatRequest iface ChatRequest{..} =
       | null reqTools = []
       | otherwise =
           [ "tools" .= reqTools
-          , "tool_choice" .= maybe "auto" id reqToolChoice
+          , "tool_choice" .= fromMaybe "auto" reqToolChoice
           ]
     effortPart = case (iface, reqEffort) of
       (_, Nothing) -> []
@@ -312,7 +313,7 @@ parseCompletion iface body =
         _ -> Left (interfaceLabel iface <> " response JSON parse failure: " <> T.pack envelopeErr)
   where
     isNonEmptyResponse (AssistantResponse mContent calls mUsage) =
-      hasText mContent || not (null calls) || maybe False (const True) mUsage
+      hasText mContent || not (null calls) || isJust mUsage
 
     hasText = maybe False (not . T.null . T.strip)
 
