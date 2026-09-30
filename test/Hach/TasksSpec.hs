@@ -92,6 +92,17 @@ spec = describe "Hach.Tasks" $ do
         ToolSuccess out -> T.unpack out `shouldContain` "hello-bg-task"
         ToolError err   -> expectationFailure ("Unexpected error: " ++ T.unpack err)
 
+    it "keeps streaming output after non-UTF-8 bytes (issue #240)" $ do
+      reg <- newBackgroundRegistry
+      tid <- spawnBackgroundProcess reg "." "printf 'bad \\377\\376 bytes\\n'; sleep 0.3; echo LINE-2"
+      threadDelay 800000
+      outRes <- getBackgroundOutput reg tid
+      case outRes of
+        ToolSuccess out -> do
+          T.unpack out `shouldContain` "bad \xFFFD\xFFFD bytes"
+          T.unpack out `shouldContain` "LINE-2"
+        ToolError err   -> expectationFailure ("Unexpected error: " ++ T.unpack err)
+
     it "stops running background process cleanly" $ do
       reg <- newBackgroundRegistry
       tid <- spawnBackgroundProcess reg "." "sleep 10"
