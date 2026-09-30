@@ -145,7 +145,7 @@ specToStep (TComplete t) _ _ = Right (AssistantResponse (Just t) [] Nothing)
 specToStep (TError t)    _ _ = Left t
 
 specToEval :: GoalVerdict -> (Text -> [Message] -> GoalEvaluation)
-specToEval v _ _ = GoalEvaluation v "fuzz reason"
+specToEval v _ _ = GoalEvaluation v "fuzz reason" Nothing
 
 -- | Run a scenario through 'goalLoop' with the pure interpreter.
 runScenario :: Scenario -> (AgentResult, [Message], GoalState, MockEnv)
@@ -302,7 +302,7 @@ spec = modifyMaxSuccess (const 1000) $ do
     it "gsNoProgressCount never exceeds max 1 blockCap (incl. degenerate caps)" $
       forAll (choose (-3, 0)) $ \cap ->
         let step _ _ = Right (AssistantResponse (Just "done.") [] Nothing)
-            eval _ _ = GoalEvaluation GoalNotYetMet "no"
+            eval _ _ = GoalEvaluation GoalNotYetMet "no" Nothing
             env = emptyMockEnv
                   { mockLLMSteps        = repeat step
                   , mockGoalEvaluations = repeat eval

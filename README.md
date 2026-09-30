@@ -181,7 +181,7 @@ Compatible APIs often do not report a cost. When the cost is missing, the termin
 - A limit of zero stops Hach before its first model request.
 - Hach checks the limit before each request, using the costs the API has reported so far. A single request can therefore take the total past the limit. A final answer that crosses the limit still completes normally.
 - A request whose cost the API does not report adds nothing to the total. With such an API, a positive limit cannot bound what you spend.
-- Goal-evaluation requests are not yet counted ([#178](https://github.com/jonbaldie/hach/issues/178)).
+- Goal-evaluation requests count toward the total. In a `/goal` run, an evaluation request follows each answer without a limit check, so an answer and its evaluation together can take the total past the limit.
 
 ## Development and testing
 

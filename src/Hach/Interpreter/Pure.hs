@@ -201,7 +201,7 @@ pureAlgebra = AgentAlgebra
             []         -> (Nothing, [])
           (evalRes, restEvals) = case mockGoalEvaluations env of
             (evalFn : rest) -> (evalFn cond msgs, rest)
-            []              -> (GoalEvaluation GoalNotYetMet "No evaluator steps left; defaulting to not yet met.", [])
+            []              -> (GoalEvaluation GoalNotYetMet "No evaluator steps left; defaulting to not yet met." Nothing, [])
           usageEvents = case mUsage of
             Just u  -> [EvGoalEvaluationUsage u]
             Nothing -> []
@@ -210,7 +210,7 @@ pureAlgebra = AgentAlgebra
         , mockGoalEvaluations      = restEvals
         , mockEvents               = mockEvents env ++ usageEvents
         }
-      pure evalRes
+      pure evalRes { geUsage = mUsage }
 
   , interpCheckPermission = \tool args -> do
       env <- getEnv

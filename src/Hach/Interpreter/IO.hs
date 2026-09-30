@@ -355,7 +355,7 @@ parseGoalEvaluation content =
                       Right ge -> ge
                       Left _   -> fallback
         _ -> fallback
-    fallback = GoalEvaluation GoalNotYetMet "Could not parse evaluator response."
+    fallback = GoalEvaluation GoalNotYetMet "Could not parse evaluator response." Nothing
 
 -- | Concrete IO algebra interpreting agent instructions against the configured inference endpoint and OS.
 ioAlgebra :: IOEnv -> AgentAlgebra IO
@@ -430,11 +430,12 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
       case res of
         Right asstResp -> do
           mapM_ (logger . EvGoalEvaluationUsage) (respUsage asstResp)
-          case respContent asstResp of
-            Just content -> pure (parseGoalEvaluation content)
-            Nothing      -> pure (GoalEvaluation GoalNotYetMet "Empty evaluator response.")
+          let eval = case respContent asstResp of
+                Just content -> parseGoalEvaluation content
+                Nothing      -> GoalEvaluation GoalNotYetMet "Empty evaluator response." Nothing
+          pure eval { geUsage = respUsage asstResp }
         Left err ->
-          pure (GoalEvaluation GoalNotYetMet ("Evaluator error: " <> err))
+          pure (GoalEvaluation GoalNotYetMet ("Evaluator error: " <> err) Nothing)
 
   , interpCheckPermission = \tool args -> do
       mode <- readIORef prtMode
