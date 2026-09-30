@@ -4,6 +4,7 @@ module Hach.HooksSpec (spec) where
 
 import Hach.Core (AgentAlgebra (..))
 import Hach.Hooks
+import Hach.Inference (openRouterConnection)
 import Hach.Interpreter.IO
   ( IOEnv
   , IOEnvPermissions (..)
@@ -165,7 +166,7 @@ blockingRunCommandEnv = do
             , (HookPostToolUse, [handler])
             ]
         }
-  newIOEnvWithPermissions perms "test-key" "test-model" "." False
+  newIOEnvWithPermissions perms (openRouterConnection "test-key") "test-model" "." False
 
 -- | Run a hook event through the real IO interpreter, using the same
 -- @"<tool> <payload>"@ encoding the agent core sends.

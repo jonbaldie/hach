@@ -30,7 +30,7 @@ library
         Hach.Types
         Hach.Core
         Hach.Tools
-        Hach.OpenRouter
+        Hach.Inference
         Hach.Interpreter.IO
         Hach.Interpreter.Pure
         Hach.Env
@@ -123,7 +123,10 @@ test-suite hach-test
         Hach.CoreSpec
         Hach.ToolsSpec
         Hach.EnvSpec
-        Hach.OpenRouterSpec
+        Hach.InferenceSpec
+        Hach.InferenceFixture
+        Hach.InferenceCliSpec
+        Hach.InferenceTuiSpec
         Hach.TUISpec
         Hach.TUILayoutSpec
         Hach.PropertySpec
@@ -167,4 +170,5 @@ test-suite hach-test
         time,
         async,
         network,
-        process
+        process,
+        unix

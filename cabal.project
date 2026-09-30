@@ -1,6 +1,10 @@
 packages: .
 tests: True
 
+-- crypton 2.1.3 fails its C build on Linux and macOS (missing
+-- p256/p256_verify.h). Stay on 2.1.2 until a fixed release ships (#248).
+constraints: crypton < 2.1.3
+
 if os(osx) && arch(x86_64)
   -- crypton 2.1.2's s2n-bignum x86 assembly fails on Intel macOS.
   -- Keep its C fallback until crypton fixes the assembler issue (#237).

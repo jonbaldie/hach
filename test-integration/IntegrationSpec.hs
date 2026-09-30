@@ -5,6 +5,7 @@ module Main (main) where
 
 import Hach.Core
 import Hach.Env
+import Hach.Inference (InferenceConnection(..), interfaceName)
 import Hach.Interpreter.IO
 import Hach.Tools
 import Hach.Types
@@ -16,9 +17,9 @@ import System.FilePath ((</>))
 
 main :: IO ()
 main = do
-  putStrLn "=== Running Live OpenRouter Integration Test ==="
+  putStrLn "=== Running Live Inference Integration Test ==="
 
-  -- 1. Load .env config and verify model from line 2
+  -- 1. Resolve the inference connection exactly as hach does at startup
   envRes <- loadEnvConfig ".env"
   EnvConfig{..} <- case envRes of
     Left err -> do
@@ -26,7 +27,9 @@ main = do
       exitFailure
     Right cfg -> pure cfg
 
-  putStrLn ("Using model from line 2 of .env: " <> T.unpack envModel)
+  putStrLn ("Using provider " <> T.unpack (interfaceName (icInterface envConnection))
+             <> " at " <> T.unpack (icEndpoint envConnection))
+  putStrLn ("Using model: " <> T.unpack envModel)
 
   -- 2. Setup isolated sandbox workspace for test
   cwd <- getCurrentDirectory
@@ -36,7 +39,7 @@ main = do
   -- The integration test exercises the autonomous write path, so it opts
   -- out of permission enforcement explicitly.
   let perms = defaultIOEnvPermissions { iopInitialMode = ModeBypassPermissions }
-  ioEnv <- newIOEnvWithPermissions perms envApiKey envModel sandboxDir True
+  ioEnv <- newIOEnvWithPermissions perms envConnection envModel sandboxDir True
 
   let prompt =
         "Please use the write_file tool to write 'Hello from Haskell Pearl' into a file named 'live_test.txt'. " <>

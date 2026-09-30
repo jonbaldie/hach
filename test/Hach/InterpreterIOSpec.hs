@@ -4,6 +4,7 @@ module Hach.InterpreterIOSpec (spec) where
 
 import Hach.Core (AgentAlgebra (..), agentLoop, foldAgentProgram)
 import Hach.Env (resolveEffortLevel, resolvePermissionMode)
+import Hach.Inference (openRouterConnection)
 import Hach.Interpreter.IO
 import Hach.Permissions (isProtectedPath)
 import Hach.Settings (Settings (..), defaultSettings, loadLayeredSettings)
@@ -102,7 +103,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
 
     describe "interpCheckPermission" $ do
       it "denies write_file under plan mode while allowing reads" $ do
-        env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
+        env <- newIOEnvWithPermissions planPerms (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
         interpCheckPermission alg "write_file" "{\"path\":\"out.txt\"}"
           `shouldReturn` Just "Plan mode is read-only. Tool execution denied."
@@ -110,7 +111,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
           `shouldReturn` Nothing
 
       it "authorizes Edit aliases as workspace writes" $ do
-        env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
+        env <- newIOEnvWithPermissions planPerms (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
             args = "{\"path\":\"out.txt\",\"old_content\":\"old\",\"new_content\":\"new\"}"
         interpCheckPermission alg "Edit" args
@@ -126,7 +127,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
           `shouldReturn` Just "Protected path: access denied to .git/config"
 
       it "honours deny rules from settings" $ do
-        env <- newIOEnvWithPermissions denyBashPerms "k" "test-model" testDir False
+        env <- newIOEnvWithPermissions denyBashPerms (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
         interpCheckPermission alg "Bash" "{\"command\":\"ls\"}"
           >>= (`shouldSatisfy` isJust)
@@ -136,7 +137,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
               { iopInitialMode = ModeAcceptEdits
               , iopRules = [PermissionRule RuleDeny (Just "write_file") (Just "secrets.txt")]
               }
-        env <- newIOEnvWithPermissions denySecrets "k" "test-model" testDir False
+        env <- newIOEnvWithPermissions denySecrets (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
         interpCheckPermission alg "write_file" "{\"path\":\"./secrets.txt\",\"content\":\"x\"}"
           >>= (`shouldSatisfy` isJust)
@@ -144,13 +145,13 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
           >>= (`shouldSatisfy` isJust)
 
       it "allows everything under bypassPermissions" $ do
-        env <- newIOEnvWithPermissions bypassPerms "k" "test-model" testDir False
+        env <- newIOEnvWithPermissions bypassPerms (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
         interpCheckPermission alg "write_file" "{\"path\":\".git/config\"}"
           `shouldReturn` Nothing
 
       it "switches enforcement live via setIOPermissionMode" $ do
-        env <- newIOEnvWithPermissions bypassPerms "k" "test-model" testDir False
+        env <- newIOEnvWithPermissions bypassPerms (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
         interpCheckPermission alg "write_file" "{\"path\":\"out.txt\"}"
           `shouldReturn` Nothing
@@ -186,7 +187,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
               { iopHooks = Map.singleton HookPreToolUse
                   [HookHandler (HookCommand hookCmd) Nothing False]
               }
-        env <- newIOEnvWithPermissions hookPerms "k" "test-model" testDir False
+        env <- newIOEnvWithPermissions hookPerms (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
         res <- interpRunHook alg HookPreToolUse "write_file {\"path\":\"x.txt\"}"
         hrDecision res `shouldBe` Just (PermDeny "no writes")
@@ -222,7 +223,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
             readIORef eventsRef
 
       it "blocks a write_file tool call into a protected path end to end" $ do
-        env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
+        env <- newIOEnvWithPermissions planPerms (openRouterConnection "k") "test-model" testDir False
         eventsRef <- newIORef [] :: IO (IORef [AgentEvent])
         let call1 = ToolCall "c1" "write_file" "{\"path\":\".git/pwned.txt\",\"content\":\"pwned\"}"
         stepsRef <- newIORef
@@ -257,7 +258,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
             marker = testDir </> "dynamic-command-ran"
         createDirectoryIfMissing True skillDir
         TIO.writeFile (skillDir </> "SKILL.md") "---\nname: plan-command-guard\n---\n!touch dynamic-command-ran\n"
-        env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
+        env <- newIOEnvWithPermissions planPerms (openRouterConnection "k") "test-model" testDir False
         events <- runSkillLoop env
         doesFileExist marker `shouldReturn` False
         events `shouldContain` [EvPermissionDenied "Skill" "Plan mode is read-only. Tool execution denied."]
@@ -457,7 +458,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
       it "still completes writes under acceptEdits" $ do
         env <- newIOEnvWithPermissions
           (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
-          "k" "test-model" testDir False
+          (openRouterConnection "k") "test-model" testDir False
         ((result, _), _) <- runHeadlessWrite env
         doesFileExist (testDir </> "hello.txt") `shouldReturn` True
         result `shouldBe` AgentCompleted "done"
@@ -465,7 +466,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
       it "recommends dontAsk and not acceptEdits when a command is denied under acceptEdits (Issue #221)" $ do
         env <- newIOEnvWithPermissions
           (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
-          "k" "test-model" testDir False
+          (openRouterConnection "k") "test-model" testDir False
         let cmdCall = ToolCall "c1" "run_command" "{\"command\":\"echo 42\"}"
         ((result, _hist), events) <- runHeadlessTool env cmdCall "run echo 42"
         events `shouldSatisfy` any (\case
@@ -493,7 +494,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
       it "recommends dontAsk for TaskCreate with a command under acceptEdits (Issue #221)" $ do
         env <- newIOEnvWithPermissions
           (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
-          "k" "test-model" testDir False
+          (openRouterConnection "k") "test-model" testDir False
         let taskCall = ToolCall "c1" "TaskCreate" "{\"name\":\"bg task\",\"command\":\"echo bg\"}"
         ((result, _hist), events) <- runHeadlessTool env taskCall "create task"
         events `shouldSatisfy` any (\case
@@ -612,7 +613,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
       it "emits live permission mode changes from plan-mode tools" $ do
         modes <- newIORef []
         let perms = defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits }
-        env <- newIOEnvWithPermissions perms "k" "test-model" testDir False
+        env <- newIOEnvWithPermissions perms (openRouterConnection "k") "test-model" testDir False
         let logger event = case event of
               EvPermissionModeChanged mode -> modifyIORef' modes (<> [mode])
               _ -> pure ()
@@ -643,7 +644,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
       it "restores the previous mode for ExitPlanMode aliases" $ do
         forM_ [("ExitPlanMode", ModeAcceptEdits), ("exit_plan_mode", ModeDontAsk)] $ \(exitName, initialMode) -> do
           let perms = defaultIOEnvPermissions { iopInitialMode = initialMode }
-          env <- newIOEnvWithPermissions perms "k" "test-model" testDir False
+          env <- newIOEnvWithPermissions perms (openRouterConnection "k") "test-model" testDir False
           let alg = ioAlgebra env
           _ <- interpTool alg (ToolCall "p1" "EnterPlanMode" "{}")
           result <- interpTool alg (ToolCall "p2" exitName "{}")
@@ -654,7 +655,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
       it "does not overwrite the saved mode when EnterPlanMode is called twice" $ do
         env <- newIOEnvWithPermissions
           (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
-          "k" "test-model" testDir False
+          (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
         _ <- interpTool alg (ToolCall "p1" "EnterPlanMode" "{}")
         _ <- interpTool alg (ToolCall "p2" "EnterPlanMode" "{}")
@@ -662,7 +663,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         currentIOPermissionMode env `shouldReturn` ModeAcceptEdits
 
       it "falls back to default when the session starts in plan mode" $ do
-        env <- newIOEnvWithPermissions planPerms "k" "test-model" testDir False
+        env <- newIOEnvWithPermissions planPerms (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
         _ <- interpTool alg (ToolCall "p1" "ExitPlanMode" "{}")
         currentIOPermissionMode env `shouldReturn` ModeDefault

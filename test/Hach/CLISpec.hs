@@ -2,13 +2,14 @@ module Hach.CLISpec (spec) where
 
 import Control.Exception (finally)
 import Hach.CLI
+import Hach.InferenceFixture (FixtureReply, fixtureBaseUrl, fixtureRequests, replyJson, withInferenceFixture)
 import Hach.Core
 import Hach.Types
 import Control.Monad (forM_)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy.Char8 as LBS
-import Data.Aeson ((.=))
+import Data.Aeson (object, (.=))
 import Data.Either (isRight)
 import Data.List (intercalate, isPrefixOf)
 import System.Directory
@@ -217,12 +218,11 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
       addErr `shouldNotContain` "embedded git repository"
 
   describe "--print stdout contract (Issue #116)" $ do
-    -- An invalid key makes the agent fail on its first request, which drives
+    -- A rejected key makes the agent fail on its first request, which drives
     -- agent events through the real renderer without a live model.
-    let runPrint executable workspace args = do
-          testEnvironment <- isolatedEnvironment workspace
+    let runPrint executable workspace args = withRejectingEndpoint workspace 1 $ \testEnvironment endpointArgs -> do
           let command =
-                (proc executable (args <> ["--model", "test-model", "What is 2+2?"]))
+                (proc executable (endpointArgs <> args <> ["--model", "test-model", "What is 2+2?"]))
                   { cwd = Just workspace
                   , env = Just testEnvironment
                   }
@@ -251,10 +251,9 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
 
     it "returns a failure status for a failed --no-tui agent" $ do
       executable <- hachExecutable
-      withTemporaryWorkspace $ \workspace -> do
-        testEnvironment <- isolatedEnvironment workspace
+      withTemporaryWorkspace $ \workspace -> withRejectingEndpoint workspace 1 $ \testEnvironment endpointArgs -> do
         let command =
-              (proc executable ["--no-tui", "--model", "test-model", "Answer in one sentence."])
+              (proc executable (endpointArgs <> ["--no-tui", "--model", "test-model", "Answer in one sentence."]))
                 { cwd = Just workspace
                 , env = Just testEnvironment
                 }
@@ -267,10 +266,9 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
 
     it "returns a failure status for a failed headless goal loop" $ do
       executable <- hachExecutable
-      withTemporaryWorkspace $ \workspace -> do
-        testEnvironment <- isolatedEnvironment workspace
+      withTemporaryWorkspace $ \workspace -> withRejectingEndpoint workspace 1 $ \testEnvironment endpointArgs -> do
         let command =
-              (proc executable
+              (proc executable $ endpointArgs <>
                 [ "--print"
                 , "--output-format"
                 , "json"
@@ -293,10 +291,9 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
 
     it "returns a failure status and does not print Task completed for an unmet headless goal (Issue #223)" $ do
       executable <- hachExecutable
-      withTemporaryWorkspace $ \workspace -> do
-        testEnvironment <- isolatedEnvironment workspace
+      withTemporaryWorkspace $ \workspace -> withRejectingEndpoint workspace 1 $ \testEnvironment endpointArgs -> do
         let command =
-              (proc executable
+              (proc executable $ endpointArgs <>
                 [ "--no-tui"
                 , "--max-turns"
                 , "1"
@@ -465,10 +462,9 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         stdoutText `shouldContain` "hach --help"
 
   describe "--max-budget-usd enforcement (Issue #150)" $ do
-    let runBudget executable workspace args = do
-          testEnvironment <- isolatedEnvironment workspace
+    let runBudget executable workspace requests args = withRejectingEndpoint workspace requests $ \testEnvironment endpointArgs -> do
           let command =
-                (proc executable args)
+                (proc executable (endpointArgs <> args))
                   { cwd = Just workspace
                   , env = Just testEnvironment
                   }
@@ -481,7 +477,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
       executable <- hachExecutable
       withTemporaryWorkspace $ \workspace -> do
         (exitCode, stdoutText, stderrText) <-
-          runBudget executable workspace
+          runBudget executable workspace 0
             ["--print", "--max-budget-usd", "0", "--model", "test-model", "Reply with exactly the word pong"]
 
         exitCode `shouldBe` ExitFailure 1
@@ -494,7 +490,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
       executable <- hachExecutable
       withTemporaryWorkspace $ \workspace -> do
         (exitCode, stdoutText, stderrText) <-
-          runBudget executable workspace
+          runBudget executable workspace 0
             [ "--print"
             , "--output-format"
             , "json"
@@ -517,7 +513,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         createDirectoryIfMissing True (workspace </> ".claude")
         writeFile (workspace </> ".claude" </> "settings.json") "{\"max_budget_usd\": 0}\n"
         (exitCode, stdoutText, stderrText) <-
-          runBudget executable workspace
+          runBudget executable workspace 0
             ["--print", "--model", "test-model", "Reply with exactly the word pong"]
 
         exitCode `shouldBe` ExitFailure 1
@@ -528,7 +524,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
       executable <- hachExecutable
       withTemporaryWorkspace $ \workspace -> do
         (exitCode, stdoutText, stderrText) <-
-          runBudget executable workspace
+          runBudget executable workspace 1
             ["--print", "--max-turns", "1", "--model", "test-model", "Reply with exactly the word pong"]
 
         exitCode `shouldBe` ExitFailure 1
@@ -536,16 +532,16 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         (stdoutText <> stderrText) `shouldContain` "OpenRouter API error"
 
   describe "unparseable settings files (Issue #165)" $ do
-    let runWithSettings executable workspace settings args = do
+    let runWithSettings executable workspace requests settings args = do
           createDirectoryIfMissing True (workspace </> ".claude")
           writeFile (workspace </> ".claude" </> "settings.json") settings
-          testEnvironment <- isolatedEnvironment workspace
-          let command =
-                (proc executable args)
-                  { cwd = Just workspace
-                  , env = Just testEnvironment
-                  }
-          readCreateProcessWithExitCode command ""
+          withRejectingEndpoint workspace requests $ \testEnvironment endpointArgs -> do
+            let command =
+                  (proc executable (endpointArgs <> args))
+                    { cwd = Just workspace
+                    , env = Just testEnvironment
+                    }
+            readCreateProcessWithExitCode command ""
         denyRule =
           "\"permission_rules\":[{\"action\":\"deny\",\"tool\":\"write_file\",\"path\":\"**/secret.txt\"}]"
 
@@ -558,7 +554,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         executable <- hachExecutable
         withTemporaryWorkspace $ \workspace -> do
           (exitCode, stdoutText, stderrText) <-
-            runWithSettings executable workspace settings
+            runWithSettings executable workspace 0 settings
               ["--no-tui", "--permission-mode", "acceptEdits", "Write CHANGED to secret.txt"]
           let combined = stdoutText <> stderrText
 
@@ -571,7 +567,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
       executable <- hachExecutable
       withTemporaryWorkspace $ \workspace -> do
         (exitCode, stdoutText, stderrText) <-
-          runWithSettings executable workspace ("{" <> denyRule <> "}\n")
+          runWithSettings executable workspace 1 ("{" <> denyRule <> "}\n")
             ["--no-tui", "--max-turns", "1", "--model", "test-model", "Write CHANGED to secret.txt"]
         let combined = stdoutText <> stderrText
 
@@ -580,10 +576,9 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         combined `shouldContain` "Starting agent loop"
 
   describe "session persistence and continuation (Issue #151)" $ do
-    let runWithEnv executable workspace args = do
-          testEnvironment <- isolatedEnvironment workspace
+    let runWithEnv executable workspace requests args = withRejectingEndpoint workspace requests $ \testEnvironment endpointArgs -> do
           let command =
-                (proc executable args)
+                (proc executable (endpointArgs <> args))
                   { cwd = Just workspace
                   , env = Just testEnvironment
                   }
@@ -593,7 +588,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
       executable <- hachExecutable
       withTemporaryWorkspace $ \workspace -> do
         (exitCode, stdoutText, _stderrText) <-
-          runWithEnv executable workspace ["--no-tui", "-c", "continue previous task"]
+          runWithEnv executable workspace 0 ["--no-tui", "-c", "continue previous task"]
         exitCode `shouldBe` ExitFailure 1
         stdoutText `shouldContain` "No stored session found"
         stdoutText `shouldNotContain` "Prompting LLM"
@@ -602,7 +597,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
       executable <- hachExecutable
       withTemporaryWorkspace $ \workspace -> do
         (exitCode, stdoutText, _stderrText) <-
-          runWithEnv executable workspace ["--no-tui", "--session-id", "nonexistent-sess-id", "do task"]
+          runWithEnv executable workspace 0 ["--no-tui", "--session-id", "nonexistent-sess-id", "do task"]
         exitCode `shouldBe` ExitFailure 1
         stdoutText `shouldContain` "No stored session found"
         stdoutText `shouldNotContain` "Prompting LLM"
@@ -618,7 +613,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
           "{\"role\":\"user\",\"content\":\"Codeword PLATYPUS\"}\n{\"role\":\"assistant\",\"content\":\"Acknowledged.\"}\n"
 
         (_exitCode, stdoutText, _) <-
-          runWithEnv executable workspace ["--no-tui", "-c", "What was the codeword?"]
+          runWithEnv executable workspace 1 ["--no-tui", "-c", "What was the codeword?"]
         stdoutText `shouldContain` "Prompting LLM with 4 messages in context"
 
     it "restores specific prior history when resumed via --session-id" $ do
@@ -632,11 +627,10 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
           "{\"role\":\"user\",\"content\":\"Codeword PLATYPUS\"}\n{\"role\":\"assistant\",\"content\":\"Acknowledged.\"}\n"
 
         (_exitCode, stdoutText, _) <-
-          runWithEnv executable workspace ["--no-tui", "--session-id", "sess-specific", "What was the codeword?"]
+          runWithEnv executable workspace 1 ["--no-tui", "--session-id", "sess-specific", "What was the codeword?"]
         stdoutText `shouldContain` "Prompting LLM with 4 messages in context"
 
-  -- The stub credentials make every model request fail, so these runs also
-  -- show that the lifecycle hooks fire on a run that ends in failure.
+  -- The endpoint rejects every model request, so these runs also show that the lifecycle hooks fire on a run that ends in failure.
   describe "lifecycle hooks (Issue #168)" $ do
     let recordingHook event =
           "{\"handler\":{\"type\":\"command\",\"command\":\"{ printf '"
@@ -644,16 +638,16 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         hooksSettings entries =
           "{\"hooks\":[" <> intercalate "," entries <> "]}\n"
         entry event handlers = "[\"" <> event <> "\",[" <> intercalate "," handlers <> "]]"
-        runWithHooks executable workspace settings args = do
+        runWithHooks executable workspace requests settings args = do
           createDirectoryIfMissing True (workspace </> ".claude")
           writeFile (workspace </> ".claude" </> "settings.json") settings
-          testEnvironment <- isolatedEnvironment workspace
-          let command =
-                (proc executable args)
-                  { cwd = Just workspace
-                  , env = Just testEnvironment
-                  }
-          readCreateProcessWithExitCode command ""
+          withRejectingEndpoint workspace requests $ \testEnvironment endpointArgs -> do
+            let command =
+                  (proc executable (endpointArgs <> args))
+                    { cwd = Just workspace
+                    , env = Just testEnvironment
+                    }
+            readCreateProcessWithExitCode command ""
         hookLog workspace = lines <$> readFile (workspace </> "hooks.log")
         eventOf = takeWhile (/= ' ')
         payloadOf = drop 1 . dropWhile (/= ' ')
@@ -666,7 +660,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
               , entry "user_prompt_submit" [recordingHook "user_prompt_submit"]
               , entry "stop" [recordingHook "stop"]
               ]
-        _ <- runWithHooks executable workspace settings
+        _ <- runWithHooks executable workspace 1 settings
           ["--no-tui", "--max-turns", "1", "--model", "test-model", "Say hello world"]
         entries <- hookLog workspace
 
@@ -681,7 +675,7 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         let blocking =
               "{\"handler\":{\"type\":\"command\",\"command\":\"echo prompt rejected by policy; exit 2\"}}"
             settings = hooksSettings [entry "user_prompt_submit" [blocking]]
-        (exitCode, stdoutText, stderrText) <- runWithHooks executable workspace settings
+        (exitCode, stdoutText, stderrText) <- runWithHooks executable workspace 0 settings
           ["--no-tui", "--model", "test-model", "Say hello world"]
         let combined = stdoutText <> stderrText
 
@@ -699,9 +693,30 @@ isolatedEnvironment workspace = do
     ("OPENROUTER_API_KEY", "test")
       : ("OPENROUTER_MODEL", "test-model")
       : ("CLAUDE_CONFIG_DIR", workspace <> "-isolated-config")
-      : filter ((`notElem` overridden) . fst) environment
+      : filter (not . overridden . fst) environment
   where
-    overridden = ["OPENROUTER_API_KEY", "OPENROUTER_MODEL", "CLAUDE_CONFIG_DIR"]
+    overridden name =
+      name `elem` ["OPENROUTER_API_KEY", "OPENROUTER_MODEL", "CLAUDE_CONFIG_DIR", "HACH_PROVIDER"]
+        || "OPENAI_" `isPrefixOf` name
+
+-- | Run in the default OpenRouter mode, with the isolated environment and
+-- the given @--base-url@ arguments pointing at a loopback endpoint that
+-- rejects every request as the real service rejects a stub key; then check
+-- that exactly the expected number of requests reached it.
+withRejectingEndpoint :: FilePath -> Int -> ([(String, String)] -> [String] -> IO a) -> IO a
+withRejectingEndpoint workspace requests action =
+  withInferenceFixture (replicate requests rejectedKey) $ \fixture -> do
+    environment <- isolatedEnvironment workspace
+    let loopback = [("NO_PROXY", "*"), ("no_proxy", "*")]
+    result <- action
+      (loopback <> filter ((`notElem` map fst loopback) . fst) environment)
+      ["--base-url", T.unpack (fixtureBaseUrl fixture)]
+    length <$> fixtureRequests fixture `shouldReturn` requests
+    pure result
+
+rejectedKey :: FixtureReply
+rejectedKey =
+  replyJson 401 (object ["error" .= object ["message" .= ("User not found." :: T.Text), "code" .= (401 :: Int)]])
 
 hachEnvironment :: IO [(String, String)]
 hachEnvironment = limitHachRts <$> getEnvironment
@@ -911,6 +926,42 @@ cliModuleSpec = do
         Left err -> err `shouldContain` "Unknown flag"
         Right _  -> expectationFailure "Expected failure on unknown flag"
 
+  describe "--provider / --base-url (Issue #246)" $ do
+    let parsesTo args expected = parseCliArgs args `shouldBe` Right expected
+        rejects args needle = case parseCliArgs args of
+          Left err -> err `shouldContain` needle
+          Right opts -> expectationFailure ("expected a parse error, got " ++ show opts)
+
+    it "accepts separate and equals forms" $ do
+      ["--provider", "openai-compatible", "--base-url", "http://127.0.0.1:8080/v1"]
+        `parsesTo` defaultCliOptions
+          { optProvider = Just "openai-compatible", optBaseUrl = Just "http://127.0.0.1:8080/v1" }
+      ["--provider=openrouter", "--base-url=http://h/v1"]
+        `parsesTo` defaultCliOptions { optProvider = Just "openrouter", optBaseUrl = Just "http://h/v1" }
+
+    it "keeps the raw value so resolution can validate it after precedence" $
+      ["--provider", "bogus", "--version"]
+        `parsesTo` defaultCliOptions { optProvider = Just "bogus", optVersion = True }
+
+    it "takes the last value when repeated" $
+      ["--provider", "openrouter", "--provider=openai-compatible", "--base-url", "http://a", "--base-url=http://b"]
+        `parsesTo` defaultCliOptions { optProvider = Just "openai-compatible", optBaseUrl = Just "http://b" }
+
+    it "rejects missing, blank, and flag-shaped values" $ do
+      rejects ["--provider"] "--provider requires an argument"
+      rejects ["--base-url"] "--base-url requires an argument"
+      rejects ["--provider", "--model", "m"] "--provider requires a non-flag argument"
+      rejects ["--base-url", "--print"] "--base-url requires a non-flag argument"
+      rejects ["--provider", "-p", "hi"] "--provider requires a non-flag argument"
+      rejects ["--base-url", "-m", "m"] "--base-url requires a non-flag argument"
+      rejects ["--provider", "  "] "--provider requires a non-empty argument"
+      rejects ["--provider="] "--provider= requires a non-empty argument"
+      rejects ["--base-url="] "--base-url= requires a non-empty argument"
+
+    it "leaves the flags as prompt text after --" $
+      ["--", "--provider", "openrouter"]
+        `parsesTo` defaultCliOptions { optPrompt = Just "--provider openrouter" }
+
   describe "--help / -h (Issue #153)" $ do
     let everyAcceptedFlag =
           [ "-h", "--help", "-v", "--version", "-m", "--model", "--no-tui"
@@ -918,7 +969,7 @@ cliModuleSpec = do
           , "-r", "--resume", "--session-id", "--max-turns", "--max-budget-usd"
           , "--append-system-prompt", "--add-dir", "-w", "--worktree"
           , "--init", "--exec", "--permission-mode"
-          , "--dangerously-skip-permissions", "--"
+          , "--dangerously-skip-permissions", "--provider", "--base-url", "--"
           ]
         documentedFlags = concatMap cliFlagNames cliFlags
 
@@ -954,6 +1005,15 @@ cliModuleSpec = do
             Left err -> "Unknown flag" `T.isInfixOf` T.pack err
             Right _  -> False
       filter unknown documentedFlags `shouldBe` []
+
+    it "explains provider selection, credentials, defaults, precedence and the base URL" $
+      forM_
+        [ "HACH_PROVIDER", "openrouter", "openai-compatible"
+        , "OPENROUTER_API_KEY", "OPENROUTER_MODEL"
+        , "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL"
+        , "llm_provider", "llm_base_url", "https://openrouter.ai/api/v1", "https://api.openai.com/v1"
+        , "/chat/completions", "flag > process environment > .env > settings.json"
+        ] $ \needle -> cliHelpText `shouldContain` needle
 
     it "points the error-path usage line at --help" $ do
       cliUsageHint `shouldContain` "--help"

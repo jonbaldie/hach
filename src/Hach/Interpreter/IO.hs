@@ -29,7 +29,7 @@ import Hach.Hooks (executeHooks)
 import Hach.Memory (loadHierarchicalMemory, resolveMemoryImports)
 import Hach.Notifications (sendDesktopNotification)
 import Hach.Paths (Workspace(..))
-import Hach.OpenRouter
+import Hach.Inference
 import Hach.Permissions (evalPermission, evalPermissionForAuthority)
 import qualified Hach.Sessions as Sessions
 import Hach.Tools
@@ -46,8 +46,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
-import Network.HTTP.Client (Manager, newManager)
-import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Network.HTTP.Client (Manager)
 import System.Directory (doesDirectoryExist, doesFileExist)
 import System.FilePath ((</>))
 import System.IO (hClose, hPutStrLn, stderr)
@@ -133,7 +132,7 @@ data PermissionRuntime = PermissionRuntime
 -- | Runtime environment for executing an agent harness in real IO.
 data IOEnv = IOEnv
   { ioManager          :: !Manager
-  , ioApiKey           :: !Text
+  , ioConnection       :: !InferenceConnection
   , ioModel            :: !Text
   , ioWorkspace        :: !FilePath
   , ioWorkingDirs      :: ![FilePath]
@@ -145,22 +144,24 @@ data IOEnv = IOEnv
   , ioResolveAsk       :: Text -> Text -> Text -> IO (Maybe Text)
   }
 
--- | Initialize a new 'IOEnv' with a TLS manager and open permission defaults.
+-- | Initialize a new 'IOEnv' for the default OpenRouter connection with the
+-- given key and open permission defaults.
 newIOEnv :: Text -> Text -> FilePath -> Bool -> IO IOEnv
-newIOEnv = newIOEnvWithPermissions defaultIOEnvPermissions
+newIOEnv apiKey = newIOEnvWithPermissions defaultIOEnvPermissions (openRouterConnection apiKey)
 
--- | Initialize a new 'IOEnv' with explicit permission mode, rules, and hooks.
+-- | Initialize a new 'IOEnv' with an inference connection and explicit
+-- permission mode, rules, and hooks.
 newIOEnvWithPermissions
-  :: IOEnvPermissions -> Text -> Text -> FilePath -> Bool -> IO IOEnv
-newIOEnvWithPermissions perms apiKey model workspace verbose = do
-  mgr <- newManager tlsManagerSettings
+  :: IOEnvPermissions -> InferenceConnection -> Text -> FilePath -> Bool -> IO IOEnv
+newIOEnvWithPermissions perms conn model workspace verbose = do
+  mgr <- newInferenceManager
   modeRef <- newIORef (iopInitialMode perms)
   modeBeforePlanRef <- newIORef Nothing
   wsRef <- newIORef workspace
   wtRef <- newIORef Nothing
   pure IOEnv
     { ioManager          = mgr
-    , ioApiKey           = apiKey
+    , ioConnection       = conn
     , ioModel            = model
     , ioWorkspace        = workspace
     , ioWorkingDirs      = []
@@ -356,11 +357,11 @@ parseGoalEvaluation content =
         _ -> fallback
     fallback = GoalEvaluation GoalNotYetMet "Could not parse evaluator response."
 
--- | Concrete IO algebra interpreting agent instructions against real OpenRouter and OS.
+-- | Concrete IO algebra interpreting agent instructions against the configured inference endpoint and OS.
 ioAlgebra :: IOEnv -> AgentAlgebra IO
 ioAlgebra env = ioAlgebraWithLog (renderEventIO (ioVerbose env)) env
 
--- | Build the OpenRouter payload for this environment. Effort is taken from
+-- | Build the inference payload for this environment. Effort is taken from
 -- the session env so a later model switch does not drop it.
 chatRequestFor :: IOEnv -> [Message] -> [ToolDef] -> Maybe Text -> ChatRequest
 chatRequestFor IOEnv{..} msgs tools choice = ChatRequest
@@ -376,7 +377,7 @@ ioAlgebraWithLog :: (AgentEvent -> IO ()) -> IOEnv -> AgentAlgebra IO
 ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
   { interpPrompt = \msgs tools -> do
       let req = chatRequestFor env msgs tools (Just "auto")
-      sendChatCompletion ioManager ioApiKey req
+      sendInference ioManager ioConnection req
 
   , interpTool = \call -> do
       case resolveToolIdentity (functionName call) of
@@ -425,7 +426,7 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
                    : UserMsg ("Condition: " <> condition <> "\n\nTranscript:\n" <> transcriptToText transcript)
                    : []
           req = chatRequestFor env evalMsgs [] Nothing
-      res <- sendChatCompletion ioManager ioApiKey req
+      res <- sendInference ioManager ioConnection req
       case res of
         Right asstResp -> do
           mapM_ (logger . EvGoalEvaluationUsage) (respUsage asstResp)
@@ -525,6 +526,6 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
       AssistantMsg mc _ -> "[Assistant] " <> fromMaybe "" mc
       ToolMsg _ name c -> "[Tool " <> name <> "] " <> c
 
--- | Run an 'AgentProgram' using real OpenRouter API and local filesystem.
+-- | Run an 'AgentProgram' using the configured inference endpoint and local filesystem.
 runIO :: IOEnv -> AgentProgram a -> IO a
 runIO env prog = foldAgentProgram (ioAlgebra env) prog

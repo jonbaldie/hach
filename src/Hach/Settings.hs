@@ -47,6 +47,8 @@ data Settings = Settings
   , setWorkingDirs      :: ![FilePath]
   , setOutputStyle      :: !(Maybe OutputStyle)
   , setAutoCompactLimit :: !(Maybe Int)
+  , setLlmProvider      :: !(Maybe Text)
+  , setLlmBaseUrl       :: !(Maybe Text)
   } deriving (Show, Eq, Generic)
 
 -- | Sensible initial empty settings.
@@ -66,6 +68,8 @@ defaultSettings = Settings
   , setWorkingDirs      = []
   , setOutputStyle      = Nothing
   , setAutoCompactLimit = Nothing
+  , setLlmProvider      = Nothing
+  , setLlmBaseUrl       = Nothing
   }
 
 instance ToJSON Settings where
@@ -84,6 +88,8 @@ instance ToJSON Settings where
     , "working_directories" .= setWorkingDirs
     , "output_style"        .= setOutputStyle
     , "auto_compact_limit"  .= setAutoCompactLimit
+    , "llm_provider"        .= setLlmProvider
+    , "llm_base_url"        .= setLlmBaseUrl
     ]
 
 instance FromJSON Settings where
@@ -103,6 +109,8 @@ instance FromJSON Settings where
       <*> o .:? "working_directories" .!= []
       <*> o .:? "output_style"
       <*> o .:? "auto_compact_limit"
+      <*> o .:? "llm_provider"
+      <*> o .:? "llm_base_url"
 
 -- | Parse the @hooks@ block. The object form keyed by event name is canonical;
 -- the array-of-pairs form is still accepted because it was once the only form
@@ -128,6 +136,8 @@ mergeSettings earlier later = Settings
   , setWorkingDirs      = ordNub (setWorkingDirs later ++ setWorkingDirs earlier)
   , setOutputStyle      = setOutputStyle later <|> setOutputStyle earlier
   , setAutoCompactLimit = setAutoCompactLimit later <|> setAutoCompactLimit earlier
+  , setLlmProvider      = setLlmProvider later <|> setLlmProvider earlier
+  , setLlmBaseUrl       = setLlmBaseUrl later <|> setLlmBaseUrl earlier
   }
 
 -- | Order-preserving unique: first occurrence wins, O(n log n).

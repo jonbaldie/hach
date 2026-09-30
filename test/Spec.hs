@@ -5,7 +5,9 @@ module Main (main) where
 import Test.Hspec
 import qualified Hach.CoreSpec as CoreSpec
 import qualified Hach.EnvSpec as EnvSpec
-import qualified Hach.OpenRouterSpec as OpenRouterSpec
+import qualified Hach.InferenceSpec as InferenceSpec
+import qualified Hach.InferenceCliSpec as InferenceCliSpec
+import qualified Hach.InferenceTuiSpec as InferenceTuiSpec
 import qualified Hach.ToolsSpec as ToolsSpec
 import qualified Hach.TUISpec as TUISpec
 import qualified Hach.TUILayoutSpec as TUILayoutSpec
@@ -37,7 +39,9 @@ main = hspec $ do
   describe "Hach.Env" EnvSpec.spec
   describe "Hach.Core" CoreSpec.spec
   describe "Hach.Tools" ToolsSpec.spec
-  describe "Hach.OpenRouter" OpenRouterSpec.spec
+  describe "Hach.Inference" InferenceSpec.spec
+  describe "Hach.Inference (executable acceptance)" InferenceCliSpec.spec
+  describe "Hach.Inference (TUI acceptance)" InferenceTuiSpec.spec
   describe "Hach.TUI (Pure Reducer Seam)" TUISpec.spec
   describe "Hach.TUI (Layout / Border Alignment)" TUILayoutSpec.spec
   describe "Hach.Property (CGPT & Fuzzing)" PropertySpec.spec

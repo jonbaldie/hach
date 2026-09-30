@@ -24,6 +24,11 @@ ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     TERM=xterm-256color
 
+# Inference settings are supplied at run time, never baked into the image:
+# pass OPENROUTER_API_KEY, or HACH_PROVIDER=openai-compatible with
+# OPENAI_BASE_URL, OPENAI_MODEL and (if needed) OPENAI_API_KEY, via
+# `docker run -e`. See README.md, "Configuration".
+
 # Configure git to allow working in mounted workspaces regardless of host UID
 RUN git config --system --add safe.directory '*'
 
@@ -33,7 +38,7 @@ RUN useradd -m -u 1000 -U -s /bin/bash hach && \
 
 # Pre-cache Cabal dependencies for external libraries
 WORKDIR /tmp/cabal-cache
-COPY hach.cabal ./
+COPY hach.cabal cabal.project ./
 RUN cabal update && \
     cabal build --only-dependencies lib:hach && \
     rm -rf /tmp/cabal-cache

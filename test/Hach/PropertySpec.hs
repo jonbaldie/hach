@@ -4,7 +4,7 @@
 module Hach.PropertySpec (spec) where
 
 import Hach.CLI
-import Hach.OpenRouter
+import Hach.Inference
 import Hach.Paths (workspaceAt)
 import Hach.Tools
 import Hach.TUI.State

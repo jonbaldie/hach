@@ -12,6 +12,7 @@ module Hach.TUI.State
   , isTranscriptAppendingEvent
   ) where
 
+import Hach.Inference (CostPolicy(..))
 import Hach.Sessions (estimateCostUsd)
 import Hach.Skills (inputSlashCompletion, parseSkillInvocations, skillName)
 import Hach.TUI.Conversation (compactTranscriptHistory)
@@ -145,13 +146,14 @@ formatCostReport TuiState{..} =
         formatTokens (stuPromptTokens stu) <> " prompt" <> cacheSessionPart <> ", " <>
         formatTokens (stuCompletionTokens stu) <> " completion" <> evalSessionPart <> ")"
 
-      costLine = case stuTotalCost stu of
-        Just c  -> "\nReported API Cost: $" <> T.pack (printf "%.4f" c)
-        Nothing ->
-          if stuTotalTokens stu > 0
-            then let est = estimateCostUsd tsModelName (stuPromptTokens stu) (stuCompletionTokens stu)
-                 in "\nEstimated Cost: ~$" <> T.pack (printf "%.4f" est)
-            else ""
+      costLine = case (stuTotalCost stu, tsCostPolicy) of
+        (Just c, _) -> "\nReported API Cost: $" <> T.pack (printf "%.4f" c)
+        (Nothing, CostReportedOnly) ->
+          "\nAPI Cost: not reported by the endpoint (no estimate is made)"
+        (Nothing, _) | stuTotalTokens stu == 0 -> ""
+        (Nothing, CostEstimateFromModel) ->
+          let est = estimateCostUsd tsModelName (stuPromptTokens stu) (stuCompletionTokens stu)
+          in "\nEstimated Cost: ~$" <> T.pack (printf "%.4f" est)
   in contextLine <> "\n" <> sessionLine <> costLine
 
 -- | Handle submitting a user task prompt.

@@ -1,8 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Hach.OpenRouterSpec (spec) where
+module Hach.InferenceSpec (spec) where
 
-import Hach.OpenRouter
+import Hach.Inference
 import Hach.Types
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap

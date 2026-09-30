@@ -32,6 +32,7 @@ import Hach.Core
 import Hach.CLI (renderRunOutcome)
 import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions, loadProjectInstructionsFile)
 import Hach.Git (getGitDiff)
+import Hach.Inference (connectionCostPolicy)
 import Hach.Interpreter.IO
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
 import Hach.Sessions (buildSessionHistory, saveRunSession)
@@ -285,6 +286,7 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
         , tsCurrentTurn = loadedTurns
         , tsTheme = mTheme
         , tsProjectInstructions = listToMaybe loadedInstructions
+        , tsCostPolicy = connectionCostPolicy (ioConnection ioEnv)
         }
       (startingState, initialActions) = initialTuiLaunch initialPrompt baseState
 
