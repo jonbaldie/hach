@@ -797,8 +797,8 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
       it "preserves effort when the active model changes" $ withUserConfig $ do
         writeSettings (".agents" </> "settings.json") "{\"effort_level\":\"high\"}"
         env <- envFromLoadedSettings
-        let runEnv = runEnvForModel "openai/gpt-4o" env
-        ioModel runEnv `shouldBe` "openai/gpt-4o"
+        let runEnv = runEnvForModel "~openai/gpt-mini-latest" env
+        ioModel runEnv `shouldBe` "~openai/gpt-mini-latest"
         reasoningEffort (productionJson runEnv) `shouldBe` Just "high"
 
       it "rejects unsupported effort from loaded settings" $ withUserConfig $ do

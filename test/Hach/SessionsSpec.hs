@@ -59,7 +59,7 @@ spec = describe "Hach.Sessions" $ do
       let sInfo = SessionInfo
             { siId = "test-session-123"
             , siCreatedAt = "2026-09-06T10:00:00Z"
-            , siModel = "anthropic/claude-3-opus"
+            , siModel = "~anthropic/claude-opus-latest"
             , siTurns = 2
             , siCostUsd = 0.05
             }
@@ -74,7 +74,7 @@ spec = describe "Hach.Sessions" $ do
         Nothing -> expectationFailure "Failed to reload saved session"
         Just (loadedInfo, loadedHistory) -> do
           siId loadedInfo `shouldBe` "test-session-123"
-          siModel loadedInfo `shouldBe` "anthropic/claude-3-opus"
+          siModel loadedInfo `shouldBe` "~anthropic/claude-opus-latest"
           loadedHistory `shouldBe` history
 
     it "lists recorded sessions ordered by recency" $ do

@@ -26,8 +26,8 @@ spec = describe "Hach.Settings" $ do
   describe "JSON deserialization" $ do
     it "parses complete settings object" $ do
       let raw = "{\n\
-        \  \"model\": \"claude-3-opus\",\n\
-        \  \"fallback_model\": \"claude-3-sonnet\",\n\
+        \  \"model\": \"~anthropic/claude-opus-latest\",\n\
+        \  \"fallback_model\": \"~anthropic/claude-sonnet-latest\",\n\
         \  \"effort_level\": \"high\",\n\
         \  \"max_budget_usd\": 10.5,\n\
         \  \"permission_mode\": \"acceptEdits\",\n\
@@ -39,8 +39,8 @@ spec = describe "Hach.Settings" $ do
       case decode (BSL.fromStrict raw) of
         Nothing -> expectationFailure "Failed to parse Settings JSON"
         Just s -> do
-          setModel s `shouldBe` Just "claude-3-opus"
-          setFallbackModel s `shouldBe` Just "claude-3-sonnet"
+          setModel s `shouldBe` Just "~anthropic/claude-opus-latest"
+          setFallbackModel s `shouldBe` Just "~anthropic/claude-sonnet-latest"
           setEffortLevel s `shouldBe` Just "high"
           setMaxBudgetUsd s `shouldBe` Just 10.5
           setPermissionMode s `shouldBe` Just ModeAcceptEdits

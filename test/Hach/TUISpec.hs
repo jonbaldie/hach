@@ -951,17 +951,17 @@ spec = do
 
     describe "modelContextLimit and contextSaturationPercent" $ do
       it "maps known model families to context limits" $ do
-        modelContextLimit "anthropic/claude-3.7-sonnet" `shouldBe` 200000
+        modelContextLimit "~anthropic/claude-sonnet-latest" `shouldBe` 200000
         modelContextLimit "openai/gpt-4o" `shouldBe` 128000
-        modelContextLimit "google/gemini-2.0-flash" `shouldBe` 1000000
+        modelContextLimit "~google/gemini-flash-latest" `shouldBe` 1000000
         modelContextLimit "unknown-custom-model" `shouldBe` 128000
 
       it "calculates context saturation percentage accurately" $ do
-        contextSaturationPercent 160000 "anthropic/claude-3.7-sonnet" `shouldBe` 80
+        contextSaturationPercent 160000 "~anthropic/claude-sonnet-latest" `shouldBe` 80
         contextSaturationPercent 115200 "openai/gpt-4o" `shouldBe` 90
 
       it "clamps context saturation percentage strictly between 0 and 100" $ do
-        contextSaturationPercent 300000 "anthropic/claude-3.7-sonnet" `shouldBe` 100
+        contextSaturationPercent 300000 "~anthropic/claude-sonnet-latest" `shouldBe` 100
         contextSaturationPercent (-50) "openai/gpt-4o" `shouldBe` 0
 
 
@@ -1844,18 +1844,18 @@ spec = do
         let (sQuery, _) = updateTui (EvSubmit "/model") baseState
         tsHistory sQuery `shouldContain` [DiNotice ("Current model: " <> tsModelName baseState)]
 
-        let (sSwitch, _) = updateTui (EvSubmit "/model anthropic/claude-3.5-sonnet") baseState
-        tsModelName sSwitch `shouldBe` "anthropic/claude-3.5-sonnet"
-        tsHistory sSwitch `shouldContain` [DiNotice "Model switched to: anthropic/claude-3.5-sonnet"]
+        let (sSwitch, _) = updateTui (EvSubmit "/model ~openai/gpt-luna-latest") baseState
+        tsModelName sSwitch `shouldBe` "~openai/gpt-luna-latest"
+        tsHistory sSwitch `shouldContain` [DiNotice "Model switched to: ~openai/gpt-luna-latest"]
 
       it "keeps the next agent run's model in sync with /model (Issue #61)" $ do
         ioEnv <- newIOEnv "test" "startup-model" "/tmp" False
         let st0 = initialTuiState (ioModel ioEnv) (Just 10)
-            (st1, _) = updateTui (EvSubmit "/model anthropic/claude-3.5-sonnet") st0
+            (st1, _) = updateTui (EvSubmit "/model ~openai/gpt-luna-latest") st0
             runEnv = runEnvForModel (tsModelName st1) ioEnv
             cfg = goalAgentConfig runEnv "sys" (Just 10) Nothing
-        tsModelName st1 `shouldBe` "anthropic/claude-3.5-sonnet"
-        cfgModel cfg `shouldBe` "anthropic/claude-3.5-sonnet"
+        tsModelName st1 `shouldBe` "~openai/gpt-luna-latest"
+        cfgModel cfg `shouldBe` "~openai/gpt-luna-latest"
         -- The interpreter builds the wire request from the run env's model, so
         -- request and config must agree on the switched model.
         ioModel runEnv `shouldBe` cfgModel cfg

@@ -122,20 +122,20 @@ Set your OpenRouter API key and a model as environment variables:
 
 ```bash
 export OPENROUTER_API_KEY="your-api-key"
-export OPENROUTER_MODEL="anthropic/claude-3.5-sonnet"
+export OPENROUTER_MODEL="~openai/gpt-luna-latest"
 ```
 
 You can also put them in a `.env` file:
 
 ```text
 OPENROUTER_API_KEY=your-api-key
-OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
+OPENROUTER_MODEL=~openai/gpt-luna-latest
 ```
 
 You can pass `--model` on the command line instead:
 
 ```bash
-hach --model anthropic/claude-3.5-sonnet "Your prompt"
+hach --model "~openai/gpt-luna-latest" "Your prompt"
 ```
 
 ### OpenAI-compatible APIs

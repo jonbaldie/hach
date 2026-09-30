@@ -260,8 +260,8 @@ spec = modifyMaxSuccess (const 1000) $ do
 
     it "classifyError classifies transient errors mentioning model as GoalErrTransient" $ do
       let transientErrors =
-            [ "OpenRouter API error: 429 Rate limit exceeded for model anthropic/claude-3-5-sonnet"
-            , "OpenRouter API error: 503 Service Unavailable for model gpt-4o"
+            [ "OpenRouter API error: 429 Rate limit exceeded for model ~anthropic/claude-sonnet-latest"
+            , "OpenRouter API error: 503 Service Unavailable for model ~openai/gpt-mini-latest"
             , "Connection timeout while reaching model endpoint"
             , "Temporary 500 Internal Server Error from model provider"
             , "model"
@@ -280,7 +280,7 @@ spec = modifyMaxSuccess (const 1000) $ do
         classifyError err `shouldBe` GoalErrUnrecoverable
 
     it "goalLoop keeps goal active on transient error mentioning model" $ do
-      let err = "OpenRouter API error: 429 Rate limit exceeded for model anthropic/claude-3-5-sonnet"
+      let err = "OpenRouter API error: 429 Rate limit exceeded for model ~anthropic/claude-sonnet-latest"
           s = Scenario
             { sTurns     = [TError err]
             , sEvals     = []

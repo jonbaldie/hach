@@ -26,7 +26,7 @@ spec = describe "Hach.Subagents" $ do
       let raw = "---\n\
         \name: CodeReviewer\n\
         \description: Specialist in code reviews\n\
-        \model: anthropic/claude-3-opus\n\
+        \model: ~anthropic/claude-opus-latest\n\
         \tools: read_file, grep_search\n\
         \---\n\
         \Review all code changes thoroughly and check for bugs.\n"
@@ -35,7 +35,7 @@ spec = describe "Hach.Subagents" $ do
         Right def -> do
           adName def `shouldBe` "CodeReviewer"
           adDescription def `shouldBe` "Specialist in code reviews"
-          adModel def `shouldBe` Just "anthropic/claude-3-opus"
+          adModel def `shouldBe` Just "~anthropic/claude-opus-latest"
           adTools def `shouldBe` ["read_file", "grep_search"]
           adSystemPrompt def `shouldBe` "Review all code changes thoroughly and check for bugs."
 
