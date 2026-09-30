@@ -312,6 +312,78 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         exitCode `shouldBe` ExitFailure 1
         stdoutText `shouldNotContain` "Task completed."
 
+  describe "invalid headless /goal invocations (Issue #241)" $ do
+    let runInvalidGoal executable workspace args prompt = do
+          testEnvironment <- isolatedEnvironment workspace
+          let command =
+                (proc executable (args <> [prompt]))
+                  { cwd = Just workspace
+                  , env = Just testEnvironment
+                  }
+          readCreateProcessWithExitCode command ""
+
+    it "exits non-zero for headless bare /goal" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, _) <- runInvalidGoal executable workspace ["--no-tui"] "/goal"
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "Usage: /goal <condition> or /goal clear"
+
+    it "exits non-zero for headless /goal clear" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, _) <- runInvalidGoal executable workspace ["--no-tui"] "/goal clear"
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "No active goal to clear (headless mode has no persistent goal state)."
+
+    it "exits non-zero for headless oversized /goal" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        let oversized = "/goal " <> replicate 4001 'x'
+        (exitCode, stdoutText, _) <- runInvalidGoal executable workspace ["--no-tui"] oversized
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "Goal condition too long (max 4000 characters)."
+
+    it "emits valid JSON error and exits non-zero for bare /goal under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, _) <-
+          runInvalidGoal executable workspace ["--print", "--output-format", "json"] "/goal"
+        exitCode `shouldBe` ExitFailure 1
+        let mVal = Aeson.decode (LBS.pack stdoutText) :: Maybe Aeson.Value
+        case mVal of
+          Just (Aeson.Object obj) ->
+            KM.lookup "error" obj `shouldBe`
+              Just (Aeson.String "Usage: /goal <condition> or /goal clear\nExample: /goal all tests pass")
+          _ -> expectationFailure ("expected JSON Object with error, got: " <> stdoutText)
+
+    it "emits valid JSON error and exits non-zero for /goal clear under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, _) <-
+          runInvalidGoal executable workspace ["--print", "--output-format", "json"] "/goal clear"
+        exitCode `shouldBe` ExitFailure 1
+        let mVal = Aeson.decode (LBS.pack stdoutText) :: Maybe Aeson.Value
+        case mVal of
+          Just (Aeson.Object obj) ->
+            KM.lookup "error" obj `shouldBe`
+              Just (Aeson.String "No active goal to clear (headless mode has no persistent goal state).")
+          _ -> expectationFailure ("expected JSON Object with error, got: " <> stdoutText)
+
+    it "emits valid JSON error and exits non-zero for oversized /goal under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        let oversized = "/goal " <> replicate 4001 'x'
+        (exitCode, stdoutText, _) <-
+          runInvalidGoal executable workspace ["--print", "--output-format", "json"] oversized
+        exitCode `shouldBe` ExitFailure 1
+        let mVal = Aeson.decode (LBS.pack stdoutText) :: Maybe Aeson.Value
+        case mVal of
+          Just (Aeson.Object obj) ->
+            KM.lookup "error" obj `shouldBe`
+              Just (Aeson.String "Goal condition too long (max 4000 characters).")
+          _ -> expectationFailure ("expected JSON Object with error, got: " <> stdoutText)
+
   describe "--init (Issue #118)" $ do
     let initEnvironment = do
           environment <- getEnvironment
@@ -1080,3 +1152,37 @@ cliModuleSpec = do
           KM.lookup "goal_status" obj `shouldBe` Just (Aeson.String "achieved")
           KM.lookup "answer" obj `shouldBe` Just (Aeson.String "created unicorn.txt")
         _ -> expectationFailure ("expected JSON Object, got " <> show decoded)
+
+  describe "headless goal validation (Issue #241)" $ do
+    it "rejects bare /goal and whitespace-only arguments" $ do
+      validateHeadlessGoalPrompt "/goal"
+        `shouldBe` Just (Left "Usage: /goal <condition> or /goal clear\nExample: /goal all tests pass")
+      validateHeadlessGoalPrompt "/goal "
+        `shouldBe` Just (Left "Usage: /goal <condition> or /goal clear\nExample: /goal all tests pass")
+      validateHeadlessGoalPrompt "  /goal    "
+        `shouldBe` Just (Left "Usage: /goal <condition> or /goal clear\nExample: /goal all tests pass")
+
+    it "rejects clear aliases in headless mode" $ do
+      validateHeadlessGoalPrompt "/goal clear"
+        `shouldBe` Just (Left "No active goal to clear (headless mode has no persistent goal state).")
+      validateHeadlessGoalPrompt "/goal stop"
+        `shouldBe` Just (Left "No active goal to clear (headless mode has no persistent goal state).")
+      validateHeadlessGoalPrompt "/goal cancel"
+        `shouldBe` Just (Left "No active goal to clear (headless mode has no persistent goal state).")
+      validateHeadlessGoalPrompt "/goal reset"
+        `shouldBe` Just (Left "No active goal to clear (headless mode has no persistent goal state).")
+
+    it "rejects oversized goal condition" $ do
+      let oversized = "/goal " <> T.replicate 4001 "a"
+      validateHeadlessGoalPrompt oversized
+        `shouldBe` Just (Left "Goal condition too long (max 4000 characters).")
+
+    it "accepts valid goal condition" $ do
+      validateHeadlessGoalPrompt "/goal all tests pass"
+        `shouldBe` Just (Right "all tests pass")
+      validateHeadlessGoalPrompt "  /goal stop the server"
+        `shouldBe` Just (Right "stop the server")
+
+    it "returns Nothing for non-goal prompts" $ do
+      validateHeadlessGoalPrompt "write a test" `shouldBe` Nothing
+      validateHeadlessGoalPrompt "/help" `shouldBe` Nothing
