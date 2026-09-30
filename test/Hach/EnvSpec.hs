@@ -3,6 +3,7 @@
 module Hach.EnvSpec (spec) where
 
 import Hach.Env
+import Hach.Inference
 import Hach.Settings (Settings(..), defaultSettings)
 import Hach.Types
   ( EffortLevel(..)
@@ -118,7 +119,7 @@ spec = do
                   (Just "os-model")
                   (Just dotEnvSample)
       res `shouldBe` Right EnvConfig
-        { envApiKey = "sk-os-env"
+        { envConnection = openRouterConnection "sk-os-env"
         , envModel = "custom/cli-model"
         , envSettings = defaultSettings
         }
@@ -130,7 +131,7 @@ spec = do
                   Nothing
                   (Just dotEnvSample)
       res `shouldBe` Right EnvConfig
-        { envApiKey = "sk-os-env"
+        { envConnection = openRouterConnection "sk-os-env"
         , envModel = "meta/muse-glimmer-30b"
         , envSettings = defaultSettings
         }
@@ -142,7 +143,7 @@ spec = do
                   Nothing
                   (Just dotEnvSample)
       res `shouldBe` Right EnvConfig
-        { envApiKey = "sk-dotenv"
+        { envConnection = openRouterConnection "sk-dotenv"
         , envModel = "meta/muse-glimmer-30b"
         , envSettings = defaultSettings
         }
@@ -155,7 +156,7 @@ spec = do
                   Nothing
                   (Just dotEnvExport)
       res `shouldBe` Right EnvConfig
-        { envApiKey = "sk-dotenv"
+        { envConnection = openRouterConnection "sk-dotenv"
         , envModel = "meta/muse-glimmer-30b"
         , envSettings = defaultSettings
         }
@@ -167,7 +168,7 @@ spec = do
                   (Just "os-model")
                   Nothing
       res `shouldBe` Right EnvConfig
-        { envApiKey = "sk-os-env"
+        { envConnection = openRouterConnection "sk-os-env"
         , envModel = "os-model"
         , envSettings = defaultSettings
         }

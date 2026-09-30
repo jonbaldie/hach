@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Hach.Env
   ( EnvConfig(..)
@@ -10,6 +11,10 @@ module Hach.Env
   , resolveMaxBudgetUsd
   , resolveWorkingDirs
   , resolveEffortLevel
+  , InferenceFlags(..)
+  , noInferenceFlags
+  , inferenceEnvNames
+  , resolveInferenceConfig
   , resolveConfigWith
   , resolveConfigWithSettings
   , resolveEnvConfig
@@ -27,6 +32,14 @@ import Hach.Settings
   , loadLayeredSettings
   , renderSettingsError
   )
+import Hach.Inference
+  ( InferenceConnection
+  , InferenceInterface(..)
+  , mkInferenceConnection
+  , openAIBaseUrl
+  , openRouterBaseUrl
+  , parseInferenceInterface
+  )
 import Hach.Types
   ( EffortLevel
   , PermissionMode(..)
@@ -35,7 +48,9 @@ import Hach.Types
 import Control.Applicative ((<|>))
 import Control.Exception (try, SomeException)
 import Data.Bifunctor (first)
-import Data.Maybe (fromMaybe)
+import Data.List (isPrefixOf)
+import Data.Maybe (catMaybes, fromMaybe)
+import Data.Traversable (for)
 import qualified Data.ByteString as BS
 import Data.Char (isSpace)
 import Data.Map.Strict (Map)
@@ -51,7 +66,7 @@ import System.FilePath ((</>))
 
 -- | Parsed environment configuration for running the agent harness.
 data EnvConfig = EnvConfig
-  { envApiKey   :: !Text
+  { envConnection :: !InferenceConnection
   , envModel    :: !Text
   , envSettings :: !Settings
   } deriving (Show, Eq)
@@ -102,7 +117,7 @@ ordNubPaths = go Set.empty
       | otherwise           = x : go (Set.insert x seen) xs
 
 -- | Resolve `effort_level` from layered settings. Unset stays unset so the
--- OpenRouter request omits `reasoning`. Unsupported values are an error.
+-- request omits reasoning options. Unsupported values are an error.
 resolveEffortLevel :: Settings -> Either String (Maybe EffortLevel)
 resolveEffortLevel settings =
   case setEffortLevel settings of
@@ -111,6 +126,9 @@ resolveEffortLevel settings =
 
 -- | Extract the model specifically from line two of the lines of .env.
 -- Follows the requirement: "always use the model on line two of the .env".
+-- An assignment to a provider-selection or OpenAI variable is never a
+-- model: it would otherwise send a provider name, endpoint, or credential
+-- to OpenRouter as the model identifier.
 parseLineTwoModel :: [Text] -> Maybe Text
 parseLineTwoModel rawLines =
   case drop 1 rawLines of
@@ -119,11 +137,17 @@ parseLineTwoModel rawLines =
       in if T.null trimmed || T.isPrefixOf "#" trimmed
            then Nothing
            else case T.breakOn "=" trimmed of
-                  (_, val) | not (T.null val) -> Just (cleanVal (T.drop 1 val))
-                  _                           -> Just (cleanVal trimmed)
+                  (name, val)
+                    | not (T.null val) ->
+                        if T.strip (stripExport name) `elem` notModels
+                          then Nothing
+                          else Just (cleanVal (T.drop 1 val))
+                  _ -> Just (cleanVal trimmed)
     _ -> Nothing
   where
     cleanVal = T.dropAround (\c -> c == '"' || c == '\'' || isSpace c)
+    stripExport s = fromMaybe s (T.stripPrefix "export " s)
+    notModels = ["HACH_PROVIDER", "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"]
 
 -- | Parse key-value pairs from .env content, respecting comments and quotes.
 parseEnvContent :: Text -> Map Text Text
@@ -142,7 +166,95 @@ parseEnvContent content =
     clean = T.dropAround (\c -> c == '"' || c == '\'' || isSpace c)
     stripExport s = fromMaybe s (T.stripPrefix "export " s)
 
--- | Configuration resolver with layered Settings.
+-- | Command-line choices that shape the inference connection. Values are
+-- raw: they are validated during resolution, after precedence is applied.
+data InferenceFlags = InferenceFlags
+  { flagProvider :: !(Maybe Text)  -- ^ @--provider@
+  , flagBaseUrl  :: !(Maybe Text)  -- ^ @--base-url@
+  , flagModel    :: !(Maybe Text)  -- ^ @--model@
+  } deriving (Show, Eq)
+
+-- | No inference flags given.
+noInferenceFlags :: InferenceFlags
+noInferenceFlags = InferenceFlags Nothing Nothing Nothing
+
+-- | Environment variables that can shape the inference connection.
+inferenceEnvNames :: [Text]
+inferenceEnvNames =
+  [ "HACH_PROVIDER"
+  , "OPENROUTER_API_KEY", "OPENROUTER_MODEL"
+  , "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"
+  ]
+
+-- | Resolve the inference connection and model. The interface is chosen
+-- first (@--provider@ > process @HACH_PROVIDER@ > dotenv @HACH_PROVIDER@ >
+-- @llm_provider@ > openrouter); only then are that interface's own endpoint,
+-- key, and model looked up, so one service's credentials can never be sent
+-- to another.
+--
+-- * @openai-compatible@: base URL from @--base-url@ > @OPENAI_BASE_URL@
+--   (process, then dotenv) > @llm_base_url@ > the OpenAI API; optional key
+--   from @OPENAI_API_KEY@; model from @--model@ > @OPENAI_MODEL@ > settings.
+-- * @openrouter@: base URL from @--base-url@ or OpenRouter's; required
+--   @OPENROUTER_API_KEY@; model from @--model@ > process @OPENROUTER_MODEL@ >
+--   line two of .env > dotenv @OPENROUTER_MODEL@ > settings.
+resolveInferenceConfig
+  :: InferenceFlags
+  -> Map Text Text   -- ^ Process environment (see 'inferenceEnvNames')
+  -> Maybe Text      -- ^ .env file content
+  -> Settings        -- ^ Layered settings
+  -> Either String EnvConfig
+resolveInferenceConfig InferenceFlags{..} processEnv mDotEnvContent settings = do
+  let rawProvider = flagProvider <|> fromProcess "HACH_PROVIDER"
+                      <|> fromDotEnv "HACH_PROVIDER" <|> setLlmProvider settings
+  iface <- maybe (Right InterfaceOpenRouter) parseInferenceInterface rawProvider
+  case iface of
+    InterfaceOpenAICompatible -> do
+      let baseUrl = fromMaybe openAIBaseUrl
+            (flagBaseUrl <|> fromProcess "OPENAI_BASE_URL"
+               <|> fromDotEnv "OPENAI_BASE_URL" <|> setLlmBaseUrl settings)
+          mKey = nonBlankOf "OPENAI_API_KEY"
+          mModel = (flagModel >>= nonBlank)
+            <|> nonBlankOf "OPENAI_MODEL"
+            <|> (setModel settings >>= nonBlank)
+      model <- maybe (Left compatibleModelMissing) Right mModel
+      conn <- connection "OPENAI_API_KEY" iface baseUrl mKey
+      pure (EnvConfig conn model settings)
+    InterfaceOpenRouter -> do
+      let baseUrl = fromMaybe openRouterBaseUrl flagBaseUrl
+          mModel = (flagModel >>= nonBlank)
+            <|> (fromProcess "OPENROUTER_MODEL" >>= nonBlank)
+            <|> (mDotEnvContent >>= parseLineTwoModel . T.lines >>= nonBlank)
+            <|> (fromDotEnv "OPENROUTER_MODEL" >>= nonBlank)
+            <|> (setModel settings >>= nonBlank)
+      key <- maybe (Left openRouterKeyMissing) Right (nonBlankOf "OPENROUTER_API_KEY")
+      model <- maybe (Left openRouterModelMissing) Right mModel
+      conn <- connection "OPENROUTER_API_KEY" iface baseUrl (Just key)
+      pure (EnvConfig conn model settings)
+  where
+    dotEnv = maybe Map.empty parseEnvContent mDotEnvContent
+    fromProcess name = Map.lookup name processEnv
+    fromDotEnv name = Map.lookup name dotEnv
+
+    -- A blank key or model counts as absent, so dotenv can fill a blank
+    -- process value.
+    nonBlankOf name = (fromProcess name >>= nonBlank) <|> (fromDotEnv name >>= nonBlank)
+    nonBlank t = let s = T.strip t in if T.null s then Nothing else Just s
+
+    connection keyName iface baseUrl mKey =
+      first (\err -> if "Invalid base URL" `isPrefixOf` err then err else keyName <> " is invalid: " <> err)
+        (mkInferenceConnection iface baseUrl mKey)
+
+    openRouterKeyMissing =
+      "OPENROUTER_API_KEY is missing from both process environment and .env. "
+        <> "Set it, or select another provider with --provider or HACH_PROVIDER."
+    openRouterModelMissing =
+      "OpenRouter model not specified (use --model CLI flag, OPENROUTER_MODEL env var, line 2 of .env, or settings.json)"
+    compatibleModelMissing =
+      "openai-compatible model not specified (use --model CLI flag, OPENAI_MODEL env var or .env entry, or settings.json)"
+
+-- | OpenRouter-only configuration resolver with layered Settings. Provider
+-- selection from dotenv or settings is ignored.
 resolveConfigWithSettings
   :: Maybe Text      -- ^ CLI model override (e.g. from --model flag)
   -> Maybe Text      -- ^ OS process environment OPENROUTER_API_KEY
@@ -150,37 +262,15 @@ resolveConfigWithSettings
   -> Maybe Text      -- ^ .env file content
   -> Settings        -- ^ Layered settings
   -> Either String EnvConfig
-resolveConfigWithSettings mCliModel mOsApiKey mOsModel mDotEnvContent settings =
-  let mDotEnvMap   = fmap parseEnvContent mDotEnvContent
-      mDotLines    = fmap T.lines mDotEnvContent
-      mDotKey      = mDotEnvMap >>= Map.lookup "OPENROUTER_API_KEY"
-      mDotLine2    = mDotLines >>= parseLineTwoModel
-      mDotKeyModel = mDotEnvMap >>= Map.lookup "OPENROUTER_MODEL"
+resolveConfigWithSettings mCliModel mOsApiKey mOsModel =
+  resolveInferenceConfig
+    noInferenceFlags { flagProvider = Just "openrouter", flagModel = mCliModel }
+    (Map.fromList (catMaybes
+      [ (,) "OPENROUTER_API_KEY" <$> mOsApiKey
+      , (,) "OPENROUTER_MODEL" <$> mOsModel
+      ]))
 
-      -- API Key resolution: OS environment takes precedence over .env
-      mResolvedApiKey =
-        (mOsApiKey >>= nonBlank) `orFallback` (mDotKey >>= nonBlank)
-
-      -- Model resolution: CLI flag > OS environment > line 2 of .env > OPENROUTER_MODEL in .env > settings
-      mResolvedModel =
-        (mCliModel >>= nonBlank)
-          `orFallback` (mOsModel >>= nonBlank)
-          `orFallback` (mDotLine2 >>= nonBlank)
-          `orFallback` (mDotKeyModel >>= nonBlank)
-          `orFallback` (setModel settings >>= nonBlank)
-  in case (mResolvedApiKey, mResolvedModel) of
-    (Just key, Just model) ->
-      Right EnvConfig { envApiKey = key, envModel = model, envSettings = settings }
-    (Nothing, _) ->
-      Left "OPENROUTER_API_KEY is missing from both process environment and .env"
-    (_, Nothing) ->
-      Left "OpenRouter model not specified (use --model CLI flag, OPENROUTER_MODEL env var, line 2 of .env, or settings.json)"
-  where
-    nonBlank t = let s = T.strip t in if T.null s then Nothing else Just s
-    orFallback (Just x) _ = Just x
-    orFallback Nothing my = my
-
--- | Pure configuration resolver implementing precedence:
+-- | Pure OpenRouter configuration resolver implementing precedence:
 -- 1. API key: OS process environment -> .env file.
 -- 2. Model: CLI flag -> OS process environment -> line 2 of .env -> OPENROUTER_MODEL in .env.
 resolveConfigWith
@@ -195,7 +285,7 @@ resolveConfigWith mCliModel mOsApiKey mOsModel mDotEnvContent =
 -- | Why startup configuration could not be resolved.
 data EnvError
   = EnvSettingsInvalid SettingsError  -- ^ A settings file exists but could not be loaded.
-  | EnvConfigUnresolved String        -- ^ API key or model could not be resolved.
+  | EnvConfigUnresolved String        -- ^ Provider, endpoint, key, or model could not be resolved.
   deriving (Show, Eq)
 
 -- | Render a startup failure, with the hint that fits the cause.
@@ -205,16 +295,16 @@ renderEnvError (EnvSettingsInvalid err) =
   "Fix that file or move it aside; hach will not run with its settings ignored."
 renderEnvError (EnvConfigUnresolved err) =
   "Configuration error: " <> err <> "\n" <>
-  "Please set OPENROUTER_API_KEY in the environment or in .env."
+  "Run hach --help for the inference configuration options."
 
 -- | Resolve configuration from process environment, .env file, and layered settings.
 resolveEnvConfig
-  :: Maybe Text       -- ^ Optional CLI model override
+  :: InferenceFlags   -- ^ Command-line inference choices
   -> Maybe FilePath   -- ^ Optional path to .env file
   -> IO (Either EnvError EnvConfig)
-resolveEnvConfig mCliModel mDotEnvPath = do
-  mOsApiKey <- fmap (fmap T.pack) (lookupEnv "OPENROUTER_API_KEY")
-  mOsModel  <- fmap (fmap T.pack) (lookupEnv "OPENROUTER_MODEL")
+resolveEnvConfig flags mDotEnvPath = do
+  processEnv <- fmap (Map.fromList . catMaybes) . for inferenceEnvNames $ \name ->
+    fmap ((,) name . T.pack) <$> lookupEnv (T.unpack name)
   mDotEnvContent <- case mDotEnvPath of
     Just path -> do
       exists <- doesFileExist path
@@ -225,11 +315,12 @@ resolveEnvConfig mCliModel mDotEnvPath = do
     Left err -> Left (EnvSettingsInvalid err)
     Right settings ->
       first EnvConfigUnresolved
-        (resolveConfigWithSettings mCliModel mOsApiKey mOsModel mDotEnvContent settings)
+        (resolveInferenceConfig flags processEnv mDotEnvContent settings)
 
--- | Legacy helper to load configuration specifically from a .env file.
+-- | Load configuration from the environment and a .env file, as the live
+-- integration executable does.
 loadEnvConfig :: FilePath -> IO (Either EnvError EnvConfig)
-loadEnvConfig path = resolveEnvConfig Nothing (Just path)
+loadEnvConfig path = resolveEnvConfig noInferenceFlags (Just path)
 
 -- | Load project instructions from AGENTS.md, AGENT.md, or CLAUDE.md in the workspace directory.
 -- Precedence: AGENTS.md is preferred; then AGENT.md; then CLAUDE.md.

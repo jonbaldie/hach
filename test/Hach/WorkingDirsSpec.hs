@@ -10,6 +10,7 @@ module Hach.WorkingDirsSpec (spec) where
 import Hach.Core (AgentAlgebra (..))
 import Hach.CLI (CliOptions (..), parseCliArgs)
 import Hach.Env (resolveWorkingDirs)
+import Hach.Inference (openRouterConnection)
 import Hach.Interpreter.IO
   ( IOEnv (..)
   , IOEnvPermissions (..)
@@ -161,5 +162,5 @@ spec = do
 workingDirsEnv :: FilePath -> [FilePath] -> IO IOEnv
 workingDirsEnv root extras = do
   let perms = defaultIOEnvPermissions { iopInitialMode = ModeBypassPermissions }
-  env <- newIOEnvWithPermissions perms "test-key" "test-model" root False
+  env <- newIOEnvWithPermissions perms (openRouterConnection "test-key") "test-model" root False
   pure env { ioWorkingDirs = extras }

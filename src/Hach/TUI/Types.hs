@@ -42,6 +42,7 @@ module Hach.TUI.Types
   , builtinCommands
   ) where
 
+import Hach.Inference (CostPolicy(..))
 import Hach.Skills (SkillCatalog)
 import Hach.Types (AgentEvent, GoalState, Message, PermissionMode (..), SessionTokenUsage, TokenUsage, ToolResult, initialSessionTokenUsage)
 import qualified Data.Map.Strict as Map
@@ -172,6 +173,9 @@ data TuiState = TuiState
     -- ^ Theme named in settings; reported by @/theme@, not yet applied.
   , tsProjectInstructions :: !(Maybe FilePath)
     -- ^ Instructions file loaded into the system prompt at launch.
+  , tsCostPolicy         :: !CostPolicy
+    -- ^ How @/cost@ treats cost the endpoint did not report. Non-secret; set
+    -- from the connection at launch, not guessed from the model name.
   } deriving (Show, Eq)
 
 -- | Project tool cards from the transcript for the Tool Activity pane.
@@ -216,6 +220,7 @@ initialTuiState model maxTurns = TuiState
   , tsPendingAsk         = Nothing
   , tsTheme              = Nothing
   , tsProjectInstructions = Nothing
+  , tsCostPolicy         = CostEstimateFromModel
   }
 
 -- | Simplified user keystroke events abstracted from Vty.

@@ -49,6 +49,11 @@ ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     TERM=xterm-256color
 
+# Inference settings are supplied at run time, never baked into the image:
+# pass OPENROUTER_API_KEY, or HACH_PROVIDER=openai-compatible with
+# OPENAI_BASE_URL, OPENAI_MODEL and (if needed) OPENAI_API_KEY, via
+# `docker run -e`. See README.md, "Configuration".
+
 # Configure git safe.directory and set up non-root user and workspace
 RUN git config --system --add safe.directory '*' && \
     useradd -m -u 1000 -U -s /bin/bash hach && \

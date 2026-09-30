@@ -24,6 +24,11 @@ ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     TERM=xterm-256color
 
+# Inference settings are supplied at run time, never baked into the image:
+# pass OPENROUTER_API_KEY, or HACH_PROVIDER=openai-compatible with
+# OPENAI_BASE_URL, OPENAI_MODEL and (if needed) OPENAI_API_KEY, via
+# `docker run -e`. See README.md, "Configuration".
+
 # Configure git to allow working in mounted workspaces regardless of host UID
 RUN git config --system --add safe.directory '*'
 

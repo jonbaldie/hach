@@ -32,3 +32,10 @@ _Avoid_: History item, chat message
 A transcript item representing an invoked tool call, tracking its identifier, parameters, execution lifecycle, and output.
 _Avoid_: Tool item, activity card
 
+**Provider**:
+The inference service a run talks to, either `openrouter` (the default) or `openai-compatible`. Each provider has its own credentials and model variables.
+_Avoid_: Backend, vendor
+
+**Inference Connection**:
+The resolved provider, API root, and optional API key that every model request in a run uses. It is chosen once at startup and does not change during the run.
+_Avoid_: Client, endpoint config

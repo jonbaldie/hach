@@ -56,6 +56,8 @@ data OutputFormat = OutputText | OutputJson
 -- | CLI options parsed from command line arguments.
 data CliOptions = CliOptions
   { optModel                :: !(Maybe Text)
+  , optProvider             :: !(Maybe Text)
+  , optBaseUrl              :: !(Maybe Text)
   , optPrompt               :: !(Maybe Text)
   , optNoTui                :: !Bool
   , optPrint                :: !Bool
@@ -80,6 +82,8 @@ data CliOptions = CliOptions
 defaultCliOptions :: CliOptions
 defaultCliOptions = CliOptions
   { optModel                = Nothing
+  , optProvider             = Nothing
+  , optBaseUrl              = Nothing
   , optPrompt               = Nothing
   , optNoTui                = False
   , optPrint                = False
@@ -316,7 +320,11 @@ cliFlags :: [CliFlag]
 cliFlags =
   [ CliFlag ["-h", "--help"] Nothing "Show this help and exit"
   , CliFlag ["-v", "--version"] Nothing "Print the version and exit"
-  , CliFlag ["-m", "--model"] (Just "MODEL") "OpenRouter model to use (overrides .env)"
+  , CliFlag ["-m", "--model"] (Just "MODEL") "Model identifier to request, passed unchanged (overrides .env)"
+  , CliFlag ["--provider"] (Just "PROVIDER")
+      "Inference API: openrouter (default) or openai-compatible"
+  , CliFlag ["--base-url"] (Just "URL")
+      "Inference API root, e.g. http://localhost:8080/v1 (/chat/completions is appended)"
   , CliFlag ["--no-tui"] Nothing "Run the agent headless instead of the terminal UI"
   , CliFlag ["-p", "--print"] Nothing "Run headless and print only the final answer"
   , CliFlag ["--output-format"] (Just "text|json") "Format of the --print answer (default: text)"
@@ -342,7 +350,17 @@ cliHelpText = unlines $
   [ "Usage: hach [options] [task prompt...]"
   , ""
   , "Options:"
-  ] ++ map row cliFlags
+  ] ++ map row cliFlags ++
+  [ ""
+  , "Inference (each setting: flag > process environment > .env > settings.json):"
+  , "  Provider  --provider, HACH_PROVIDER, or llm_provider; openrouter by default."
+  , "  openrouter         key OPENROUTER_API_KEY (required), model OPENROUTER_MODEL;"
+  , "                     endpoint https://openrouter.ai/api/v1."
+  , "  openai-compatible  API root --base-url, OPENAI_BASE_URL, or llm_base_url (required);"
+  , "                     key OPENAI_API_KEY (optional), model OPENAI_MODEL."
+  , "  The API root ends before /chat/completions, which Hach appends."
+  , "  Keys and models never carry over from one provider to the other."
+  ]
   where
     label CliFlag{..} =
       intercalate ", " cliFlagNames ++ maybe "" (' ' :) cliFlagMetavar
@@ -358,6 +376,14 @@ cliUsageHint = "Usage: hach [options] [task prompt...]\nRun 'hach --help' to lis
 parseCliArgs :: [String] -> Either String CliOptions
 parseCliArgs args = go args defaultCliOptions []
   where
+    -- Flags that take one free-text value in either the separate or the
+    -- @--flag=value@ form. Their values are validated during configuration
+    -- resolution, so a local-only intent such as @--version@ still works.
+    textValueFlags =
+      [ ("--provider", \v o -> o { optProvider = Just v })
+      , ("--base-url", \v o -> o { optBaseUrl = Just v })
+      ]
+
     go [] opts promptWords =
       let mPrompt = case promptWords of
             [] -> Nothing
@@ -403,6 +429,20 @@ parseCliArgs args = go args defaultCliOptions []
       go rest opts { optVersion = True } promptWords
 
     go (arg : rest) opts promptWords
+      | Just setter <- lookup arg textValueFlags =
+          case rest of
+            (val : rest')
+              | null (dropWhile isSpace val) -> Left (arg ++ " requires a non-empty argument")
+              | "--" `isPrefixOf` val -> Left (arg ++ " requires a non-flag argument")
+              | otherwise -> go rest' (setter (T.strip (T.pack val)) opts) promptWords
+            [] -> Left (arg ++ " requires an argument")
+
+      | (flag, '=' : val) <- break (== '=') arg
+      , Just setter <- lookup flag textValueFlags =
+          if null (dropWhile isSpace val)
+            then Left (flag ++ "= requires a non-empty argument")
+            else go rest (setter (T.strip (T.pack val)) opts) promptWords
+
       | arg `elem` ["--model", "-m"] =
           case rest of
             (val : rest')

@@ -19,7 +19,7 @@ import Hach.CLI
 import Hach.Env
 import Hach.Git
 import Hach.Hooks
-import Hach.OpenRouter
+import Hach.Inference
 import Hach.Permissions
 import Hach.Sessions
 import Hach.Settings

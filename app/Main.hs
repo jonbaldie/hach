@@ -6,6 +6,7 @@ module Main (main) where
 import Hach.Core
 import Hach.CLI
 import Hach.Env
+import Hach.Inference (InferenceConnection(..), interfaceName)
 import qualified Hach.Git as Git
 import Hach.Interpreter.IO
 import Hach.Sessions
@@ -86,7 +87,7 @@ runHach = do
     IntentHelp -> pure ()
     IntentVersion -> pure ()
 
-  envRes <- resolveEnvConfig optModel (Just ".env")
+  envRes <- resolveEnvConfig (InferenceFlags optProvider optBaseUrl optModel) (Just ".env")
   EnvConfig{..} <- case envRes of
     Left err -> do
       putStrLn (renderEnvError err)
@@ -108,7 +109,7 @@ runHach = do
   -- relative @--add-dir@ keeps meaning the same directory after the agent
   -- enters a worktree.
   workingDirs <- mapM makeAbsolute (resolveWorkingDirs optAddDir envSettings)
-  ioEnv0 <- newIOEnvWithPermissions perms envApiKey envModel cwd (headlessVerbose opts)
+  ioEnv0 <- newIOEnvWithPermissions perms envConnection envModel cwd (headlessVerbose opts)
   let ioEnv = ioEnv0 { ioEffortLevel = effort, ioWorkingDirs = workingDirs }
   case optWorktree of
     Nothing -> pure ()
@@ -143,6 +144,8 @@ runHach = do
         putStrLn "  Haskell Agentic Coding Harness (hach)                 "
         putStrLn "========================================================"
         putStrLn ("Workspace: " <> currentWorkspace)
+        putStrLn ("Provider:  " <> T.unpack (interfaceName (icInterface envConnection))
+                    <> " (" <> T.unpack (icEndpoint envConnection) <> ")")
         putStrLn ("Model:     " <> T.unpack envModel)
         putStrLn ("Permissions: " <> T.unpack (permissionModeName (iopInitialMode perms)))
         putStrLn "========================================================"
