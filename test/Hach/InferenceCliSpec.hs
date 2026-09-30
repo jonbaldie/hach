@@ -374,6 +374,15 @@ baseUrlSpec = describe "base URL handling" $ do
         hrExit result `shouldNotBe` ExitSuccess
         output result `shouldSatisfy` ("Invalid base URL" `isInfixOf`)
 
+  it "rejects a credential-bearing base URL without echoing the credentials" $
+    withSandbox $ \ws -> withInferenceFixture [] $ \fx -> do
+      result <- runWith ws [] ["--print", "--provider", "openai-compatible", "--model", "m"
+                              , "--base-url", "http://user:hunter2-pw@127.0.0.1/v1", "hi"]
+      hrExit result `shouldNotBe` ExitSuccess
+      output result `shouldSatisfy` ("must not contain user credentials" `isInfixOf`)
+      shouldNotLeak "hunter2-pw" result
+      shouldHaveNoRequests fx
+
   it "rejects an API key containing a line break without echoing it" $
     withSandbox $ \ws -> withInferenceFixture [] $ \fx -> do
       result <- runWith ws [("OPENAI_API_KEY", "sk-first\r\nX-Evil: 1")] (compatible fx <> ["hi"])
@@ -597,6 +606,17 @@ failureSpec = describe "failures" $ do
                               , "--base-url", "http://127.0.0.1:" <> show port <> "/v1", "hi"]
       hrExit result `shouldNotBe` ExitSuccess
       output result `shouldSatisfy` ("OpenAI-compatible API request failed" `isInfixOf`)
+
+  it "does not resend a request when a reused connection closes without answering" $
+    withSandbox $ \ws -> withInferenceFixture
+      [ keepAlive (toolCallCompletion [toolCall "call_ls" "list_dir" (object ["path" .= ("." :: Text)])] Nothing)
+      , Hangup
+      , completion "should not be reached"
+      ] $ \fx -> do
+        result <- runWith ws [] (compatible fx <> ["look around"])
+        hrExit result `shouldNotBe` ExitSuccess
+        output result `shouldSatisfy` ("OpenAI-compatible API request failed" `isInfixOf`)
+        length <$> fixtureRequests fx `shouldReturn` 2
 
   it "refuses a cross-origin redirect without contacting the target" $
     withSandbox $ \ws -> withInferenceFixture [completion "should not be reached"] $ \target ->

@@ -148,12 +148,12 @@ formatCostReport TuiState{..} =
 
       costLine = case (stuTotalCost stu, tsCostPolicy) of
         (Just c, _) -> "\nReported API Cost: $" <> T.pack (printf "%.4f" c)
+        (Nothing, CostReportedOnly) ->
+          "\nAPI Cost: not reported by the endpoint (no estimate is made)"
         (Nothing, _) | stuTotalTokens stu == 0 -> ""
         (Nothing, CostEstimateFromModel) ->
           let est = estimateCostUsd tsModelName (stuPromptTokens stu) (stuCompletionTokens stu)
           in "\nEstimated Cost: ~$" <> T.pack (printf "%.4f" est)
-        (Nothing, CostReportedOnly) ->
-          "\nAPI Cost: not reported by the endpoint (no estimate is made)"
   in contextLine <> "\n" <> sessionLine <> costLine
 
 -- | Handle submitting a user task prompt.

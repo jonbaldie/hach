@@ -91,6 +91,29 @@ spec = describe "TUI on a pseudo-terminal" $ do
             screen `shouldNotSatisfy` ("Estimated Cost" `isInfixOf`)
             screen `shouldNotSatisfy` ("not reported by the endpoint" `isInfixOf`)
             length <$> fixtureRequests fx `shouldReturn` 1
+  it "reports cost as not reported when the endpoint returns no usage at all" $
+    withSandbox $ \ws ->
+      withInferenceFixture
+        [ completion "fixture-unmetered-answer" ] $ \fx ->
+        withTui ws []
+          ["--provider", "openai-compatible", "--base-url", T.unpack (fixtureBaseUrl fx), "--model", "tui-model"] $ \tui -> do
+            submit tui "what does it cost"
+            awaitText tui "fixture-unmetered-answer"
+            submit tui "/cost"
+            awaitText tui "not reported by the endpoint"
+            screenText tui >>= (`shouldNotSatisfy` ("Estimated Cost" `isInfixOf`))
+            length <$> fixtureRequests fx `shouldReturn` 1
+  it "shows an inference failure without the key the endpoint echoed" $
+    withSandbox $ \ws ->
+      withInferenceFixture
+        [ reply 401 "invalid key sk-tui-echoed-secret" ] $ \fx ->
+        withTui ws [("OPENAI_API_KEY", "sk-tui-echoed-secret")]
+          ["--provider", "openai-compatible", "--base-url", T.unpack (fixtureBaseUrl fx), "--model", "tui-model"] $ \tui -> do
+            submit tui "fail please"
+            awaitText tui "HTTP 401"
+            awaitText tui "invalid key [REDACTED]"
+            screenText tui >>= (`shouldNotSatisfy` ("sk-tui-echoed-secret" `isInfixOf`))
+            length <$> fixtureRequests fx `shouldReturn` 1
   where
     field path req = requestJson req >>= jsonAt path
     reportedUsage = object

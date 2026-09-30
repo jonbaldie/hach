@@ -54,6 +54,7 @@ import Network.HTTP.Client
   ( HttpException(..)
   , HttpExceptionContent(..)
   , Manager
+  , ManagerSettings(managerRetryableException)
   , Request(..)
   , RequestBody(RequestBodyLBS)
   , Response(..)
@@ -166,7 +167,12 @@ chatCompletionsEndpoint raw = do
     Nothing -> Left "the base URL is not a valid URL."
   where
     when' cond msg = if cond then Left (baseUrlError msg) else Right ()
-    baseUrlError msg = "Invalid base URL " <> show (T.strip raw) <> ": " <> msg
+    -- A URL carrying userinfo is not echoed: it may hold a password.
+    baseUrlError msg
+      | hasUserinfo = "Invalid base URL: " <> msg
+      | otherwise = "Invalid base URL " <> show (T.strip raw) <> ": " <> msg
+    hasUserinfo =
+      T.any (== '@') . T.takeWhile (`notElem` ("/?#" :: String)) . snd $ T.breakOnEnd "://" raw
 
     splitScheme url =
       case T.breakOn "://" url of
@@ -371,9 +377,11 @@ errorPayloadMessage o =
 -- Transport
 --------------------------------------------------------------------------------
 
--- | The HTTP manager shared by every inference request.
+-- | The HTTP manager shared by every inference request. http-client would
+-- otherwise resend a request whose reused connection fails.
 newInferenceManager :: IO Manager
-newInferenceManager = newManager tlsManagerSettings
+newInferenceManager =
+  newManager tlsManagerSettings { managerRetryableException = const False }
 
 -- | Send one request over the connection. There is exactly one attempt: no
 -- redirect is followed, nothing is retried, and nothing falls back to

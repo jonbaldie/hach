@@ -5,7 +5,8 @@
 -- real @hach@ executable. Acceptance tests drive the public executable
 -- against this fixture and assert on the HTTP requests it actually sent.
 --
--- The fixture answers one request per connection, in script order. Once the
+-- The fixture answers one request per connection, in script order, unless
+-- a 'ReplyKeepAlive' leaves the connection open for the next one. Once the
 -- script is exhausted every further request is recorded and answered with an
 -- error at once, so an unexpected request fails a test promptly instead of
 -- hanging it. Everything is torn down when the scope exits.
@@ -31,6 +32,7 @@ module Hach.InferenceFixture
   , toolCallCompletion
   , toolCall
   , usage
+  , keepAlive
     -- * Running hach
   , HachRun(..)
   , HachResult(..)
@@ -90,6 +92,10 @@ data FixtureReply
     -- ^ Status, extra headers, body.
   | Stall
     -- ^ Hold the connection open, never answering, until the fixture closes.
+  | ReplyKeepAlive !Int ![(BS.ByteString, BS.ByteString)] !LBS.ByteString
+    -- ^ As 'Reply', but keep the connection open for the next request.
+  | Hangup
+    -- ^ Read the request, then close the connection without answering.
 
 data Fixture = Fixture
   { fxPort     :: !PortNumber
@@ -149,9 +155,11 @@ withInferenceFixture script action =
               (r : rs) -> pure (rs, Just r)
               [] -> pure ([], Nothing)
             case next of
-              Just (Reply status headers body) -> sendResponse conn status headers body
+              Just (Reply status headers body) -> sendResponse conn True status headers body
+              Just (ReplyKeepAlive status headers body) -> sendResponse conn False status headers body >> serve conn
+              Just Hangup -> pure ()
               Just Stall -> forever (threadDelay 1000000)
-              Nothing -> sendResponse conn 599 []
+              Nothing -> sendResponse conn True 599 []
                 "{\"error\":{\"message\":\"fixture: unexpected request beyond the script\"}}"
         acceptLoop = forever $ do
           (conn, _) <- accept listener
@@ -198,13 +206,13 @@ readRequest conn = go BS.empty
           chunk <- NSB.recv conn 65536
           if BS.null chunk then pure acc else readBody (acc <> chunk) len
 
-sendResponse :: Socket -> Int -> [(BS.ByteString, BS.ByteString)] -> LBS.ByteString -> IO ()
-sendResponse conn status headers body =
+sendResponse :: Socket -> Bool -> Int -> [(BS.ByteString, BS.ByteString)] -> LBS.ByteString -> IO ()
+sendResponse conn closeAfter status headers body =
   NSB.sendAll conn $ BS.concat $
     [ "HTTP/1.1 ", BC.pack (show status), " Fixture\r\n"
     , "Content-Length: ", BC.pack (show (LBS.length body)), "\r\n"
-    , "Connection: close\r\n"
     ]
+    ++ [ "Connection: close\r\n" | closeAfter ]
     ++ [ name <> ": " <> value <> "\r\n" | (name, value) <- headers ]
     ++ [ "\r\n", LBS.toStrict body ]
 
@@ -271,6 +279,11 @@ usage promptTokens completionTokens mCost = object $
   , "completion_tokens" .= completionTokens
   , "total_tokens" .= (promptTokens + completionTokens)
   ] ++ maybe [] (\c -> ["cost" .= c]) mCost
+
+-- | Send a reply without closing the connection, so the client may reuse it.
+keepAlive :: FixtureReply -> FixtureReply
+keepAlive (Reply status headers body) = ReplyKeepAlive status headers body
+keepAlive other = other
 
 --------------------------------------------------------------------------------
 -- Running hach
