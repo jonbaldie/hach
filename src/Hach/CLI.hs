@@ -23,6 +23,9 @@ module Hach.CLI
   , resolveHeadlessExitCode
   , formatHeadlessGoalOutcome
   , formatPrintGoalResult
+  , HeadlessGoalCommand(..)
+  , parseHeadlessGoalCommand
+  , formatInvocationError
   , formatUsd
   ) where
 
@@ -32,6 +35,8 @@ import Hach.Types
   , GoalState(..)
   , GoalStatus(..)
   , goalStatusName
+  , goalArgIsClear
+  , maxGoalConditionLength
   , PermissionMode(..)
   )
 import System.Exit (ExitCode(..))
@@ -275,6 +280,38 @@ formatPrintGoalResult fmt gs result = case fmt of
               ++ baseFields
               ++ extraFields
             )
+
+-- | A headless prompt that invokes @/goal@.
+data HeadlessGoalCommand
+  = HeadlessGoalRun !Text      -- ^ Run the goal loop for this condition.
+  | HeadlessGoalInvalid !Text  -- ^ Reject the invocation with this message.
+  deriving (Show, Eq)
+
+-- | Classify a trimmed headless prompt. 'Nothing' means it is not a @/goal@
+-- command. Headless mode keeps no goal state, so @/goal clear@ is invalid
+-- alongside a missing or oversized condition (Issue #241).
+parseHeadlessGoalCommand :: Text -> Maybe HeadlessGoalCommand
+parseHeadlessGoalCommand prompt
+  | prompt == "/goal" = Just (HeadlessGoalInvalid usage)
+  | Just rest <- T.stripPrefix "/goal " prompt = Just (classify (T.strip rest))
+  | otherwise = Nothing
+  where
+    usage = "Usage: /goal <condition> or /goal clear\nExample: /goal all tests pass"
+    classify argText
+      | T.null argText = HeadlessGoalInvalid usage
+      | goalArgIsClear argText =
+          HeadlessGoalInvalid "No active goal to clear (headless mode has no persistent goal state)."
+      | T.length argText > maxGoalConditionLength =
+          HeadlessGoalInvalid
+            ("Goal condition too long (max " <> T.pack (show maxGoalConditionLength) <> " characters).")
+      | otherwise = HeadlessGoalRun argText
+
+-- | Format a rejected headless invocation in the requested output format, so
+-- '--output-format json' callers still receive a JSON object.
+formatInvocationError :: OutputFormat -> Text -> Text
+formatInvocationError fmt err = case fmt of
+  OutputText -> err
+  OutputJson -> TE.decodeUtf8 . LBS.toStrict . Aeson.encode $ Aeson.object ["error" .= err]
 
 -- | One documented command-line option. 'cliFlags' sits beside
 -- 'parseCliArgs' so the help text and the parser are kept in step; the test

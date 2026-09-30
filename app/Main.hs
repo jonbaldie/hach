@@ -164,45 +164,33 @@ runHach = do
       let sysPrompt = buildSystemPromptWithAppend mGuidelines optAppendSystemPrompt
 
       let trimmedPrompt = T.strip taskPrompt
-          isGoalCommand = trimmedPrompt == "/goal" || T.isPrefixOf "/goal " trimmedPrompt
-      if isGoalCommand
-        then do
-          let argText = if trimmedPrompt == "/goal"
-                         then ""
-                         else T.strip (T.drop (T.length ("/goal " :: T.Text)) trimmedPrompt)
-          if T.null argText
-            then do
-              putStrLn "Usage: /goal <condition> or /goal clear"
-              putStrLn "Example: /goal all tests pass"
-            else if goalArgIsClear argText
-              then putStrLn "No active goal to clear (headless mode has no persistent goal state)."
-            else if T.length argText > maxGoalConditionLength
-              then do
-                putStrLn ("Goal condition too long (max " <> show maxGoalConditionLength <> " characters).")
-              else do
-                let condition = argText
-                when (not optPrint) $
-                  putStrLn ("\nStarting goal-directed agent loop for condition: " <> T.unpack condition)
-                let agentConfig = AgentConfig
-                      { cfgModel        = envModel
-                      , cfgSystemPrompt = Just sysPrompt
-                      , cfgMaxTurns     = optMaxTurns
-                      , cfgMaxBudgetUsd = maxBudgetUsd
-                      }
-                    initialHistory = buildSessionHistory sysPrompt mLoadedHistory condition
-                (result, finalHistory, goalState) <-
-                  runIO ioEnv (goalLoop agentConfig allToolDefs condition defaultBlockCap initialHistory)
-                saveRunSession currentWorkspace activeSid envModel mPrevInfo finalHistory
+      case parseHeadlessGoalCommand trimmedPrompt of
+        Just (HeadlessGoalInvalid err) -> do
+          TIO.putStrLn (if optPrint then formatInvocationError optOutputFormat err else err)
+          exitFailure
+        Just (HeadlessGoalRun condition) -> do
+          when (not optPrint) $
+            putStrLn ("\nStarting goal-directed agent loop for condition: " <> T.unpack condition)
+          let agentConfig = AgentConfig
+                { cfgModel        = envModel
+                , cfgSystemPrompt = Just sysPrompt
+                , cfgMaxTurns     = optMaxTurns
+                , cfgMaxBudgetUsd = maxBudgetUsd
+                }
+              initialHistory = buildSessionHistory sysPrompt mLoadedHistory condition
+          (result, finalHistory, goalState) <-
+            runIO ioEnv (goalLoop agentConfig allToolDefs condition defaultBlockCap initialHistory)
+          saveRunSession currentWorkspace activeSid envModel mPrevInfo finalHistory
 
-                if optPrint
-                  then TIO.putStrLn (formatPrintGoalResult optOutputFormat goalState result)
-                  else do
-                    reportHeadlessOutcome "Task completed." finalHistory (runOutcome result (Just goalState))
-                    printGoalSummary goalState
+          if optPrint
+            then TIO.putStrLn (formatPrintGoalResult optOutputFormat goalState result)
+            else do
+              reportHeadlessOutcome "Task completed." finalHistory (runOutcome result (Just goalState))
+              printGoalSummary goalState
 
-                exitOnHeadlessFailureWith (Just goalState) result
+          exitOnHeadlessFailureWith (Just goalState) result
 
-        else do
+        Nothing -> do
           finalPrompt <- expandSlashInvokedPrompt currentWorkspace skills trimmedPrompt
           let agentConfig = AgentConfig
                 { cfgModel        = envModel

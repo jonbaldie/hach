@@ -312,6 +312,47 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         exitCode `shouldBe` ExitFailure 1
         stdoutText `shouldNotContain` "Task completed."
 
+  describe "invalid headless /goal invocations (Issue #241)" $ do
+    let invalidGoalPrompts =
+          [ ("a bare /goal", "/goal", "Usage: /goal <condition> or /goal clear")
+          , ("/goal clear", "/goal clear", "No active goal to clear")
+          , ( "an oversized condition"
+            , "/goal " <> replicate (maxGoalConditionLength + 1) 'x'
+            , "Goal condition too long"
+            )
+          ]
+        runGoalCli executable workspace args = do
+          testEnvironment <- isolatedEnvironment workspace
+          let command =
+                (proc executable (["--model", "test-model"] <> args))
+                  { cwd = Just workspace
+                  , env = Just testEnvironment
+                  }
+          readCreateProcessWithExitCode command ""
+
+    forM_ invalidGoalPrompts $ \(label, prompt, message) -> do
+      it ("exits non-zero for " <> label <> " under --no-tui") $ do
+        executable <- hachExecutable
+        withTemporaryWorkspace $ \workspace -> do
+          (exitCode, stdoutText, _) <- runGoalCli executable workspace ["--no-tui", prompt]
+
+          exitCode `shouldBe` ExitFailure 1
+          stdoutText `shouldContain` message
+
+      it ("prints a JSON error and exits non-zero for " <> label <> " under -p --output-format json") $ do
+        executable <- hachExecutable
+        withTemporaryWorkspace $ \workspace -> do
+          (exitCode, stdoutText, _) <-
+            runGoalCli executable workspace ["-p", "--output-format", "json", prompt]
+
+          exitCode `shouldBe` ExitFailure 1
+          case Aeson.eitherDecode (LBS.pack stdoutText) of
+            Right (Aeson.Object obj) ->
+              case KM.lookup "error" obj of
+                Just (Aeson.String err) -> T.unpack err `shouldContain` message
+                other -> expectationFailure ("missing string error field: " <> show other)
+            other -> expectationFailure ("stdout is not a JSON object: " <> show other)
+
   describe "--init (Issue #118)" $ do
     let initEnvironment = do
           environment <- getEnvironment
