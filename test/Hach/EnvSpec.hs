@@ -83,15 +83,15 @@ spec = do
 
     it "handles whitespace and quotes on line two" $ do
       let ls = [ "OPENROUTER_API_KEY=sk-test"
-               , "  OPENROUTER_MODEL=\"anthropic/claude-3\"  "
+               , "  OPENROUTER_MODEL=\"~anthropic/claude-sonnet-latest\"  "
                ]
-      parseLineTwoModel ls `shouldBe` Just "anthropic/claude-3"
+      parseLineTwoModel ls `shouldBe` Just "~anthropic/claude-sonnet-latest"
 
     it "handles bare model string on line two" $ do
       let ls = [ "OPENROUTER_API_KEY=sk-test"
-               , "openai/gpt-4o"
+               , "~openai/gpt-mini-latest"
                ]
-      parseLineTwoModel ls `shouldBe` Just "openai/gpt-4o"
+      parseLineTwoModel ls `shouldBe` Just "~openai/gpt-mini-latest"
 
     it "returns Nothing if fewer than two lines" $ do
       parseLineTwoModel ["OPENROUTER_API_KEY=sk-test"] `shouldBe` Nothing

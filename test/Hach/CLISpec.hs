@@ -754,25 +754,25 @@ cliModuleSpec :: Spec
 cliModuleSpec = do
   describe "parseCliArgs" $ do
     it "parses --model with separate argument" $ do
-      let args = ["--model", "meta/llama-3", "do", "something"]
+      let args = ["--model", "~google/gemini-flash-latest", "do", "something"]
       parseCliArgs args `shouldBe` Right defaultCliOptions
-        { optModel = Just "meta/llama-3"
+        { optModel = Just "~google/gemini-flash-latest"
         , optPrompt = Just "do something"
         , optNoTui = False
         }
 
     it "parses --model= syntax" $ do
-      let args = ["--model=anthropic/claude-3", "run", "all", "tests"]
+      let args = ["--model=~anthropic/claude-sonnet-latest", "run", "all", "tests"]
       parseCliArgs args `shouldBe` Right defaultCliOptions
-        { optModel = Just "anthropic/claude-3"
+        { optModel = Just "~anthropic/claude-sonnet-latest"
         , optPrompt = Just "run all tests"
         , optNoTui = False
         }
 
     it "parses short flag -m" $ do
-      let args = ["-m", "openai/gpt-4o", "hello"]
+      let args = ["-m", "~openai/gpt-mini-latest", "hello"]
       parseCliArgs args `shouldBe` Right defaultCliOptions
-        { optModel = Just "openai/gpt-4o"
+        { optModel = Just "~openai/gpt-mini-latest"
         , optPrompt = Just "hello"
         , optNoTui = False
         }

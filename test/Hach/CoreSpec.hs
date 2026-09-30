@@ -760,7 +760,7 @@ spec = do
 
   describe "Feature Gap Closure AgentF Operations" $ do
     it "saves and loads session through AgentF" $ do
-      let sinfo = SessionInfo "sess-1" "2026-09-06" "claude-3-5-sonnet" 3 0.05
+      let sinfo = SessionInfo "sess-1" "2026-09-06" "~anthropic/claude-sonnet-latest" 3 0.05
           prog = do
             sid <- saveSession sinfo
             loadSession sid

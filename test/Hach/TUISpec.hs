@@ -951,17 +951,17 @@ spec = do
 
     describe "modelContextLimit and contextSaturationPercent" $ do
       it "maps known model families to context limits" $ do
-        modelContextLimit "anthropic/claude-3.7-sonnet" `shouldBe` 200000
+        modelContextLimit "~anthropic/claude-sonnet-latest" `shouldBe` 200000
         modelContextLimit "openai/gpt-4o" `shouldBe` 128000
-        modelContextLimit "google/gemini-2.0-flash" `shouldBe` 1000000
+        modelContextLimit "~google/gemini-flash-latest" `shouldBe` 1000000
         modelContextLimit "unknown-custom-model" `shouldBe` 128000
 
       it "calculates context saturation percentage accurately" $ do
-        contextSaturationPercent 160000 "anthropic/claude-3.7-sonnet" `shouldBe` 80
+        contextSaturationPercent 160000 "~anthropic/claude-sonnet-latest" `shouldBe` 80
         contextSaturationPercent 115200 "openai/gpt-4o" `shouldBe` 90
 
       it "clamps context saturation percentage strictly between 0 and 100" $ do
-        contextSaturationPercent 300000 "anthropic/claude-3.7-sonnet" `shouldBe` 100
+        contextSaturationPercent 300000 "~anthropic/claude-sonnet-latest" `shouldBe` 100
         contextSaturationPercent (-50) "openai/gpt-4o" `shouldBe` 0
 
 
