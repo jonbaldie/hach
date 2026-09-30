@@ -23,6 +23,7 @@ module Hach.CLI
   , resolveHeadlessExitCode
   , formatHeadlessGoalOutcome
   , formatPrintGoalResult
+  , validateHeadlessGoalPrompt
   , formatUsd
   ) where
 
@@ -31,7 +32,9 @@ import Hach.Types
   ( AgentResult(..)
   , GoalState(..)
   , GoalStatus(..)
+  , goalArgIsClear
   , goalStatusName
+  , maxGoalConditionLength
   , PermissionMode(..)
   )
 import System.Exit (ExitCode(..))
@@ -275,6 +278,29 @@ formatPrintGoalResult fmt gs result = case fmt of
               ++ baseFields
               ++ extraFields
             )
+
+-- | Validate a headless task prompt if it is a @/goal@ invocation.
+-- Returns 'Nothing' if the prompt is not a @/goal@ command.
+-- Returns 'Just (Left err)' if it is an invalid @/goal@ command with an error message.
+-- Returns 'Just (Right condition)' if it is a valid @/goal@ command with condition.
+validateHeadlessGoalPrompt :: Text -> Maybe (Either Text Text)
+validateHeadlessGoalPrompt taskPrompt
+  | not isGoalCommand = Nothing
+  | T.null argText =
+      Just (Left "Usage: /goal <condition> or /goal clear\nExample: /goal all tests pass")
+  | goalArgIsClear argText =
+      Just (Left "No active goal to clear (headless mode has no persistent goal state).")
+  | T.length argText > maxGoalConditionLength =
+      Just (Left ("Goal condition too long (max " <> T.pack (show maxGoalConditionLength) <> " characters)."))
+  | otherwise =
+      Just (Right argText)
+  where
+    trimmed = T.strip taskPrompt
+    isGoalCommand = trimmed == "/goal" || T.isPrefixOf "/goal " trimmed
+    argText =
+      if trimmed == "/goal"
+        then ""
+        else T.strip (T.drop (T.length ("/goal " :: Text)) trimmed)
 
 -- | One documented command-line option. 'cliFlags' sits beside
 -- 'parseCliArgs' so the help text and the parser are kept in step; the test
