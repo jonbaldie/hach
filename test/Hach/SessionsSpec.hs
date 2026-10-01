@@ -171,7 +171,7 @@ spec = describe "Hach.Sessions" $ do
               , AssistantMsg (Just "I'll read it.") [call]
               , ToolMsg "call_abc" "read_file" "hello"
               ]
-        saveRunSession wsDir "sess-164-tools" "test-model" Nothing history
+        saveRunSession wsDir "sess-164-tools" "test-model" Nothing 0 history
         mLoaded <- loadWorkspaceSession wsDir "sess-164-tools"
         case mLoaded of
           Nothing -> expectationFailure "Expected saved session"
@@ -187,7 +187,7 @@ spec = describe "Hach.Sessions" $ do
               , UserMsg "Use the read_file tool to read README.md"
               , AssistantMsg (Just "I'll read it.") [danglingCall]
               ]
-        saveRunSession wsDir "sess-164-dangling" "test-model" Nothing history
+        saveRunSession wsDir "sess-164-dangling" "test-model" Nothing 0 history
         mLoaded <- loadWorkspaceSession wsDir "sess-164-dangling"
         case mLoaded of
           Nothing -> expectationFailure "Expected saved session"
@@ -195,6 +195,23 @@ spec = describe "Hach.Sessions" $ do
             openaiToolCallContractHolds loaded `shouldBe` True
             let resumed = buildSessionHistory "sys" (Just loaded) "Please continue."
             openaiToolCallContractHolds resumed `shouldBe` True
+
+    describe "saved session cost (Issue #253)" $ do
+      let wsDir = testDir </> "ws-253"
+          history = [SystemMsg "sys", UserMsg "Reply OK", AssistantMsg (Just "OK") []]
+
+      it "records the run's reported spend for a new session" $ do
+        saveRunSession wsDir "sess-253-new" "test-model" Nothing 0.25 history
+        fmap (siCostUsd . fst) <$> loadWorkspaceSession wsDir "sess-253-new"
+          `shouldReturn` Just 0.25
+
+      it "adds a resumed run's spend to the saved total" $ do
+        saveRunSession wsDir "sess-253-resume" "test-model" Nothing 0.25 history
+        mFirst <- loadWorkspaceSession wsDir "sess-253-resume"
+        let resumedHistory = history ++ [UserMsg "Again", AssistantMsg (Just "OK") []]
+        saveRunSession wsDir "sess-253-resume" "test-model" (fmap fst mFirst) 0.5 resumedHistory
+        fmap (siCostUsd . fst) <$> loadWorkspaceSession wsDir "sess-253-resume"
+          `shouldReturn` Just 0.75
 
   describe "Cost estimation (BUG-7)" $ do
     it "correctly prices gpt-4o-mini without shadowing from gpt-4o" $ do

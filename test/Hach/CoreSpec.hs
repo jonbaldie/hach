@@ -32,7 +32,7 @@ spec = do
       let step1 _ _ = Right $ AssistantResponse (Just "Hello world!") [] Nothing
           env = emptyMockEnv { mockLLMSteps = [step1] }
           initHist = [UserMsg "Hi"]
-          ((result, finalHist), endEnv) = runPure env (agentLoop baseConfig [] initHist)
+          ((result, finalHist, _), endEnv) = runPure env (agentLoop baseConfig [] initHist)
 
       result `shouldBe` AgentCompleted "Hello world!"
       length finalHist `shouldBe` 2
@@ -61,7 +61,7 @@ spec = do
             , mockFiles = Map.fromList [("hello.txt", "Functional Pearl")]
             }
           initHist = [UserMsg "Read hello.txt"]
-          ((result, finalHist), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
+          ((result, finalHist, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
 
       result `shouldBe` AgentCompleted "The file says: Functional Pearl"
       -- History should be: [UserMsg, AssistantMsg (with tool_calls), ToolMsg (result), AssistantMsg (final)]
@@ -88,7 +88,7 @@ spec = do
             , mockFiles = Map.fromList [("src/Main.hs", "module Main where")]
             , mockPermissions = \tool _ -> tool == "find_files"
             }
-          ((result, finalHistory), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Find Haskell files"])
+          ((result, finalHistory, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Find Haskell files"])
       result `shouldBe` AgentCompleted "done"
       finalHistory `shouldSatisfy` \history ->
         any (\case ToolMsg "glob-call" "Glob" output -> "src/Main.hs" `T.isInfixOf` output; _ -> False) history
@@ -101,7 +101,7 @@ spec = do
             { mockLLMSteps = [step1, step2]
             , mockPermissions = \tool _ -> tool /= "SendMessage"
             }
-          ((result, finalHistory), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Message the agent"])
+          ((result, finalHistory, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Message the agent"])
       result `shouldBe` AgentCompleted "done"
       finalHistory `shouldSatisfy` \history ->
         any (\case ToolMsg "message-call" "send_message" output -> "denied" `T.isInfixOf` output; _ -> False) history
@@ -115,7 +115,7 @@ spec = do
             { mockLLMSteps = [step1, step2]
             , mockPermissions = \_ _ -> error "permissions must not run for rejected calls"
             }
-          ((result, history), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Call tools"])
+          ((result, history, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Call tools"])
       result `shouldBe` AgentCompleted "done"
       history `shouldSatisfy` \messages ->
         any (\case ToolMsg "unknown" "not_registered" output -> output == "Error: Unknown tool function: not_registered"; _ -> False) messages
@@ -131,7 +131,7 @@ spec = do
           step2 _ _ = Right $ AssistantResponse (Just "Wrote successfully!") [] Nothing
           env = emptyMockEnv { mockLLMSteps = [step1, step2] }
           initHist = [UserMsg "Write out.txt"]
-          ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
+          ((result, _, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
 
       result `shouldBe` AgentCompleted "Wrote successfully!"
       Map.lookup "out.txt" (mockFiles endEnv) `shouldBe` Just "Pearls in Haskell"
@@ -158,7 +158,7 @@ spec = do
             { mockLLMSteps = repeat stepLoop
             , mockFiles = Map.fromList [("hello.txt", "data")]
             }
-          ((result, _), _) = runPure env (agentLoop loopConfig allToolDefs [UserMsg "Run forever"])
+          ((result, _, _), _) = runPure env (agentLoop loopConfig allToolDefs [UserMsg "Run forever"])
 
       result `shouldBe` AgentMaxTurnsReached 2
 
@@ -168,7 +168,7 @@ spec = do
             { mockLLMSteps =
                 [\_ _ -> Right (AssistantResponse (Just "should not run") [] Nothing)]
             }
-          ((result, _), endEnv) = runPure env (agentLoop cfg [] [UserMsg "Hi"])
+          ((result, _, _), endEnv) = runPure env (agentLoop cfg [] [UserMsg "Hi"])
       result `shouldBe` AgentBudgetExceeded 0 0
       mockEvents endEnv `shouldContain` [EvError "Budget exceeded"]
       mockEvents endEnv `shouldNotContain` [EvPromptingLLM 1]
@@ -187,7 +187,7 @@ spec = do
             { mockLLMSteps = [step1, step2]
             , mockFiles = Map.fromList [("hello.txt", "data")]
             }
-          ((result, _), endEnv) = runPure env (agentLoop cfg allToolDefs [UserMsg "Go"])
+          ((result, _, _), endEnv) = runPure env (agentLoop cfg allToolDefs [UserMsg "Go"])
       result `shouldBe` AgentBudgetExceeded 0.6 0.5
       mockEvents endEnv `shouldNotContain` [EvDone "should not run"]
 
@@ -195,8 +195,21 @@ spec = do
       let usage = (mkTokenUsage 10 5 15) { tuCost = Just 9.99 }
           step1 _ _ = Right $ AssistantResponse (Just "done") [] (Just usage)
           env = emptyMockEnv { mockLLMSteps = [step1] }
-          ((result, _), _) = runPure env (agentLoop baseConfig [] [UserMsg "Hi"])
+          ((result, _, _), _) = runPure env (agentLoop baseConfig [] [UserMsg "Hi"])
       result `shouldBe` AgentCompleted "done"
+
+    it "reports the summed spend of every request in the run (Issue #253)" $ do
+      let usage c = (mkTokenUsage 10 5 15) { tuCost = Just c }
+          toolCall = ToolCall "call_1" "read_file" "{\"path\":\"hello.txt\"}"
+          step1 _ _ = Right $ AssistantResponse Nothing [toolCall] (Just (usage 0.25))
+          step2 _ _ = Right $ AssistantResponse (Just "done") [] (Just (usage 0.5))
+          env = emptyMockEnv
+            { mockLLMSteps = [step1, step2]
+            , mockFiles = Map.fromList [("hello.txt", "data")]
+            }
+          ((result, _, spent), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Go"])
+      result `shouldBe` AgentCompleted "done"
+      spent `shouldBe` 0.75
 
     it "still stops on max turns when a budget is also configured" $ do
       let cfg = baseConfig { cfgMaxTurns = Just 1, cfgMaxBudgetUsd = Just 100 }
@@ -210,7 +223,7 @@ spec = do
             { mockLLMSteps = repeat stepLoop
             , mockFiles = Map.fromList [("hello.txt", "data")]
             }
-          ((result, _), _) = runPure env (agentLoop cfg allToolDefs [UserMsg "Run"])
+          ((result, _, _), _) = runPure env (agentLoop cfg allToolDefs [UserMsg "Run"])
       result `shouldBe` AgentMaxTurnsReached 1
 
     it "runs past the old default of 10 turns when cfgMaxTurns is Nothing (unlimited)" $ do
@@ -229,7 +242,7 @@ spec = do
             { mockLLMSteps = replicate 12 stepLoop ++ [stepFinal]
             , mockFiles = Map.fromList [("hello.txt", "data")]
             }
-          ((result, _), _) = runPure env (agentLoop unlimitedConfig allToolDefs [UserMsg "Run long"])
+          ((result, _, _), _) = runPure env (agentLoop unlimitedConfig allToolDefs [UserMsg "Run long"])
 
       result `shouldBe` AgentCompleted "Finally done!"
 
@@ -248,7 +261,7 @@ spec = do
             { mockLLMSteps = replicate 100 stepLoop ++ [stepFinal]
             , mockFiles = Map.fromList [("hello.txt", "data")]
             }
-          ((result, _), _) = runPure env (agentLoop unlimitedConfig allToolDefs [UserMsg "Run very long"])
+          ((result, _, _), _) = runPure env (agentLoop unlimitedConfig allToolDefs [UserMsg "Run very long"])
 
       result `shouldNotBe` AgentMaxTurnsReached 100
       result `shouldBe` AgentCompleted "Done"
@@ -257,7 +270,7 @@ spec = do
       let stepError _ _ = Left "401 Unauthorized"
           env = emptyMockEnv { mockLLMSteps = [stepError] }
           initHist = [UserMsg "Fail please"]
-          ((result, finalHist), endEnv) = runPure env (agentLoop baseConfig [] initHist)
+          ((result, finalHist, _), endEnv) = runPure env (agentLoop baseConfig [] initHist)
 
       result `shouldBe` AgentFailed "401 Unauthorized"
       finalHist `shouldBe` initHist
@@ -276,7 +289,7 @@ spec = do
             { mockLLMSteps = replicate (unproductiveRepeatLimit + 3) stepLoop ++ [stepFinal]
             , mockFiles = Map.fromList [("src/Hach/Tools.hs", "module Hach.Tools")]
             }
-          ((result, _), endEnv) =
+          ((result, _, _), endEnv) =
             runPure env (agentLoop unlimitedConfig allToolDefs [UserMsg "Bump the version"])
           promptCount = length [() | EvPromptingLLM _ <- mockEvents endEnv]
       case result of
@@ -298,7 +311,7 @@ spec = do
             { mockLLMSteps = concat (replicate 4 [stepRead, stepWrite]) ++ [stepFinal]
             , mockFiles = Map.fromList [("hello.txt", "data")]
             }
-          ((result, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Edit foo"])
+          ((result, _, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Edit foo"])
       result `shouldBe` AgentCompleted "edited"
 
     it "does not flag consecutive reads of different files" $ do
@@ -310,7 +323,7 @@ spec = do
           env = emptyMockEnv
             { mockLLMSteps = replicate (unproductiveRepeatLimit + 2) stepLoop ++ [stepFinal]
             }
-          ((result, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Read many"])
+          ((result, _, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Read many"])
       result `shouldBe` AgentCompleted "surveyed"
 
     it "treats near-identical JSON arguments as the same call" $ do
@@ -321,7 +334,7 @@ spec = do
           env = emptyMockEnv
             { mockLLMSteps = take unproductiveRepeatLimit (cycle [stepA, stepB])
             }
-          ((result, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Search"])
+          ((result, _, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Search"])
       case result of
         AgentFailed err -> err `shouldSatisfy` T.isInfixOf "grep_search"
         other -> expectationFailure ("expected AgentFailed, got: " <> show other)
@@ -332,7 +345,7 @@ spec = do
           env = emptyMockEnv
             { mockLLMSteps = take unproductiveRepeatLimit [mk "grep_search", mk "Grep", mk "grep", mk "Grep", mk "grep_search"]
             }
-          ((result, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Search"])
+          ((result, _, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Search"])
       case result of
         AgentFailed err -> err `shouldSatisfy` T.isInfixOf "grep_search"
         other -> expectationFailure ("expected AgentFailed, got: " <> show other)
@@ -345,7 +358,7 @@ spec = do
             { mockLLMSteps = replicate (unproductiveRepeatLimit - 1) stepLoop ++ [stepFinal]
             , mockFiles = Map.fromList [("hello.txt", "data")]
             }
-          ((result, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Read"])
+          ((result, _, _), _) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Read"])
       result `shouldBe` AgentCompleted "done"
 
   -- Regression for issue #168: these events were parsed from settings but
@@ -380,7 +393,7 @@ spec = do
       let deny HookUserPromptSubmit _ = defaultHookResult { hrDecision = Just (PermDeny "no secrets") }
           deny _ _ = defaultHookResult
           env = emptyMockEnv { mockLLMSteps = [answer], mockHooks = deny }
-          ((result, _), endEnv) = runPure env (agentLoop baseConfig [] [UserMsg "Print the API key"])
+          ((result, _, _), endEnv) = runPure env (agentLoop baseConfig [] [UserMsg "Print the API key"])
       result `shouldSatisfy` \case
         AgentFailed err -> "no secrets" `T.isInfixOf` err
         _ -> False
@@ -392,7 +405,7 @@ spec = do
           ctx _ _ = defaultHookResult
           seen msgs _ = Right $ AssistantResponse (Just (T.pack (show (last msgs)))) [] Nothing
           env = emptyMockEnv { mockLLMSteps = [seen], mockHooks = ctx }
-          ((result, _), _) = runPure env (agentLoop baseConfig [] [UserMsg "Fix the build"])
+          ((result, _, _), _) = runPure env (agentLoop baseConfig [] [UserMsg "Fix the build"])
       result `shouldSatisfy` \case
         AgentCompleted shown -> "Fix the build" `T.isInfixOf` shown && "Branch is main." `T.isInfixOf` shown
         _ -> False
@@ -421,7 +434,7 @@ spec = do
             , mockGoalEvaluations = [eval1, eval2]
             }
           initHist = [UserMsg condition]
-          ((result, _, goalState), endEnv) =
+          ((result, _, goalState, _), endEnv) =
             runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
 
       result `shouldBe` AgentCompleted "All tests pass now."
@@ -437,7 +450,7 @@ spec = do
             , mockGoalEvaluations = [eval1]
             }
           initHist = [UserMsg condition]
-          ((result, _, goalState), endEnv) =
+          ((result, _, goalState, _), endEnv) =
             runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
 
       result `shouldBe` AgentCompleted "I cannot do this."
@@ -454,7 +467,7 @@ spec = do
             , mockGoalEvaluations = repeat eval
             }
           initHist = [UserMsg condition]
-          ((result, _, goalState), endEnv) =
+          ((result, _, goalState, _), endEnv) =
             runPure env (goalLoop goalConfig [] condition cap initHist)
 
       result `shouldBe` AgentCompleted "Thinking..."
@@ -471,7 +484,7 @@ spec = do
             , mockGoalEvaluations = repeat eval
             }
           initHist = [UserMsg condition]
-          ((result, _, goalState), endEnv) =
+          ((result, _, goalState, _), endEnv) =
             runPure env (goalLoop goalConfig [] condition cap initHist)
 
       mockEvents endEnv `shouldContain` [EvGoalBlocked condition]
@@ -502,7 +515,7 @@ spec = do
             , mockFiles = Map.fromList [("hello.txt", "data")]
             }
           initHist = [UserMsg condition]
-          ((result, _, goalState), _) =
+          ((result, _, goalState, _), _) =
             runPure env (goalLoop goalConfig allToolDefs condition cap initHist)
 
       -- Without the tool call in turn 2 resetting the counter, turns 1 and 3
@@ -518,7 +531,7 @@ spec = do
             , mockGoalEvaluations = []
             }
           initHist = [UserMsg condition]
-          ((result, _, goalState), endEnv) =
+          ((result, _, goalState, _), endEnv) =
             runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
 
       result `shouldBe` AgentCompleted "[API Error]: 401 Unauthorized"
@@ -533,7 +546,7 @@ spec = do
             , mockGoalEvaluations = []
             }
           initHist = [UserMsg condition]
-          ((_, _, goalState), _) =
+          ((_, _, goalState, _), _) =
             runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
 
       gsStatus goalState `shouldBe` GoalFailed
@@ -545,7 +558,7 @@ spec = do
             , mockGoalEvaluations = []
             }
           initHist = [UserMsg condition]
-          ((_, _, goalState), _) =
+          ((_, _, goalState, _), _) =
             runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
 
       gsStatus goalState `shouldBe` GoalActive
@@ -606,12 +619,28 @@ spec = do
             , mockGoalEvaluations = [eval1]
             , mockGoalEvaluationUsages = [Just evalUsage]
             }
-          ((result, _, gs), endEnv) =
+          ((result, _, gs, _), endEnv) =
             runPure env (goalLoop cfg [] condition defaultBlockCap [UserMsg condition])
 
       result `shouldBe` AgentBudgetExceeded 1 1
       gsStatus gs `shouldBe` GoalActive
       mockEvents endEnv `shouldNotContain` [EvTurnStart 2]
+
+    it "reports turn and evaluator spend, including the final evaluation (Issue #253)" $ do
+      let usage c = (mkTokenUsage 10 5 15) { tuCost = Just c }
+          step _ _ = Right $ AssistantResponse (Just "Working.") [] (Just (usage 0.125))
+          notYetMet _ _ = GoalEvaluation GoalNotYetMet "Keep going." Nothing
+          met _ _ = GoalEvaluation GoalMet "Done." Nothing
+          env = emptyMockEnv
+            { mockLLMSteps = [step, step]
+            , mockGoalEvaluations = [notYetMet, met]
+            , mockGoalEvaluationUsages = [Just (usage 0.25), Just (usage 0.5)]
+            }
+          ((_, _, gs, spent), _) =
+            runPure env (goalLoop goalConfig [] condition defaultBlockCap [UserMsg condition])
+
+      gsStatus gs `shouldBe` GoalAchieved
+      spent `shouldBe` 1
 
     it "accumulates evaluator spend across several goal turns" $ do
       let cfg = goalConfig { cfgMaxBudgetUsd = Just 1 }
@@ -623,7 +652,7 @@ spec = do
             , mockGoalEvaluations = replicate 3 notYetMet
             , mockGoalEvaluationUsages = replicate 3 (Just evalUsage)
             }
-          ((result, _, _), endEnv) =
+          ((result, _, _, _), endEnv) =
             runPure env (goalLoop cfg [] condition 10 [UserMsg condition])
 
       result `shouldBe` AgentBudgetExceeded 1 1
@@ -645,7 +674,7 @@ spec = do
             , mockGoalEvaluations = [eval1, eval2]
             }
           initHist = [UserMsg condition]
-          ((result, finalHist, _), _) =
+          ((result, finalHist, _, _), _) =
             runPure env (goalLoop goalConfig [] condition defaultBlockCap initHist)
 
       result `shouldBe` AgentCompleted "Received: Goal not yet met. Run the tests. Continue working toward: All tests pass"
@@ -671,7 +700,7 @@ spec = do
             , mockGoalEvaluations = [evalFinal]
             , mockFiles = Map.fromList [("hello.txt", "data")]
             }
-          ((result, _, gs), _) =
+          ((result, _, gs, _), _) =
             runPure env (goalLoop unlimitedConfig allToolDefs condition defaultBlockCap [UserMsg condition])
 
       result `shouldBe` AgentCompleted "Finally done!"
@@ -694,7 +723,7 @@ spec = do
             , mockGoalEvaluations = [evalFinal]
             , mockFiles = Map.fromList [("hello.txt", "data")]
             }
-          ((result, _, _), _) =
+          ((result, _, _, _), _) =
             runPure env (goalLoop unlimitedConfig allToolDefs condition defaultBlockCap [UserMsg condition])
 
       result `shouldNotBe` AgentMaxTurnsReached 50
@@ -706,7 +735,7 @@ spec = do
           env = emptyMockEnv
             { mockLLMSteps = replicate (unproductiveRepeatLimit + 2) stepLoop
             }
-          ((result, _, gs), endEnv) =
+          ((result, _, gs, _), endEnv) =
             runPure env (goalLoop goalConfig allToolDefs condition defaultBlockCap [UserMsg condition])
       case result of
         AgentFailed err -> err `shouldSatisfy` T.isInfixOf "grep_search"
@@ -836,7 +865,7 @@ spec = do
             , mockHooks = denyHook
             }
           initHist = [UserMsg "Write foo"]
-          ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
+          ((result, _, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
       result `shouldBe` AgentCompleted "done"
       Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Nothing
       mockEvents endEnv `shouldContain` [EvPermissionDenied "write_file" "Blocked by PreToolUse hook"]
@@ -850,7 +879,7 @@ spec = do
             , mockPermissions = \_ _ -> False
             }
           initHist = [UserMsg "Write foo"]
-          ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
+          ((result, _, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
       result `shouldBe` AgentCompleted "done"
       Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Nothing
       mockEvents endEnv `shouldContain` [EvPermissionDenied "write_file" "Permission denied by policy"]
@@ -864,7 +893,7 @@ spec = do
             , mockFiles = Map.singleton "foo.txt" "old"
             , mockPermissions = \tool _ -> tool == "replace_file_content"
             }
-          ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Edit foo"])
+          ((result, _, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs [UserMsg "Edit foo"])
       result `shouldBe` AgentCompleted "done"
       Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Just "new"
 
@@ -910,7 +939,7 @@ spec = do
             , mockHooks = modifyHook
             }
           initHist = [UserMsg "Run write"]
-          ((result, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
+          ((result, _, _), endEnv) = runPure env (agentLoop baseConfig allToolDefs initHist)
       result `shouldBe` AgentCompleted "done"
       Map.lookup "sanitized.txt" (mockFiles endEnv) `shouldBe` Just "safe"
       Map.lookup "foo.txt" (mockFiles endEnv) `shouldBe` Nothing

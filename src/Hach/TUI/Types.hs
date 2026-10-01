@@ -152,6 +152,8 @@ data TuiState = TuiState
   , tsTranscript         :: ![TranscriptItem]
   , tsConversation       :: ![Message]
     -- ^ Canonical Core history for model calls and session persistence.
+  , tsRunSpendUsd        :: !Double
+    -- ^ Reported spend of every run finished in this TUI, for the saved session.
   , tsTranscriptScroll   :: !Int
   , tsTranscriptManualScroll :: !Bool
   , tsSelectedToolIndex  :: !Int
@@ -201,6 +203,7 @@ initialTuiState model maxTurns = TuiState
   , tsInputBuffer        = ""
   , tsTranscript         = []
   , tsConversation       = []
+  , tsRunSpendUsd        = 0
   , tsTranscriptScroll   = 0
   , tsTranscriptManualScroll = False
   , tsSelectedToolIndex  = 0
@@ -247,6 +250,7 @@ data TuiEvent
   = EvUserKey !UserKey
   | EvHarness !AgentEvent
   | EvConversation ![Message]
+  | EvRunSpend !Double
   | EvSubmit !Text
   deriving (Show, Eq)
 

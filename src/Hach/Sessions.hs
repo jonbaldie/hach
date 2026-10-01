@@ -305,9 +305,17 @@ buildSessionHistory sysPrompt mPriorHistory prompt =
         Just msgs -> cleanHistoryForSession (filter (not . isSystemMsg) msgs)
   in SystemMsg sysPrompt : priorDialogue ++ [UserMsg prompt]
 
--- | Persist completed agent dialogue to the workspace session directory.
-saveRunSession :: FilePath -> Text -> Text -> Maybe SessionInfo -> [Message] -> IO ()
-saveRunSession workspace activeSid model mPrevInfo finalHistory = do
+-- | Persist completed agent dialogue to the workspace session directory,
+-- adding the run's reported spend to the session's saved cost.
+saveRunSession
+  :: FilePath
+  -> Text
+  -> Text
+  -> Maybe SessionInfo
+  -> Double          -- ^ reported spend of this run, in USD
+  -> [Message]
+  -> IO ()
+saveRunSession workspace activeSid model mPrevInfo runSpendUsd finalHistory = do
   let cleanHistory = cleanHistoryForSession finalHistory
       totalTurns = length [() | AssistantMsg _ _ <- cleanHistory]
   when (totalTurns > 0) $ do
@@ -318,7 +326,7 @@ saveRunSession workspace activeSid model mPrevInfo finalHistory = do
           , siCreatedAt = timestamp
           , siModel     = model
           , siTurns     = totalTurns
-          , siCostUsd   = prevCost
+          , siCostUsd   = prevCost + runSpendUsd
           }
     saveWorkspaceSession workspace sessionInfo cleanHistory
 

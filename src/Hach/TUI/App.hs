@@ -316,7 +316,8 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
   mWorker <- atomically $ readTVar workerVar
   mapM_ cancel mWorker
 
-  saveRunSession activeWorkspace activeSid (ioModel ioEnv) (fmap fst mLoadedSession) (tsConversation finalState)
+  saveRunSession activeWorkspace activeSid (ioModel ioEnv) (fmap fst mLoadedSession)
+    (tsRunSpendUsd finalState) (tsConversation finalState)
 
 -- | Collapse a run of same-role text items with one intercalate so the
 -- copy is linear in the total text rather than quadratic in the run length.
@@ -400,10 +401,8 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
     newWorker <- async $ do
       let runEnv = runEnvForModel selectedModel ioEnv
           agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns mMaxBudgetUsd
-          emit history event = do
-            writeBChan eventChan (EvConversation history)
-            writeBChan eventChan (EvHarness event)
-      runAgentWorker (tuiAlgebra eventChan runEnv) agentConfig finalPrompt priorHistory emit
+      runAgentWorker (tuiAlgebra eventChan runEnv) agentConfig finalPrompt priorHistory
+        (emitRunEnd eventChan)
 
     atomically $ writeTVar workerVar (Just newWorker)
 
@@ -418,14 +417,22 @@ goalAgentConfig ioEnv sysPrompt mMaxTurns mMaxBudgetUsd = AgentConfig
   , cfgMaxBudgetUsd = mMaxBudgetUsd
   }
 
+-- | Post a finished run to the TUI: its spend, its final history, then its
+-- terminal event.
+emitRunEnd :: BChan TuiEvent -> Double -> [Message] -> AgentEvent -> IO ()
+emitRunEnd eventChan spent history event = do
+  writeBChan eventChan (EvRunSpend spent)
+  writeBChan eventChan (EvConversation history)
+  writeBChan eventChan (EvHarness event)
+
 -- | Run a normal agent turn from the canonical conversation and return the
--- final history before emitting its terminal event.
+-- run's spend and final history before emitting its terminal event.
 runAgentWorker
   :: AgentAlgebra IO
   -> AgentConfig
   -> Text
   -> [Message]
-  -> ([Message] -> AgentEvent -> IO ())
+  -> (Double -> [Message] -> AgentEvent -> IO ())
   -> IO ()
 runAgentWorker algebra agentConfig prompt priorHistory emit = do
   let sysPrompt = fromMaybe "" (cfgSystemPrompt agentConfig)
@@ -433,9 +440,9 @@ runAgentWorker algebra agentConfig prompt priorHistory emit = do
   res <- trySync (foldAgentProgram algebra (agentLoop agentConfig allToolDefs initHistory))
   case res of
     Left (ex :: SomeException) ->
-      emit initHistory (EvError (T.pack (show ex)))
-    Right (result, finalHistory) ->
-      emit finalHistory (runOutcomeEvent (runOutcome result Nothing))
+      emit 0 initHistory (EvError (T.pack (show ex)))
+    Right (result, finalHistory, spent) ->
+      emit spent finalHistory (runOutcomeEvent (runOutcome result Nothing))
 
 -- | Execute a goal-directed agent run using the given algebra and emit events.
 runGoalWorker
@@ -446,16 +453,17 @@ runGoalWorker
   -> (AgentEvent -> IO ())
   -> IO ()
 runGoalWorker algebra agentConfig condition priorHistory emitEvent =
-  runGoalWorkerWithHistory algebra agentConfig condition priorHistory (\_ event -> emitEvent event)
+  runGoalWorkerWithHistory algebra agentConfig condition priorHistory (\_ _ event -> emitEvent event)
 
--- | Goal worker variant that returns canonical history before its terminal
--- event so the TUI can save and resume the exact model conversation.
+-- | Goal worker variant that returns the run's spend and canonical history
+-- before its terminal event so the TUI can save and resume the exact model
+-- conversation.
 runGoalWorkerWithHistory
   :: AgentAlgebra IO
   -> AgentConfig
   -> Text
   -> [Message]
-  -> ([Message] -> AgentEvent -> IO ())
+  -> (Double -> [Message] -> AgentEvent -> IO ())
   -> IO ()
 runGoalWorkerWithHistory algebra agentConfig condition priorHistory emit = do
   let sysPrompt = fromMaybe "" (cfgSystemPrompt agentConfig)
@@ -464,9 +472,9 @@ runGoalWorkerWithHistory algebra agentConfig condition priorHistory emit = do
               (goalLoop agentConfig allToolDefs condition defaultBlockCap initHistory))
   case res of
     Left (ex :: SomeException) ->
-      emit initHistory (EvError (T.pack (show ex)))
-    Right (result, finalHistory, goalState) ->
-      emit finalHistory (runOutcomeEvent (runOutcome result (Just goalState)))
+      emit 0 initHistory (EvError (T.pack (show ex)))
+    Right (result, finalHistory, goalState, spent) ->
+      emit spent finalHistory (runOutcomeEvent (runOutcome result (Just goalState)))
 
 -- | The terminal TUI event for a finished run: only success ends the run as
 -- done; a stopped or failed run, including an unmet goal, ends in error.
@@ -499,10 +507,8 @@ triggerGoalRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns 
   newWorker <- async $ do
     let runEnv = runEnvForModel selectedModel ioEnv
         agentConfig = goalAgentConfig runEnv sysPrompt mMaxTurns mMaxBudgetUsd
-        emit history event = do
-          writeBChan eventChan (EvConversation history)
-          writeBChan eventChan (EvHarness event)
-    runGoalWorkerWithHistory (tuiAlgebra eventChan runEnv) agentConfig condition priorHistory emit
+    runGoalWorkerWithHistory (tuiAlgebra eventChan runEnv) agentConfig condition priorHistory
+      (emitRunEnd eventChan)
 
   atomically $ writeTVar workerVar (Just newWorker)
 

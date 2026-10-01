@@ -55,7 +55,7 @@ main = do
       initMsgs = [UserMsg prompt]
 
   putStrLn "\n--- Launching Agent Loop ---"
-  (result, _history) <- runIO ioEnv (agentLoop agentConfig allToolDefs initMsgs)
+  (result, _history, _spent) <- runIO ioEnv (agentLoop agentConfig allToolDefs initMsgs)
 
   putStrLn "\n--- Agent Loop Concluded ---"
   case result of
