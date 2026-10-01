@@ -182,9 +182,9 @@ runHach = do
                 , cfgMaxBudgetUsd = maxBudgetUsd
                 }
               initialHistory = buildSessionHistory sysPrompt mLoadedHistory condition
-          (result, finalHistory, goalState) <-
+          (result, finalHistory, goalState, spentUsd) <-
             runIO ioEnv (goalLoop agentConfig allToolDefs condition defaultBlockCap initialHistory)
-          saveRunSession currentWorkspace activeSid envModel mPrevInfo finalHistory
+          saveRunSession currentWorkspace activeSid envModel mPrevInfo spentUsd finalHistory
 
           if optPrint
             then TIO.putStrLn (formatPrintGoalResult optOutputFormat goalState result)
@@ -207,8 +207,8 @@ runHach = do
 
           when (not optPrint) $
             putStrLn ("\nStarting agent loop for task: " <> T.unpack taskPrompt)
-          (result, finalHistory) <- runIO ioEnv (agentLoop agentConfig allToolDefs initialHistory)
-          saveRunSession currentWorkspace activeSid envModel mPrevInfo finalHistory
+          (result, finalHistory, spentUsd) <- runIO ioEnv (agentLoop agentConfig allToolDefs initialHistory)
+          saveRunSession currentWorkspace activeSid envModel mPrevInfo spentUsd finalHistory
 
           if optPrint
             then TIO.putStrLn (formatPrintResult optOutputFormat result)

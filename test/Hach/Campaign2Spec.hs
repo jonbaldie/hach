@@ -262,7 +262,7 @@ spec = do
             env = emptyMockEnv { mockLLMSteps = steps }
             cfg = AgentConfig "m" (Just "sys") (Just maxTurns) Nothing
             initHist = [UserMsg "hi"]
-            ((_, finalHist), _) = runPure env (agentLoop cfg [] initHist)
+            ((_, finalHist, _), _) = runPure env (agentLoop cfg [] initHist)
         in length finalHist >= length initHist
 
   describe "CGPT wave-2: memory @import workspace containment" $ do

@@ -473,18 +473,20 @@ evaluationCostUsd :: GoalEvaluation -> Double
 evaluationCostUsd eval = fromMaybe 0 (geUsage eval >>= tuCost)
 
 -- | The pure, recursive agent harness loop.
--- Unfolds turns until completion or the maximum turn limit is reached.
+-- Unfolds turns until completion or the maximum turn limit is reached, and
+-- reports the run's total reported spend in USD alongside the final history.
 agentLoop
   :: AgentConfig
   -> [ToolDef]
   -> [Message]
-  -> AgentProgram (AgentResult, [Message])
+  -> AgentProgram (AgentResult, [Message], Double)
 agentLoop cfg tools initialHistory =
-  withPromptHooks (\err -> (AgentFailed err, initialHistory)) fst initialHistory (loop 1 0)
+  withPromptHooks (\err -> (AgentFailed err, initialHistory, 0)) (\(result, _, _) -> result)
+    initialHistory (loop 1 0)
   where
     loop turn spent hist = do
       agentStep cfg tools turn spent hist >>= \case
-        Left (result, finalHist, _) -> pure (result, finalHist)
+        Left done                   -> pure done
         Right (nextHist, spent')    -> loop (turn + 1) spent' nextHist
 
 -- | Consecutive identical read-only tool calls with no intervening edit
@@ -509,20 +511,22 @@ defaultBlockCap = 3
 -- counter.  Consecutive completed turns without tool use increment it; when it
 -- reaches the block cap the loop stops with a warning and the goal stays
 -- active so the user can resume.
+--
+-- The reported spend covers every turn and every evaluator request.
 goalLoop
   :: AgentConfig
   -> [ToolDef]
   -> Text          -- ^ goal condition
   -> Int           -- ^ block cap (max consecutive no-progress turns)
   -> [Message]
-  -> AgentProgram (AgentResult, [Message], GoalState)
+  -> AgentProgram (AgentResult, [Message], GoalState, Double)
 goalLoop cfg tools condition blockCap initialHistory = do
   logEvent (EvGoalSet condition)
-  withPromptHooks rejected (\(result, _, _) -> result) initialHistory
+  withPromptHooks rejected (\(result, _, _, _) -> result) initialHistory
     (loop 1 0 (initialGoalState condition))
   where
     rejected err =
-      (AgentFailed err, initialHistory, (initialGoalState condition) { gsStatus = GoalFailed })
+      (AgentFailed err, initialHistory, (initialGoalState condition) { gsStatus = GoalFailed }, 0)
     -- Clamp to a minimum of 1: a block cap of 0 or less is degenerate because
     -- the block decision is only reached *after* a no-progress turn runs, so
     -- the counter would otherwise exceed the cap.  1 is the smallest value
@@ -540,15 +544,17 @@ goalLoop cfg tools condition blockCap initialHistory = do
               GoalErrUnrecoverable -> do
                 let g' = gs { gsStatus = GoalFailed }
                 logEvent (EvGoalFailed condition content)
-                pure (result, finalHist, g')
+                pure (result, finalHist, g', spent')
 
               GoalErrTransient ->
                 -- Stop the loop but keep the goal active for retry.
-                pure (result, finalHist, gs)
+                pure (result, finalHist, gs, spent')
 
               GoalNoError -> do
                 eval <- evaluateGoal condition finalHist
-                let verdict = geVerdict eval
+                -- The evaluator request is billable too.
+                let spentWithEval = spent' + evaluationCostUsd eval
+                    verdict = geVerdict eval
                     reason  = geReason eval
                     g1 = gs
                       { gsTurnCount       = gsTurnCount gs + 1
@@ -561,40 +567,39 @@ goalLoop cfg tools condition blockCap initialHistory = do
                   GoalMet -> do
                     let g2 = g1 { gsStatus = GoalAchieved }
                     logEvent (EvGoalAchieved condition)
-                    pure (result, finalHist, g2)
+                    pure (result, finalHist, g2, spentWithEval)
 
                   GoalImpossible -> do
                     let g2 = g1 { gsStatus = GoalFailed }
                     logEvent (EvGoalFailed condition reason)
-                    pure (result, finalHist, g2)
+                    pure (result, finalHist, g2, spentWithEval)
 
                   GoalNotYetMet ->
                     if gsNoProgressCount g1 >= effectiveCap
                       then do
                         logEvent (EvGoalBlocked condition)
-                        pure (result, finalHist, g1)
+                        pure (result, finalHist, g1, spentWithEval)
                       else do
                         let guidance = UserMsg
                               ( "Goal not yet met. " <> reason
                               <> " Continue working toward: " <> condition )
                             newHist = finalHist ++ [guidance]
-                        -- The evaluator request is billable too.
-                        loop (turn + 1) (spent' + evaluationCostUsd eval) g1 newHist
+                        loop (turn + 1) spentWithEval g1 newHist
 
           AgentMaxTurnsReached _n ->
-            pure (result, finalHist, gs)
+            pure (result, finalHist, gs, spent')
 
           AgentBudgetExceeded _ _ ->
-            pure (result, finalHist, gs)
+            pure (result, finalHist, gs, spent')
 
           AgentFailed err ->
             case classifyError err of
               GoalErrUnrecoverable -> do
                 let g' = gs { gsStatus = GoalFailed }
                 logEvent (EvGoalFailed condition err)
-                pure (result, finalHist, g')
+                pure (result, finalHist, g', spent')
               _ ->
-                pure (result, finalHist, gs)
+                pure (result, finalHist, gs, spent')
 
 -- | Why a run stopped before finishing: a configured limit was reached.
 data StopReason

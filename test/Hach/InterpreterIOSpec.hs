@@ -246,7 +246,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
               , cfgMaxTurns     = Nothing
               , cfgMaxBudgetUsd = Nothing
               }
-        (_result, hist) <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write it"])
+        (_result, hist, _) <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write it"])
         hist `shouldSatisfy` any (\case
           ToolMsg _ _ c -> "denied" `T.isInfixOf` T.toLower c
           _ -> False)
@@ -328,7 +328,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         let env = env0 { ioResolveAsk = resolveAskWithGate gate (\_ -> pure ()) }
         done <- newEmptyMVar
         _ <- forkIO $ do
-          r <- try (runWriteLoop env) :: IO (Either SomeException ((AgentResult, [Message]), [AgentEvent]))
+          r <- try (runWriteLoop env) :: IO (Either SomeException ((AgentResult, [Message], Double), [AgentEvent]))
           putMVar done r
         mAsk <- awaitPermissionAsk gate 2000000
         case mAsk of
@@ -349,7 +349,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         let env = env0 { ioResolveAsk = resolveAskWithGate gate (\_ -> pure ()) }
         done <- newEmptyMVar
         _ <- forkIO $ do
-          r <- try (runWriteLoop env) :: IO (Either SomeException ((AgentResult, [Message]), [AgentEvent]))
+          r <- try (runWriteLoop env) :: IO (Either SomeException ((AgentResult, [Message], Double), [AgentEvent]))
           putMVar done r
         mAsk <- awaitPermissionAsk gate 2000000
         case mAsk of
@@ -360,7 +360,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         outcome <- takeMVar done
         case outcome of
           Left ex -> expectationFailure ("worker failed: " <> show ex)
-          Right ((result, _), events) -> do
+          Right ((result, _, _), events) -> do
             doesFileExist (testDir </> "hello.txt") `shouldReturn` False
             events `shouldContain` [EvPermissionDenied "write_file" interactiveAskDeniedReason]
             result `shouldBe` AgentCompleted "done"
@@ -371,7 +371,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         let env = env0 { ioResolveAsk = resolveAskWithGate gate (\_ -> pure ()) }
         done <- newEmptyMVar
         tid <- forkIO $ do
-          r <- try (runWriteLoop env) :: IO (Either SomeException ((AgentResult, [Message]), [AgentEvent]))
+          r <- try (runWriteLoop env) :: IO (Either SomeException ((AgentResult, [Message], Double), [AgentEvent]))
           putMVar done r
         mAsk <- awaitPermissionAsk gate 2000000
         case mAsk of
@@ -387,7 +387,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         let envLater = env2 { ioResolveAsk = resolveAskWithGate gate (\_ -> pure ()) }
         done2 <- newEmptyMVar
         _ <- forkIO $ do
-          r <- try (runWriteLoop envLater) :: IO (Either SomeException ((AgentResult, [Message]), [AgentEvent]))
+          r <- try (runWriteLoop envLater) :: IO (Either SomeException ((AgentResult, [Message], Double), [AgentEvent]))
           putMVar done2 r
         mAsk2 <- awaitPermissionAsk gate 2000000
         case mAsk2 of
@@ -433,7 +433,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
 
       it "explains that --no-tui cannot prompt and names --permission-mode on deny" $ do
         env <- newIOEnv "k" "test-model" testDir False
-        ((_result, hist), events) <- runHeadlessWrite env
+        ((_result, hist, _), events) <- runHeadlessWrite env
         doesFileExist (testDir </> "hello.txt") `shouldReturn` False
         events `shouldSatisfy` any (\case
           EvPermissionDenied "write_file" reason -> namesHeadlessFlag reason
@@ -444,7 +444,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
 
       it "does not complete successfully when every write was denied without a prompt" $ do
         env <- newIOEnv "k" "test-model" testDir False
-        ((result, _), _) <- runHeadlessWrite env
+        ((result, _, _), _) <- runHeadlessWrite env
         case result of
           AgentCompleted _ -> expectationFailure
             "headless default-mode denials must not report AgentCompleted"
@@ -459,7 +459,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         env <- newIOEnvWithPermissions
           (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
           (openRouterConnection "k") "test-model" testDir False
-        ((result, _), _) <- runHeadlessWrite env
+        ((result, _, _), _) <- runHeadlessWrite env
         doesFileExist (testDir </> "hello.txt") `shouldReturn` True
         result `shouldBe` AgentCompleted "done"
 
@@ -468,7 +468,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
           (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
           (openRouterConnection "k") "test-model" testDir False
         let cmdCall = ToolCall "c1" "run_command" "{\"command\":\"echo 42\"}"
-        ((result, _hist), events) <- runHeadlessTool env cmdCall "run echo 42"
+        ((result, _hist, _), events) <- runHeadlessTool env cmdCall "run echo 42"
         events `shouldSatisfy` any (\case
           EvPermissionDenied "run_command" reason ->
             T.isInfixOf "dontAsk" reason && not (T.isInfixOf "acceptEdits" reason)
@@ -481,7 +481,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
       it "recommends dontAsk and not acceptEdits when a command is denied under default mode (Issue #221)" $ do
         env <- newIOEnv "k" "test-model" testDir False
         let cmdCall = ToolCall "c1" "run_command" "{\"command\":\"echo 42\"}"
-        ((result, _hist), events) <- runHeadlessTool env cmdCall "run echo 42"
+        ((result, _hist, _), events) <- runHeadlessTool env cmdCall "run echo 42"
         events `shouldSatisfy` any (\case
           EvPermissionDenied "run_command" reason ->
             T.isInfixOf "dontAsk" reason && not (T.isInfixOf "acceptEdits" reason)
@@ -496,7 +496,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
           (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
           (openRouterConnection "k") "test-model" testDir False
         let taskCall = ToolCall "c1" "TaskCreate" "{\"name\":\"bg task\",\"command\":\"echo bg\"}"
-        ((result, _hist), events) <- runHeadlessTool env taskCall "create task"
+        ((result, _hist, _), events) <- runHeadlessTool env taskCall "create task"
         events `shouldSatisfy` any (\case
           EvPermissionDenied "TaskCreate" reason ->
             T.isInfixOf "dontAsk" reason && not (T.isInfixOf "acceptEdits" reason)
@@ -523,7 +523,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
                     [] -> pure (Right (AssistantResponse (Just "done") [] Nothing))
               }
             cfg = AgentConfig "test-model" Nothing Nothing Nothing
-        (result, _) <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "do mixed"])
+        (result, _, _) <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "do mixed"])
         case result of
           AgentFailed err ->
             err `shouldBe` headlessAskBlockedMessage ModeDefault [AuthorityWorkspaceWrite, AuthorityCommand]
@@ -551,7 +551,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
               , cfgMaxTurns     = Just 1
               , cfgMaxBudgetUsd = Nothing
               }
-        (result, _) <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write hello.txt"])
+        (result, _, _) <- foldAgentProgram alg (agentLoop cfg [] [UserMsg "write hello.txt"])
         result `shouldBe` AgentMaxTurnsReached 1
         doesFileExist (testDir </> "hello.txt") `shouldReturn` False
 

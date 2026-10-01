@@ -111,6 +111,10 @@ updateTui event state = case event of
     | tsCancelRequested state -> (state, [])
     | otherwise -> (state { tsConversation = messages }, [])
 
+  -- Spend is real even when the run's history is discarded.
+  EvRunSpend spent ->
+    (state { tsRunSpendUsd = tsRunSpendUsd state + spent }, [])
+
 -- | Whether the agent harness is currently busy running an inference turn or tool.
 isBusy :: TuiStatus -> Bool
 isBusy = \case

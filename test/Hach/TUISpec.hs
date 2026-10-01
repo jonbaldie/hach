@@ -18,6 +18,7 @@ import Hach.TUI.App
   , messagesToTranscriptItems
   , runAgentWorker
   , runGoalWorker
+  , runGoalWorkerWithHistory
   , transcriptToMessages
   , vtyToUserKey
   )
@@ -1366,7 +1367,7 @@ spec = do
               , AssistantMsg Nothing [ToolCall "call_1" "list_dir" "{\"path\":\".\"}"]
               , ToolMsg "call_1" "list_dir" "MARKER.txt"
               ]
-            captureResult history event = writeIORef resultRef (Just (history, event))
+            captureResult _ history event = writeIORef resultRef (Just (history, event))
         runAgentWorker mockAlgebra config "next task" priorHistory captureResult
         historySeen <- readIORef historySeenRef
         historySeen `shouldBe`
@@ -1391,6 +1392,42 @@ spec = do
             ]
           , EvDone "answer"
           )
+
+      it "reports a normal run's spend with its final history (Issue #253)" $ do
+        spendRef <- newIORef Nothing
+        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+        let usage = (mkTokenUsage 10 5 15) { tuCost = Just 0.25 }
+            mockAlgebra = (ioAlgebra mockIOEnv)
+              { interpPrompt = \_ _ -> pure (Right (AssistantResponse (Just "answer") [] (Just usage)))
+              , interpLog = \_ -> pure ()
+              }
+            config = goalAgentConfig mockIOEnv "system" Nothing Nothing
+        runAgentWorker mockAlgebra config "task" [] (\spent _ _ -> writeIORef spendRef (Just spent))
+        readIORef spendRef `shouldReturn` Just 0.25
+
+      it "reports a goal run's spend, including the evaluator, with its final history (Issue #253)" $ do
+        spendRef <- newIORef Nothing
+        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
+        let usage c = (mkTokenUsage 10 5 15) { tuCost = Just c }
+            mockAlgebra = (ioAlgebra mockIOEnv)
+              { interpPrompt = \_ _ -> pure (Right (AssistantResponse (Just "done") [] (Just (usage 0.25))))
+              , interpLog = \_ -> pure ()
+              , interpEvaluate = \_ _ -> pure (GoalEvaluation GoalMet "met" (Just (usage 0.5)))
+              }
+            config = goalAgentConfig mockIOEnv "system" Nothing Nothing
+        runGoalWorkerWithHistory mockAlgebra config "goal" [] (\spent _ _ -> writeIORef spendRef (Just spent))
+        readIORef spendRef `shouldReturn` Just 0.75
+
+      it "accumulates run spend for the saved session, even after /clear while busy (Issue #253)" $ do
+        let s0 = baseState
+              { tsStatus = StatusThinking
+              , tsTranscript = [DiUser "Hello"]
+              , tsInputBuffer = "/clear"
+              }
+            (s1, _) = updateTui (EvRunSpend 0.25) s0
+            (s2, _) = updateTui (EvUserKey KeyEnter) s1
+            (s3, _) = updateTui (EvRunSpend 0.5) s2
+        tsRunSpendUsd s3 `shouldBe` 0.75
 
     describe "Transcript Auto-Scroll Policy and Thinking Indicator (Issue #25)" $ do
       describe "Auto-Scroll Policy (shouldAutoScroll)" $ do

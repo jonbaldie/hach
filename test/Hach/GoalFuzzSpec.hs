@@ -168,7 +168,7 @@ runScenario s =
         , mockFiles           = Map.fromList [("hello.txt", "data")]
         }
       initHist = [UserMsg (sCondition s)]
-      ((result, finalHist, gs), endEnv) =
+      ((result, finalHist, gs, _), endEnv) =
         runPure env (goalLoop cfg allToolDefs (sCondition s) (sBlockCap s) initHist)
   in (result, finalHist, gs, endEnv)
 
@@ -308,7 +308,7 @@ spec = modifyMaxSuccess (const 1000) $ do
                   , mockGoalEvaluations = repeat eval
                   }
             cfg = AgentConfig "m" (Just "sys") (Just 20) Nothing
-            ((_, _, gs), _) = runPure env (goalLoop cfg [] "c" cap [UserMsg "c"])
+            ((_, _, gs, _), _) = runPure env (goalLoop cfg [] "c" cap [UserMsg "c"])
             effectiveCap = max 1 cap
         in -- The loop blocks after one no-progress turn when the cap is
            -- degenerate, so the counter equals the clamped cap.
