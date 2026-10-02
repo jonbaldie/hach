@@ -5,6 +5,7 @@ module Hach.TUISpec (spec) where
 
 import Hach.Core (AgentAlgebra(..))
 import Hach.Interpreter.IO (ioAlgebra, ioModel, newIOEnv)
+import Hach.Memory (ProjectInitializationResult(..))
 import Hach.Sessions (buildSessionHistory)
 import Hach.Skills (SkillSource(..), mkSkill)
 import Hach.TUI.App

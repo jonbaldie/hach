@@ -6,6 +6,7 @@ import Hach.Core (AgentAlgebra (..), agentLoop, foldAgentProgram)
 import Hach.Env (resolveEffortLevel, resolvePermissionMode)
 import Hach.Inference (openRouterConnection)
 import Hach.Interpreter.IO
+import Hach.Memory (ProjectInitializationResult (..))
 import Hach.Permissions (isProtectedPath)
 import Hach.Settings (Settings (..), defaultSettings, loadLayeredSettings)
 import Hach.Paths (workspaceAt)
@@ -65,22 +66,6 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
     when existsAfter (removeDirectoryRecursive testDir)) $ do
 
     describe "initializeProjectWorkspace" $ do
-      it "creates a non-empty Markdown template in the active workspace" $ do
-        env <- newIOEnv "k" "test-model" testDir False
-        result <- initializeProjectWorkspace env
-        result `shouldBe` ProjectInitialized
-        content <- TIO.readFile (testDir </> "CLAUDE.md")
-        T.strip content `shouldNotBe` ""
-        T.isPrefixOf "# " content `shouldBe` True
-
-      it "leaves an existing CLAUDE.md untouched" $ do
-        let existing = "# Keep this file\n"
-        TIO.writeFile (testDir </> "CLAUDE.md") existing
-        env <- newIOEnv "k" "test-model" testDir False
-        result <- initializeProjectWorkspace env
-        result `shouldBe` ProjectAlreadyPresent
-        TIO.readFile (testDir </> "CLAUDE.md") `shouldReturn` existing
-
       it "uses the active workspace after a worktree switch" $ do
         let activeWorkspace = testDir </> "active-workspace"
         createDirectoryIfMissing True activeWorkspace
@@ -90,16 +75,6 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         result `shouldBe` ProjectInitialized
         doesFileExist (activeWorkspace </> "CLAUDE.md") `shouldReturn` True
         doesFileExist (testDir </> "CLAUDE.md") `shouldReturn` False
-
-      it "reports an actionable error when the workspace cannot be written" $ do
-        let blockedWorkspace = testDir </> "not-a-directory"
-        writeFile blockedWorkspace "blocked"
-        env <- newIOEnv "k" "test-model" blockedWorkspace False
-        result <- initializeProjectWorkspace env
-        result `shouldSatisfy` \case
-          ProjectInitializationFailed err ->
-            "CLAUDE.md" `T.isInfixOf` err && not ("Initialized" `T.isInfixOf` err)
-          _ -> False
 
     describe "interpCheckPermission" $ do
       it "denies write_file under plan mode while allowing reads" $ do

@@ -19,8 +19,6 @@ module Hach.Env
   , resolveConfigWithSettings
   , resolveEnvConfig
   , loadEnvConfig
-  , loadProjectInstructions
-  , loadProjectInstructionsFile
   , buildSystemPrompt
   , buildSystemPromptWithAppend
   ) where
@@ -46,23 +44,19 @@ import Hach.Types
   , parseEffortLevel
   )
 import Control.Applicative ((<|>))
-import Control.Exception (try, SomeException)
 import Data.Bifunctor (first)
 import Data.List (isPrefixOf)
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Traversable (for)
-import qualified Data.ByteString as BS
 import Data.Char (isSpace)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
-import System.FilePath ((</>))
 
 -- | Parsed environment configuration for running the agent harness.
 data EnvConfig = EnvConfig
@@ -321,27 +315,6 @@ resolveEnvConfig flags mDotEnvPath = do
 -- integration executable does.
 loadEnvConfig :: FilePath -> IO (Either EnvError EnvConfig)
 loadEnvConfig path = resolveEnvConfig noInferenceFlags (Just path)
-
--- | Load project instructions from AGENTS.md, AGENT.md, or CLAUDE.md in the workspace directory.
--- Precedence: AGENTS.md is preferred; then AGENT.md; then CLAUDE.md.
-loadProjectInstructions :: FilePath -> IO (Maybe Text)
-loadProjectInstructions = fmap (fmap snd) . loadProjectInstructionsFile
-
--- | Like 'loadProjectInstructions', also naming the file the instructions came from.
-loadProjectInstructionsFile :: FilePath -> IO (Maybe (FilePath, Text))
-loadProjectInstructionsFile workspace = firstExisting ["AGENTS.md", "AGENT.md", "CLAUDE.md"]
-  where
-    firstExisting [] = pure Nothing
-    firstExisting (name : names) = do
-      let fp = workspace </> name
-      exists <- doesFileExist fp
-      if exists then fmap ((,) name) <$> readFileUtf8 fp else firstExisting names
-
-    readFileUtf8 fp = do
-      res <- try (BS.readFile fp) :: IO (Either SomeException BS.ByteString)
-      case res of
-        Left _ -> pure Nothing
-        Right bytes -> pure (Just (TE.decodeUtf8With (\_ _ -> Just ' ') bytes))
 
 -- | Build the combined system prompt, appending project guidelines if present.
 buildSystemPrompt :: Maybe Text -> Text
