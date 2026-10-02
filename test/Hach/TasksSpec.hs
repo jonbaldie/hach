@@ -5,11 +5,14 @@ module Hach.TasksSpec (spec) where
 import Hach.Tasks
 import Hach.Types (TaskId, ToolResult(..))
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, bracket, try)
+import Control.Exception (SomeException, bracket, finally, try)
+import Control.Monad (forM, forM_, replicateM)
+import Data.List (isInfixOf)
 import qualified Data.Text as T
-import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive)
+import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory, listDirectory, removeDirectoryRecursive)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
+import System.Posix.IO (closeFd, createPipe, dup, dupTo, stdInput)
 import System.Process (readProcessWithExitCode)
 import System.Timeout (timeout)
 import Test.Hspec
@@ -47,6 +50,33 @@ isAlive :: String -> IO Bool
 isAlive pid = do
   (code, _, _) <- readProcessWithExitCode "kill" ["-0", pid] ""
   pure (code == ExitSuccess)
+
+-- | Run an action while this process's stdin is the read end of a pipe that
+-- never reaches EOF, standing in for an interactive terminal.
+withOpenStdin :: IO a -> IO a
+withOpenStdin action = do
+  saved <- dup stdInput
+  (readEnd, writeEnd) <- createPipe
+  _ <- dupTo readEnd stdInput
+  closeFd readEnd
+  action `finally` (dupTo saved stdInput >> closeFd saved >> closeFd writeEnd)
+
+-- | Poll a background task's output until it contains the marker.
+awaitOutput :: BackgroundRegistry -> TaskId -> String -> IO String
+awaitOutput reg tid marker = go (50 :: Int)
+  where
+    go n = do
+      res <- getBackgroundOutput reg tid
+      let out = case res of
+            ToolSuccess t -> T.unpack t
+            ToolError t -> T.unpack t
+      if marker `isInfixOf` out || n == 0
+        then pure out
+        else threadDelay 100000 >> go (n - 1)
+
+-- | Number of file descriptors this process has open.
+openFdCount :: IO Int
+openFdCount = length <$> listDirectory "/dev/fd"
 
 spec :: Spec
 spec = describe "Hach.Tasks" $ do
@@ -130,3 +160,21 @@ spec = describe "Hach.Tasks" $ do
       pids <- mapM (awaitPid . (dir </>)) ["pid1", "pid2"]
       stopAllBackgroundProcesses reg
       mapM isAlive pids `shouldReturn` [False, False]
+
+  describe "Background tasks release terminal and pipes (issue #260)" $ do
+    it "gives a task an empty stdin instead of Hach's own" $ withOpenStdin $ do
+      reg <- newBackgroundRegistry
+      tid <- spawnBackgroundProcess reg "." "read line; echo \"read-exit:$?\""
+      out <- awaitOutput reg tid "read-exit:"
+      _ <- stopWithin reg tid
+      out `shouldContain` "read-exit:1"
+
+    it "closes both output pipes once a task finishes" $ do
+      reg <- newBackgroundRegistry
+      before <- openFdCount
+      tids <- replicateM 5 (spawnBackgroundProcess reg "." "echo done")
+      forM_ tids $ \tid -> awaitOutput reg tid "done"
+      threadDelay 300000
+      after <- openFdCount
+      _ <- forM tids (stopWithin reg)
+      after `shouldSatisfy` (<= before)
