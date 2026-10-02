@@ -120,7 +120,9 @@ runHach = do
   sessionRes <- resolveSessionLoad targetWorkspace sessionTarget
   (activeSid, mLoadedSession) <- case sessionRes of
     Left err -> do
-      putStrLn err
+      if optPrint
+        then TIO.putStrLn (formatPrintResult optOutputFormat (AgentFailed (T.pack err)))
+        else putStrLn err
       exitFailure
     Right Nothing -> do
       sid <- generateSessionId
