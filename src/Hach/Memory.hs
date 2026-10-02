@@ -120,14 +120,12 @@ loadProjectInstructions = fmap (fmap snd) . loadProjectInstructionsFile
 
 -- | Like 'loadProjectInstructions', also naming the file the instructions came from.
 loadProjectInstructionsFile :: FilePath -> IO (Maybe (FilePath, Text))
-loadProjectInstructionsFile workspace = firstExisting instructionsFileNames
+loadProjectInstructionsFile workspace = do
+  mName <- findInstructionsFile workspace
+  case mName of
+    Nothing -> pure Nothing
+    Just name -> fmap ((,) name) <$> readFileUtf8 (workspace </> name)
   where
-    firstExisting [] = pure Nothing
-    firstExisting (name : names) = do
-      let fp = workspace </> name
-      exists <- doesFileExist fp
-      if exists then fmap ((,) name) <$> readFileUtf8 fp else firstExisting names
-
     readFileUtf8 fp = do
       res <- try (BS.readFile fp) :: IO (Either SomeException BS.ByteString)
       case res of
@@ -222,6 +220,15 @@ resolveMemoryImports baseDir maxDepth path = do
                   pure (T.lines content)
       | otherwise = pure [line]
 
+-- | The first of 'instructionsFileNames' present in the directory.
+findInstructionsFile :: FilePath -> IO (Maybe FilePath)
+findInstructionsFile dir = go instructionsFileNames
+  where
+    go [] = pure Nothing
+    go (name : names) = do
+      exists <- doesFileExist (dir </> name)
+      if exists then pure (Just name) else go names
+
 -- | Walk directories from workspace root to cwd, loading the first of
 -- 'instructionsFileNames' found in each.
 loadHierarchicalMemory :: FilePath -> FilePath -> IO [Text]
@@ -232,15 +239,8 @@ loadHierarchicalMemory root cwd = do
   contents <- mapM loadDirMemory candidates
   pure (catMaybes contents)
   where
-    loadDirMemory dir = firstMemoryFile instructionsFileNames
-      where
-        firstMemoryFile [] = pure Nothing
-        firstMemoryFile (name : names) = do
-          let fp = dir </> name
-          exists <- doesFileExist fp
-          if exists
-            then Just <$> resolveMemoryImports root 4 fp
-            else firstMemoryFile names
+    loadDirMemory dir =
+      findInstructionsFile dir >>= traverse (\name -> resolveMemoryImports root 4 (dir </> name))
 
 -- | Load rules matching the active files from .claude/rules/*.md and .agents/rules/*.md.
 loadRules :: FilePath -> [FilePath] -> IO [Text]

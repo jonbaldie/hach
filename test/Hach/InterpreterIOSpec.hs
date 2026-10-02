@@ -76,7 +76,6 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         doesFileExist (activeWorkspace </> "CLAUDE.md") `shouldReturn` True
         doesFileExist (testDir </> "CLAUDE.md") `shouldReturn` False
 
-
     describe "interpCheckPermission" $ do
       it "denies write_file under plan mode while allowing reads" $ do
         env <- newIOEnvWithPermissions planPerms (openRouterConnection "k") "test-model" testDir False

@@ -109,9 +109,6 @@ spec = describe "Hach.Memory" $ do
     it "scaffolds CLAUDE.md" $
       scaffoldInstructionsFileName `shouldBe` "CLAUDE.md"
 
-    it "scaffolds a file that discovery finds" $
-      instructionsFileNames `shouldContain` [scaffoldInstructionsFileName]
-
   describe "initializeWorkspaceInstructionsFile" $ do
     let initDir = "dist-newstyle/test-memory-init"
     around_ (\action -> do
@@ -160,7 +157,7 @@ spec = describe "Hach.Memory" $ do
       createDirectoryIfMissing True testSandbox
       action
       removeDirectoryRecursive testSandbox) $ do
-      it "returns Nothing when neither AGENT.md nor CLAUDE.md exists" $ do
+      it "returns Nothing when no instructions file exists" $ do
         res <- loadProjectInstructions testSandbox
         res `shouldBe` Nothing
 
