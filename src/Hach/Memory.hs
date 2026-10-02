@@ -2,7 +2,16 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module Hach.Memory
-  ( Rule(..)
+  ( -- * Workspace instructions files
+    instructionsFileNames
+  , scaffoldInstructionsFileName
+  , instructionsTemplate
+  , ProjectInitializationResult(..)
+  , initializeWorkspaceInstructionsFile
+  , loadProjectInstructions
+  , loadProjectInstructionsFile
+    -- * Hierarchical memory and rules
+  , Rule(..)
   , parseRuleFile
   , ruleMatchesFiles
   , resolveMemoryImports
@@ -13,13 +22,14 @@ module Hach.Memory
 
 import Hach.Paths (resolveWorkspacePath, workspaceAt)
 import Hach.Permissions (matchGlob)
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, bracket, displayException, try)
 import qualified Data.ByteString as BS
 import Data.Char (isSpace)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import qualified Data.Text.IO as TIO
 import System.Directory
   ( doesDirectoryExist
   , doesFileExist
@@ -35,6 +45,94 @@ import System.FilePath
   , takeDirectory
   , takeExtension
   )
+import System.IO (hClose)
+import System.IO.Error (isAlreadyExistsError)
+import System.Posix.IO (OpenFileFlags(..), OpenMode(WriteOnly), defaultFileFlags, fdToHandle, openFd)
+
+-- | Instructions file names a directory is searched for, most preferred first.
+instructionsFileNames :: [FilePath]
+instructionsFileNames = ["AGENTS.md", "AGENT.md", "CLAUDE.md"]
+
+-- | The instructions file @--init@ and @/init@ create.
+scaffoldInstructionsFileName :: FilePath
+scaffoldInstructionsFileName = "CLAUDE.md"
+
+-- | Markdown starter instructions written by @--init@ and @/init@.
+instructionsTemplate :: Text
+instructionsTemplate = T.unlines
+  [ "# Project Guidelines"
+  , ""
+  , "Add project-specific instructions for the coding agent here."
+  , ""
+  , "## Development"
+  , ""
+  , "- Describe how to build and test the project."
+  , "- Note conventions or constraints the agent should follow."
+  ]
+
+-- | Result of attempting to create the workspace instructions file.
+data ProjectInitializationResult
+  = ProjectInitialized
+  | ProjectAlreadyPresent
+  | ProjectInitializationFailed !Text
+  deriving (Show, Eq)
+
+-- | Create 'scaffoldInstructionsFileName' in the given directory without
+-- replacing an existing file. Needs no LLM credentials, so the CLI's @--init@
+-- flag can initialise a workspace before any are resolved (Issue #118).
+initializeWorkspaceInstructionsFile :: FilePath -> IO ProjectInitializationResult
+initializeWorkspaceInstructionsFile workspace = do
+  let target = workspace </> scaffoldInstructionsFileName
+  result <- try (initializeTarget target)
+  pure $ case (result :: Either IOError ProjectInitializationResult) of
+    Right outcome -> outcome
+    Left err -> ProjectInitializationFailed (formatFailure target err)
+  where
+    initializeTarget target = do
+      alreadyFile <- doesFileExist target
+      alreadyDirectory <- doesDirectoryExist target
+      if alreadyFile
+        then pure ProjectAlreadyPresent
+        else if alreadyDirectory
+          then pure (ProjectInitializationFailed
+            ("Could not create " <> T.pack target <> ": path is a directory."))
+          else do
+            createResult <- try (createExclusiveFile target)
+            pure $ case (createResult :: Either IOError ()) of
+              Right () -> ProjectInitialized
+              Left err
+                | isAlreadyExistsError err -> ProjectAlreadyPresent
+                | otherwise -> ProjectInitializationFailed (formatFailure target err)
+
+    formatFailure target err =
+      "Could not create " <> T.pack target <> ": " <> T.pack (displayException err)
+
+    createExclusiveFile target = do
+      bracket
+        (openFd target WriteOnly (defaultFileFlags { creat = Just 0o644, exclusive = True }) >>= fdToHandle)
+        hClose
+        (\handle -> TIO.hPutStr handle instructionsTemplate)
+
+-- | Load the workspace's instructions, searching 'instructionsFileNames' in
+-- order of preference.
+loadProjectInstructions :: FilePath -> IO (Maybe Text)
+loadProjectInstructions = fmap (fmap snd) . loadProjectInstructionsFile
+
+-- | Like 'loadProjectInstructions', also naming the file the instructions came from.
+loadProjectInstructionsFile :: FilePath -> IO (Maybe (FilePath, Text))
+loadProjectInstructionsFile workspace = firstExisting instructionsFileNames
+  where
+    firstExisting [] = pure Nothing
+    firstExisting (name : names) = do
+      let fp = workspace </> name
+      exists <- doesFileExist fp
+      if exists then fmap ((,) name) <$> readFileUtf8 fp else firstExisting names
+
+    readFileUtf8 fp = do
+      res <- try (BS.readFile fp) :: IO (Either SomeException BS.ByteString)
+      case res of
+        Left _ -> pure Nothing
+        Right bytes -> pure (Just (TE.decodeUtf8With (\_ _ -> Just ' ') bytes))
 
 data Rule = Rule
   { ruleFile     :: !FilePath
@@ -124,8 +222,8 @@ resolveMemoryImports baseDir maxDepth path = do
                   pure (T.lines content)
       | otherwise = pure [line]
 
--- | Walk directories from workspace root to cwd, loading AGENTS.md, AGENT.md, or CLAUDE.md.
--- Precedence: AGENTS.md is preferred; then AGENT.md; then CLAUDE.md.
+-- | Walk directories from workspace root to cwd, loading the first of
+-- 'instructionsFileNames' found in each.
 loadHierarchicalMemory :: FilePath -> FilePath -> IO [Text]
 loadHierarchicalMemory root cwd = do
   let rel = makeRelative root cwd
@@ -134,7 +232,7 @@ loadHierarchicalMemory root cwd = do
   contents <- mapM loadDirMemory candidates
   pure (catMaybes contents)
   where
-    loadDirMemory dir = firstMemoryFile ["AGENTS.md", "AGENT.md", "CLAUDE.md"]
+    loadDirMemory dir = firstMemoryFile instructionsFileNames
       where
         firstMemoryFile [] = pure Nothing
         firstMemoryFile (name : names) = do

@@ -101,3 +101,97 @@ spec = describe "Hach.Memory" $ do
         Just rule -> do
           ruleMatchesFiles rule ["src/Hach/Core.hs"] `shouldBe` True
           ruleMatchesFiles rule ["README.md"] `shouldBe` False
+
+  describe "Workspace instructions file conventions" $ do
+    it "discovers AGENTS.md, then AGENT.md, then CLAUDE.md" $
+      instructionsFileNames `shouldBe` ["AGENTS.md", "AGENT.md", "CLAUDE.md"]
+
+    it "scaffolds CLAUDE.md" $
+      scaffoldInstructionsFileName `shouldBe` "CLAUDE.md"
+
+    it "scaffolds a file that discovery finds" $
+      instructionsFileNames `shouldContain` [scaffoldInstructionsFileName]
+
+  describe "initializeWorkspaceInstructionsFile" $ do
+    let initDir = "dist-newstyle/test-memory-init"
+    around_ (\action -> do
+      createDirectoryIfMissing True initDir
+      action
+      removeDirectoryRecursive initDir) $ do
+
+      it "writes the starter template to CLAUDE.md" $ do
+        result <- initializeWorkspaceInstructionsFile initDir
+        result `shouldBe` ProjectInitialized
+        TIO.readFile (initDir </> "CLAUDE.md") `shouldReturn` instructionsTemplate
+
+      it "starts the template with a Markdown heading" $
+        instructionsTemplate `shouldSatisfy` T.isPrefixOf "# "
+
+      it "leaves an existing CLAUDE.md untouched" $ do
+        let existing = "# Keep this file\n"
+        TIO.writeFile (initDir </> "CLAUDE.md") existing
+        result <- initializeWorkspaceInstructionsFile initDir
+        result `shouldBe` ProjectAlreadyPresent
+        TIO.readFile (initDir </> "CLAUDE.md") `shouldReturn` existing
+
+      it "reports a failure when CLAUDE.md is a directory" $ do
+        createDirectoryIfMissing True (initDir </> "CLAUDE.md")
+        result <- initializeWorkspaceInstructionsFile initDir
+        result `shouldBe` ProjectInitializationFailed
+          ("Could not create " <> T.pack (initDir </> "CLAUDE.md") <> ": path is a directory.")
+
+      it "reports an actionable error when the workspace is not a directory" $ do
+        let blockedWorkspace = initDir </> "not-a-directory"
+        writeFile blockedWorkspace "blocked"
+        result <- initializeWorkspaceInstructionsFile blockedWorkspace
+        result `shouldSatisfy` \case
+          ProjectInitializationFailed err ->
+            T.pack (blockedWorkspace </> "CLAUDE.md") `T.isInfixOf` err
+          _ -> False
+
+      it "creates a file that loadProjectInstructionsFile then discovers" $ do
+        _ <- initializeWorkspaceInstructionsFile initDir
+        loadProjectInstructionsFile initDir
+          `shouldReturn` Just ("CLAUDE.md", instructionsTemplate)
+
+  describe "loadProjectInstructions" $ do
+    let testSandbox = "dist-newstyle/test-memory-instructions"
+    around_ (\action -> do
+      createDirectoryIfMissing True testSandbox
+      action
+      removeDirectoryRecursive testSandbox) $ do
+      it "returns Nothing when neither AGENT.md nor CLAUDE.md exists" $ do
+        res <- loadProjectInstructions testSandbox
+        res `shouldBe` Nothing
+
+      it "loads AGENT.md when it exists" $ do
+        TIO.writeFile (testSandbox </> "AGENT.md") "Agent rules"
+        res <- loadProjectInstructions testSandbox
+        res `shouldBe` Just "Agent rules"
+
+      it "loads CLAUDE.md when AGENT.md does not exist" $ do
+        TIO.writeFile (testSandbox </> "CLAUDE.md") "Claude rules"
+        res <- loadProjectInstructions testSandbox
+        res `shouldBe` Just "Claude rules"
+
+      it "prefers AGENT.md over CLAUDE.md when both exist" $ do
+        TIO.writeFile (testSandbox </> "AGENT.md") "Agent rules"
+        TIO.writeFile (testSandbox </> "CLAUDE.md") "Claude rules"
+        res <- loadProjectInstructions testSandbox
+        res `shouldBe` Just "Agent rules"
+
+      it "loads AGENTS.md when it is the only instructions file" $ do
+        TIO.writeFile (testSandbox </> "AGENTS.md") "Agents rules"
+        res <- loadProjectInstructions testSandbox
+        res `shouldBe` Just "Agents rules"
+
+      it "prefers AGENTS.md over AGENT.md and CLAUDE.md when all exist" $ do
+        TIO.writeFile (testSandbox </> "AGENTS.md") "Agents rules"
+        TIO.writeFile (testSandbox </> "AGENT.md") "Agent rules"
+        TIO.writeFile (testSandbox </> "CLAUDE.md") "Claude rules"
+        res <- loadProjectInstructions testSandbox
+        res `shouldBe` Just "Agents rules"
+
+      it "names the file the instructions came from" $ do
+        TIO.writeFile (testSandbox </> "AGENT.md") "Agent rules"
+        loadProjectInstructionsFile testSandbox `shouldReturn` Just ("AGENT.md", "Agent rules")
