@@ -24,7 +24,7 @@ module Hach.Tasks
 import Hach.Types
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, finally, try)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.ByteString.Char8 as BS8
 import Data.Map.Strict (Map)
@@ -36,7 +36,7 @@ import qualified Data.Text.Encoding.Error as TE
 import GHC.Clock (getMonotonicTime)
 import GHC.Generics (Generic)
 import System.Exit (ExitCode)
-import System.IO (Handle, hIsEOF)
+import System.IO (Handle, IOMode(ReadMode), hClose, hIsEOF, openFile)
 import System.Process
   ( CreateProcess(..)
   , ProcessHandle
@@ -121,8 +121,12 @@ newBackgroundRegistry = newTVarIO Map.empty
 
 spawnBackgroundProcess :: BackgroundRegistry -> FilePath -> Text -> IO TaskId
 spawnBackgroundProcess reg root cmd = do
+  -- The task leads its own process group, so reading Hach's terminal would
+  -- stop it with SIGTTIN; give it /dev/null instead (closed by createProcess).
+  devNull <- openFile "/dev/null" ReadMode
   let procSpec = (shell (T.unpack cmd))
         { cwd = Just root
+        , std_in = UseHandle devNull
         , std_out = CreatePipe
         , std_err = CreatePipe
         , create_group = True
@@ -142,6 +146,7 @@ spawnBackgroundProcess reg root cmd = do
   _ <- forkIO $ do
     awaitExit pHandle
     atomically $ writeTVar runVar False
+    forgetGroupWhenGone groupVar
 
   tId <- atomically $ do
     m <- readTVar reg
@@ -152,10 +157,10 @@ spawnBackgroundProcess reg root cmd = do
   pure tId
   where
     readStream :: Handle -> TVar Text -> IO ()
-    readStream h var = go
+    readStream h var = go `finally` hClose h
       where
         go = do
-          eof <- hIsEOF h
+          eof <- either (const True) id <$> (try (hIsEOF h) :: IO (Either SomeException Bool))
           if eof
             then pure ()
             else do
@@ -175,6 +180,20 @@ awaitExit ph = do
   case res of
     Right Nothing -> threadDelay 50000 >> awaitExit ph
     _ -> pure ()
+
+-- | Clear a finished task's group once no process is left in it, so a later
+-- stop never signals a group id the system has since reused. The id cannot
+-- be reused while any member survives the shell.
+forgetGroupWhenGone :: TVar (Maybe ProcessGroupID) -> IO ()
+forgetGroupWhenGone groupVar = do
+  mGroup <- readTVarIO groupVar
+  case mGroup of
+    Nothing -> pure ()
+    Just pgid -> do
+      alive <- groupAlive pgid
+      if alive
+        then threadDelay 50000 >> forgetGroupWhenGone groupVar
+        else atomically $ writeTVar groupVar Nothing
 
 getBackgroundOutput :: BackgroundRegistry -> TaskId -> IO ToolResult
 getBackgroundOutput reg tid = do
