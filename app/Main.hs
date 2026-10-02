@@ -159,7 +159,10 @@ runHach = do
           pure (either (const T.empty) id result)
 
       when (T.null (T.strip taskPrompt)) $ do
-        putStrLn "Empty task prompt provided. Exiting."
+        let err = "Empty task prompt provided. Exiting."
+        if optPrint
+          then TIO.putStrLn (formatPrintResult optOutputFormat (AgentFailed err))
+          else TIO.putStrLn err
         exitFailure
 
       skills <- discoverSkills currentWorkspace

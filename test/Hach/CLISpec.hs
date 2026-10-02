@@ -381,6 +381,48 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
               Just (Aeson.String "Goal condition too long (max 4000 characters).")
           _ -> expectationFailure ("expected JSON Object with error, got: " <> stdoutText)
 
+  describe "empty headless task prompt (Issue #258)" $ do
+    let runEmptyPrompt executable workspace args stdinText = do
+          testEnvironment <- isolatedEnvironment workspace
+          let command =
+                (proc executable (["--model", "test-model"] <> args))
+                  { cwd = Just workspace
+                  , env = Just testEnvironment
+                  }
+          readCreateProcessWithExitCode command stdinText
+        expectJsonEmptyPromptError (exitCode, stdoutText, _) = do
+          exitCode `shouldBe` ExitFailure 1
+          case Aeson.decode (LBS.pack stdoutText) :: Maybe Aeson.Value of
+            Just (Aeson.Object obj) ->
+              KM.lookup "error" obj `shouldBe`
+                Just (Aeson.String "Empty task prompt provided. Exiting.")
+            _ -> expectationFailure ("expected JSON Object with error, got: " <> stdoutText)
+
+    it "emits a JSON error for closed stdin under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace ->
+        runEmptyPrompt executable workspace ["--print", "--output-format", "json"] ""
+          >>= expectJsonEmptyPromptError
+
+    it "emits a JSON error for an empty prompt argument under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace ->
+        runEmptyPrompt executable workspace ["--print", "--output-format", "json", ""] ""
+          >>= expectJsonEmptyPromptError
+
+    it "emits a JSON error for a blank piped prompt under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace ->
+        runEmptyPrompt executable workspace ["--print", "--output-format", "json"] "\n"
+          >>= expectJsonEmptyPromptError
+
+    it "keeps the plain-text message under --no-tui" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, _) <- runEmptyPrompt executable workspace ["--no-tui"] ""
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "Empty task prompt provided. Exiting."
+
   describe "--init (Issue #118)" $ do
     let initEnvironment = do
           environment <- getEnvironment
