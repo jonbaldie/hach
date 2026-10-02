@@ -423,6 +423,47 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         exitCode `shouldBe` ExitFailure 1
         stdoutText `shouldContain` "Empty task prompt provided. Exiting."
 
+  describe "session load failure (Issue #259)" $ do
+    let runSessionLoad executable workspace args = do
+          testEnvironment <- isolatedEnvironment workspace
+          let command =
+                (proc executable (["--model", "test-model"] <> args <> ["hello"]))
+                  { cwd = Just workspace
+                  , env = Just testEnvironment
+                  }
+          readCreateProcessWithExitCode command ""
+        expectJsonSessionError expected (exitCode, stdoutText, _) = do
+          exitCode `shouldBe` ExitFailure 1
+          case Aeson.decode (LBS.pack stdoutText) :: Maybe Aeson.Value of
+            Just (Aeson.Object obj) ->
+              KM.lookup "error" obj `shouldBe` Just (Aeson.String expected)
+            _ -> expectationFailure ("expected JSON Object with error, got: " <> stdoutText)
+
+    it "emits a JSON error for an unknown --session-id under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace ->
+        runSessionLoad executable workspace ["--print", "--output-format", "json", "--session-id", "bad-id"]
+          >>= expectJsonSessionError "No stored session found for session ID: bad-id"
+
+    it "emits a JSON error for --continue without a stored session under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace ->
+        runSessionLoad executable workspace ["--print", "--output-format", "json", "--continue"]
+          >>= expectJsonSessionError "No stored session found in workspace."
+
+    it "emits a JSON error for --resume without a stored session under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace ->
+        runSessionLoad executable workspace ["--print", "--output-format", "json", "--resume"]
+          >>= expectJsonSessionError "No stored session found in workspace."
+
+    it "keeps the plain-text message under --no-tui" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, _) <- runSessionLoad executable workspace ["--no-tui", "--session-id", "bad-id"]
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "No stored session found for session ID: bad-id"
+
   describe "--init (Issue #118)" $ do
     let initEnvironment = do
           environment <- getEnvironment
