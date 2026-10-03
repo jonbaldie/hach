@@ -464,6 +464,73 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
         exitCode `shouldBe` ExitFailure 1
         stdoutText `shouldContain` "No stored session found for session ID: bad-id"
 
+  describe "configuration failure (Issue #265)" $ do
+    let runConfig executable workspace adjustEnv args = do
+          testEnvironment <- adjustEnv <$> isolatedEnvironment workspace
+          let command =
+                (proc executable (args <> ["hello"]))
+                  { cwd = Just workspace
+                  , env = Just testEnvironment
+                  }
+          readCreateProcessWithExitCode command ""
+        jsonArgs = ["--print", "--output-format", "json"]
+        withoutKey = filter ((/= "OPENROUTER_API_KEY") . fst)
+        writeProjectSettings workspace content = do
+          createDirectoryIfMissing True (workspace </> ".claude")
+          writeFile (workspace </> ".claude" </> "settings.json") content
+        expectJsonConfigError fragment (exitCode, stdoutText, _) = do
+          exitCode `shouldBe` ExitFailure 1
+          case Aeson.decode (LBS.pack stdoutText) :: Maybe Aeson.Value of
+            Just (Aeson.Object obj) -> case KM.lookup "error" obj of
+              Just (Aeson.String err) -> do
+                T.unpack err `shouldStartWith` "Configuration error: "
+                T.unpack err `shouldContain` fragment
+              other -> expectationFailure ("expected string error, got: " <> show other)
+            _ -> expectationFailure ("expected JSON Object with error, got: " <> stdoutText)
+
+    it "emits a JSON error for an unknown provider under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace ->
+        runConfig executable workspace id (jsonArgs <> ["--provider", "invalid-provider"])
+          >>= expectJsonConfigError "unknown provider \"invalid-provider\""
+
+    it "emits a JSON error for a missing API key under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace ->
+        runConfig executable workspace withoutKey jsonArgs
+          >>= expectJsonConfigError "OPENROUTER_API_KEY is missing"
+
+    it "emits a JSON error for a /chat/completions base URL under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace ->
+        runConfig executable workspace id
+          (jsonArgs <> [ "--provider", "openai-compatible", "-m", "test-model"
+                       , "--base-url", "http://localhost:8080/v1/chat/completions" ])
+          >>= expectJsonConfigError "Invalid base URL"
+
+    it "emits a JSON error for a malformed settings.json under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        writeProjectSettings workspace "{ invalid json }"
+        runConfig executable workspace id jsonArgs
+          >>= expectJsonConfigError "could not be loaded"
+
+    it "emits a JSON error for an unsupported effort_level under --print --output-format json" $ do
+      executable <- hachExecutable
+      withTemporaryWorkspace $ \workspace -> do
+        writeProjectSettings workspace "{\"effort_level\": \"ultra\"}"
+        runConfig executable workspace id jsonArgs
+          >>= expectJsonConfigError "Unsupported effort_level: ultra"
+
+    it "keeps the plain-text message under --print text output and --no-tui" $ do
+      executable <- hachExecutable
+      forM_ [["--print"], ["--no-tui"]] $ \modeArgs ->
+        withTemporaryWorkspace $ \workspace -> do
+          (exitCode, stdoutText, _) <- runConfig executable workspace withoutKey modeArgs
+          exitCode `shouldBe` ExitFailure 1
+          stdoutText `shouldStartWith` "Configuration error: OPENROUTER_API_KEY is missing"
+          stdoutText `shouldContain` "Run hach --help for the inference configuration options."
+
   describe "--init (Issue #118)" $ do
     let initEnvironment = do
           environment <- getEnvironment
