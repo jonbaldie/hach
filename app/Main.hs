@@ -62,7 +62,7 @@ runHach = do
       exitSuccess
     _ -> pure ()
 
-  activeWorkspace <- resolveStartupWorkspace cwd optWorktree
+  activeWorkspace <- resolveStartupWorkspace cwd opts
 
   case intent of
     IntentExec cmd -> do
@@ -250,15 +250,19 @@ exitOnHeadlessFailureWith mGs result =
 -- | Resolve the workspace selected by the CLI before any task, command, or TUI
 -- work begins. The process remains rooted at the repository checkout so the
 -- interpreter can still create sibling worktrees and exit back to that root.
-resolveStartupWorkspace :: FilePath -> Maybe T.Text -> IO FilePath
-resolveStartupWorkspace cwd Nothing = pure cwd
-resolveStartupWorkspace cwd (Just name) = do
-  result <- Git.createWorktree cwd name
-  case result of
-    Left err -> do
-      putStrLn ("Worktree error: " <> T.unpack err)
-      exitFailure
-    Right workspace -> pure workspace
+resolveStartupWorkspace :: FilePath -> CliOptions -> IO FilePath
+resolveStartupWorkspace cwd CliOptions{..} = case optWorktree of
+  Nothing -> pure cwd
+  Just name -> do
+    result <- Git.createWorktree cwd name
+    case result of
+      Left err -> do
+        let worktreeError = "Worktree error: " <> err
+        if optPrint
+          then TIO.putStrLn (formatPrintResult optOutputFormat (AgentFailed worktreeError))
+          else TIO.putStrLn worktreeError
+        exitFailure
+      Right workspace -> pure workspace
 
 -- | Print a summary of the goal state after a headless goal run.
 printGoalSummary :: GoalState -> IO ()

@@ -155,6 +155,45 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
       stdoutText `shouldContain` "Worktree error: Failed to create worktree:"
       stderrText `shouldBe` ""
 
+  describe "worktree startup failure (Issue #266)" $ do
+    let runWorktreeFailure executable workspace args = do
+          environment <- isolatedEnvironment workspace
+          let command =
+                (proc executable args)
+                  { cwd = Just workspace
+                  , env = Just environment
+                  }
+          readCreateProcessWithExitCode command ""
+        jsonArgs = ["--print", "--output-format", "json"]
+        expectedError =
+          "Worktree error: Invalid worktree name: must be alphanumeric and cannot contain path separators, leading dashes, or invalid git ref patterns."
+        expectJsonWorktreeError (exitCode, stdoutText, stderrText) = do
+          exitCode `shouldBe` ExitFailure 1
+          stderrText `shouldBe` ""
+          case Aeson.decode (LBS.pack stdoutText) :: Maybe Aeson.Value of
+            Just (Aeson.Object obj) ->
+              KM.lookup "error" obj `shouldBe` Just (Aeson.String expectedError)
+            _ -> expectationFailure ("expected JSON Object with error, got: " <> stdoutText)
+
+    it "emits a JSON error for invalid worktree names under --print --output-format json" $ do
+      executable <- hachExecutable
+      forM_ ["../escape", "feature/branch"] $ \name ->
+        withTemporaryWorkspace $ \workspace ->
+          runWorktreeFailure executable workspace
+            (jsonArgs <> ["--worktree", name, "hello"])
+            >>= expectJsonWorktreeError
+
+    it "keeps plain-text errors under --print text output and --no-tui" $ do
+      executable <- hachExecutable
+      forM_ [["--print"], ["--no-tui"]] $ \modeArgs ->
+        withTemporaryWorkspace $ \workspace -> do
+          (exitCode, stdoutText, stderrText) <-
+            runWorktreeFailure executable workspace
+              (modeArgs <> ["--worktree", "../escape", "hello"])
+          exitCode `shouldBe` ExitFailure 1
+          stdoutText `shouldBe` T.unpack expectedError <> "\n"
+          stderrText `shouldBe` ""
+
   it "runs --exec in the requested worktree" $ do
     executable <- hachExecutable
     withTemporaryGitWorkspace $ \workspace -> do
