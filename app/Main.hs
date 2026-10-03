@@ -87,18 +87,20 @@ runHach = do
     IntentHelp -> pure ()
     IntentVersion -> pure ()
 
-  envRes <- resolveEnvConfig (InferenceFlags optProvider optBaseUrl optModel) (Just ".env")
-  EnvConfig{..} <- case envRes of
-    Left err -> do
-      putStrLn (renderEnvError err)
-      exitFailure
-    Right cfg -> pure cfg
+  -- Under '--print' even a configuration failure is the run's result, so it
+  -- honours '--output-format' like any other failed run.
+  let failConfiguration :: String -> IO a
+      failConfiguration err = do
+        if optPrint
+          then TIO.putStrLn (formatPrintResult optOutputFormat (AgentFailed (T.pack err)))
+          else putStrLn err
+        exitFailure
 
-  effort <- case resolveEffortLevel envSettings of
-    Left err -> do
-      putStrLn ("Configuration error: " <> err)
-      exitFailure
-    Right e -> pure e
+  envRes <- resolveEnvConfig (InferenceFlags optProvider optBaseUrl optModel) (Just ".env")
+  EnvConfig{..} <- either (failConfiguration . renderEnvError) pure envRes
+
+  effort <- either (failConfiguration . ("Configuration error: " <>)) pure
+    (resolveEffortLevel envSettings)
 
   let perms = defaultIOEnvPermissions
         { iopInitialMode = resolvePermissionMode optPermissionMode optDangerouslySkipPerms envSettings
