@@ -14,6 +14,7 @@ module Hach.TUI.State
 
 import Hach.Inference (CostPolicy(..))
 import Hach.Sessions (estimateCostUsd)
+import Hach.Memory (ProjectInitializationResult(..), scaffoldInstructionsFileName)
 import Hach.Skills (inputSlashCompletion, parseSkillInvocations, skillName)
 import Hach.TUI.Conversation (compactTranscriptHistory)
 import Hach.TUI.Types
@@ -46,11 +47,12 @@ import Text.Printf (printf)
 applyProjectInitializationResult :: ProjectInitializationResult -> TuiState -> TuiState
 applyProjectInitializationResult result state =
   let appendNotice notice = state { tsTranscript = tsTranscript state ++ [DiNotice notice] }
+      scaffoldName = T.pack scaffoldInstructionsFileName
   in case result of
        ProjectInitialized ->
-         appendNotice "Initialized CLAUDE.md guidelines template."
+         appendNotice ("Initialized " <> scaffoldName <> " guidelines template.")
        ProjectAlreadyPresent ->
-         appendNotice "CLAUDE.md already exists; left it unchanged."
+         appendNotice (scaffoldName <> " already exists; left it unchanged.")
        ProjectInitializationFailed err ->
          let notice = "Error: " <> err
          in (appendNotice notice)

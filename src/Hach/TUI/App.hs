@@ -30,10 +30,11 @@ module Hach.TUI.App
 import Hach.Clipboard (copyToClipboard)
 import Hach.Core
 import Hach.CLI (renderRunOutcome)
-import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions, loadProjectInstructionsFile)
+import Hach.Env (buildSystemPromptWithAppend)
 import Hach.Git (getGitDiff)
 import Hach.Inference (connectionCostPolicy)
 import Hach.Interpreter.IO
+import Hach.Memory (loadProjectInstructions, loadProjectInstructionsFile)
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
 import Hach.Sessions (buildSessionHistory, saveRunSession)
 import Hach.TUI.Conversation

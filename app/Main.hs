@@ -9,6 +9,12 @@ import Hach.Env
 import Hach.Inference (InferenceConnection(..), interfaceName)
 import qualified Hach.Git as Git
 import Hach.Interpreter.IO
+import Hach.Memory
+  ( ProjectInitializationResult(..)
+  , initializeWorkspaceInstructionsFile
+  , loadProjectInstructions
+  , scaffoldInstructionsFileName
+  )
 import Hach.Sessions
   ( buildSessionHistory
   , generateSessionId
@@ -20,7 +26,6 @@ import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
 import Hach.Settings (Settings (..))
 import Hach.Tools
 import Hach.TUI.App (runTui)
-import Hach.TUI.Types (ProjectInitializationResult(..))
 import Hach.Types
 import Control.Exception (finally, tryJust)
 import Control.Monad (when)
@@ -74,10 +79,10 @@ runHach = do
       result <- initializeWorkspaceInstructionsFile activeWorkspace
       case result of
         ProjectInitialized -> do
-          putStrLn "Initialized CLAUDE.md guidelines template."
+          putStrLn ("Initialized " <> scaffoldInstructionsFileName <> " guidelines template.")
           exitSuccess
         ProjectAlreadyPresent -> do
-          putStrLn "CLAUDE.md already exists; left it unchanged."
+          putStrLn (scaffoldInstructionsFileName <> " already exists; left it unchanged.")
           exitSuccess
         ProjectInitializationFailed err -> do
           TIO.putStrLn ("Error: " <> err)
