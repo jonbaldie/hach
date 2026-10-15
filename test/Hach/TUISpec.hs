@@ -4,7 +4,7 @@
 module Hach.TUISpec (spec) where
 
 import Hach.Core (AgentAlgebra(..))
-import Hach.Interpreter.IO (ioAlgebra, ioModel, newIOEnv)
+import Hach.Interpreter.IO (IOEnv(..), ioAlgebra, newIOEnv)
 import Hach.Sessions (buildSessionHistory)
 import Hach.Skills (SkillSource(..), mkSkill)
 import Hach.TUI.App
@@ -16,6 +16,7 @@ import Hach.TUI.App
   , runEnvForModel
   , initialTuiLaunch
   , messagesToTranscriptItems
+  , reloadSkills
   , runAgentWorker
   , runGoalWorker
   , runGoalWorkerWithHistory
@@ -51,6 +52,7 @@ import qualified Brick.Main as M
 import Brick.Types (BrickEvent(..), Location(..))
 import Control.Monad (forM_, unless)
 import Data.Char (isSpace)
+import Control.Exception (finally)
 import Data.IORef
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -1987,14 +1989,45 @@ spec = do
         copyActions `shouldBe` []
         tsHistory sCopy `shouldContain` [DiNotice "Nothing to copy: there is no assistant response yet."]
 
-        let (sReload, _) = updateTui (EvSubmit "/reload-skills") baseState
-        tsHistory sReload `shouldSatisfy` \h -> any (\case DiNotice n -> "Skills reloaded:" `T.isInfixOf` n; _ -> False) h
-
         let (sMcp, _) = updateTui (EvSubmit "/mcp") baseState
         tsHistory sMcp `shouldContain` [DiNotice "/mcp is not implemented: Hach does not connect to MCP servers yet."]
 
         let (sPlug, _) = updateTui (EvSubmit "/plugin") baseState
         tsHistory sPlug `shouldContain` [DiNotice "/plugin is not implemented: Hach has no plugin system yet."]
+
+      it "re-reads the current workspace's skills for /reload-skills (Issue #273)" $ do
+        let sandbox = "dist-newstyle/test-sandbox-reload-skills"
+            startup = sandbox </> "startup"
+            worktree = sandbox </> "worktree"
+            writeSkill workspace name = do
+              let dir = workspace </> ".claude" </> "skills" </> name
+              createDirectoryIfMissing True dir
+              TIO.writeFile (dir </> "SKILL.md")
+                ("---\nname: " <> T.pack name <> "\ndescription: d\n---\nbody")
+        createDirectoryIfMissing True startup
+        createDirectoryIfMissing True worktree
+        flip finally (removeDirectoryRecursive sandbox) $ do
+          ioEnv <- newIOEnv "test" "test-model" startup False
+          initial <- reloadSkills ioEnv
+          let st0 = applySlashCommandResult initial baseState
+          Map.member "added-mid-session" (tsSkills st0) `shouldBe` False
+
+          writeSkill startup "added-mid-session"
+          let (sSubmitted, actions) = updateTui (EvSubmit "/reload-skills") st0
+          actions `shouldBe` [ActionReloadSkills]
+          reloaded <- reloadSkills ioEnv
+          let sReloaded = applySlashCommandResult reloaded sSubmitted
+          Map.member "added-mid-session" (tsSkills sReloaded) `shouldBe` True
+          tsHistory sReloaded `shouldContain`
+            [DiNotice ("Skills reloaded: " <> T.pack (show (Map.size (tsSkills sReloaded))) <> " available")]
+          Map.size (tsSkills sReloaded) `shouldBe` Map.size (tsSkills st0) + 1
+
+          writeSkill worktree "worktree-only"
+          writeIORef (ioCurrentWorkspace ioEnv) worktree
+          inWorktree <- reloadSkills ioEnv
+          let sWorktree = applySlashCommandResult inWorktree sReloaded
+          Map.member "worktree-only" (tsSkills sWorktree) `shouldBe` True
+          Map.member "added-mid-session" (tsSkills sWorktree) `shouldBe` False
 
       it "copies the last assistant response with /copy (Issue #155)" $ do
         let withReply = baseState

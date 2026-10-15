@@ -60,21 +60,23 @@ applyProjectInitializationResult result state =
 
 -- | Report the outcome of an IO-backed slash command in the transcript.
 applySlashCommandResult :: SlashCommandResult -> TuiState -> TuiState
-applySlashCommandResult result state =
-  state { tsTranscript = tsTranscript state ++ [DiNotice notice] }
+applySlashCommandResult result state = case result of
+  DiffResult (Right diff)
+    | T.null (T.strip diff) -> appendNotice "Diff: no changes to tracked files against HEAD."
+    | otherwise             -> appendNotice ("Diff against HEAD:\n" <> T.stripEnd diff)
+  DiffResult (Left err) ->
+    appendNotice ("Diff unavailable: " <> err)
+  TaskListResult tasks ->
+    appendNotice ("Tasks:\n" <> T.stripEnd tasks)
+  ClipboardResult (Right chars) ->
+    appendNotice ("Copied last response to clipboard (" <> T.pack (show chars) <> " characters).")
+  ClipboardResult (Left err) ->
+    appendNotice ("Copy failed: " <> err)
+  SkillsReloaded catalog ->
+    (appendNotice ("Skills reloaded: " <> T.pack (show (Map.size catalog)) <> " available"))
+      { tsSkills = catalog }
   where
-    notice = case result of
-      DiffResult (Right diff)
-        | T.null (T.strip diff) -> "Diff: no changes to tracked files against HEAD."
-        | otherwise             -> "Diff against HEAD:\n" <> T.stripEnd diff
-      DiffResult (Left err) ->
-        "Diff unavailable: " <> err
-      TaskListResult tasks ->
-        "Tasks:\n" <> T.stripEnd tasks
-      ClipboardResult (Right chars) ->
-        "Copied last response to clipboard (" <> T.pack (show chars) <> " characters)."
-      ClipboardResult (Left err) ->
-        "Copy failed: " <> err
+    appendNotice notice = state { tsTranscript = tsTranscript state ++ [DiNotice notice] }
 
 -- | Text of the most recent non-empty assistant reply, if any.
 lastAssistantText :: TuiState -> Maybe T.Text
@@ -438,14 +440,12 @@ handleSubmitPrompt rawPrompt state
              )
   | trimmed == "/reload-skills" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice ("Skills reloaded: " <> T.pack (show (Map.size (tsSkills state))) <> " available")]
-      in ( state { tsTranscript         = newTranscript
-                 , tsInputBuffer        = ""
+      in ( state { tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
                  }
-         , []
+         , [ActionReloadSkills]
          )
   | trimmed == "/mcp" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]

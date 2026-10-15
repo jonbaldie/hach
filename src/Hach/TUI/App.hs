@@ -19,6 +19,7 @@ module Hach.TUI.App
   , goalAgentConfig
   , runEnvForModel
   , initialTuiLaunch
+  , reloadSkills
   , PermissionGate
   , newPermissionGate
   , resolveAskWithGate
@@ -194,6 +195,11 @@ initialTuiLaunch (Just p) st
   | T.null (T.strip p) = (st, [])
   | otherwise          = updateTui (EvSubmit p) st
 
+-- | Re-read the skill catalog from the current workspace, which follows
+-- worktree entry and exit, for @/reload-skills@.
+reloadSkills :: IOEnv -> IO SlashCommandResult
+reloadSkills ioEnv = SkillsReloaded <$> (currentIOWorkspace ioEnv >>= discoverSkills)
+
 -- | Execute one side-effecting action requested by the pure reducer.
 runTuiAction
   :: BChan TuiEvent
@@ -217,6 +223,9 @@ runTuiAction eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd = \case
   ActionCopyToClipboard text -> do
     copied <- liftIO (copyToClipboard text)
     modify (applySlashCommandResult (ClipboardResult (T.length text <$ copied)))
+  ActionReloadSkills -> do
+    reloaded <- liftIO (reloadSkills ioEnv)
+    modify (applySlashCommandResult reloaded)
   ActionQuit -> do
     liftIO $ do
       cancelPermissionAsk gate
@@ -385,8 +394,7 @@ triggerAgentRun
   -> Text
   -> [Message]
   -> EventM Name TuiState ()
-triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd currentPrompt priorHistory = do
-  st <- get
+triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd currentPrompt priorHistory =
   liftIO $ do
     cancelPermissionAsk gate
     mOldWorker <- atomically $ do
@@ -396,7 +404,7 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
     interruptWorker mOldWorker
 
     activeWorkspace <- currentIOWorkspace ioEnv
-    finalPrompt <- expandSlashInvokedPrompt activeWorkspace (tsSkills st) currentPrompt
+    finalPrompt <- expandSlashInvokedPrompt activeWorkspace currentPrompt
 
     newWorker <- async $ do
       let runEnv = runEnvForModel selectedModel ioEnv

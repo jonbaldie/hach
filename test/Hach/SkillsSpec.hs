@@ -3,6 +3,8 @@
 module Hach.SkillsSpec (spec) where
 
 import Hach.Skills
+import Hach.Tools (SkillToolArgs(..), executeSkill)
+import Hach.Types (ToolResult(..))
 import Control.Exception (finally)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -218,61 +220,93 @@ spec = do
 
     describe "slash invocation expansion (issue #63)" $ do
       let sandbox = "dist-newstyle/test-sandbox-slash-expand"
+          writeSkill name extraFrontmatter body = do
+            let dir = sandbox </> ".claude" </> "skills" </> T.unpack name
+            createDirectoryIfMissing True dir
+            TIO.writeFile (dir </> "SKILL.md")
+              ("---\nname: " <> name <> "\ndescription: d\n" <> extraFrontmatter <> "---\n" <> body)
       around_ (\action -> do
         createDirectoryIfMissing True sandbox
         action
         removeDirectoryRecursive sandbox) $ do
         it "substitutes leftover prompt text for $ARGUMENTS" $ do
-          let sk = mkSkill "foo" "d" "Target: $ARGUMENTS" "/p" SkillGlobal
-              cat = Map.singleton "foo" sk
-          injected <- expandSlashInvokedPrompt sandbox cat "/foo src/Main.hs"
+          writeSkill "foo" "" "Target: $ARGUMENTS"
+          injected <- expandSlashInvokedPrompt sandbox "/foo src/Main.hs"
           injected `shouldBe` "<skill name=\"foo\">\nTarget: src/Main.hs\n</skill>\n\nsrc/Main.hs"
 
         it "expands {{file:path}} in slash-invoked skill content" $ do
           TIO.writeFile (sandbox </> "sample.txt") "sample content 123"
-          let sk = mkSkill "foo" "d" "Intro: {{file:sample.txt}} - $ARGUMENTS" "/p" SkillGlobal
-              cat = Map.singleton "foo" sk
-          injected <- expandSlashInvokedPrompt sandbox cat "/foo done"
+          writeSkill "foo" "" "Intro: {{file:sample.txt}} - $ARGUMENTS"
+          injected <- expandSlashInvokedPrompt sandbox "/foo done"
           injected `shouldBe` "<skill name=\"foo\">\nIntro: sample content 123 - done\n</skill>\n\ndone"
 
         it "executes !command lines in slash-invoked skill content" $ do
-          let sk = mkSkill "foo" "d" "Out:\n!echo hello from shell\nEnd $ARGUMENTS." "/p" SkillGlobal
-              cat = Map.singleton "foo" sk
-          injected <- expandSlashInvokedPrompt sandbox cat "/foo here"
+          writeSkill "foo" "" "Out:\n!echo hello from shell\nEnd $ARGUMENTS."
+          injected <- expandSlashInvokedPrompt sandbox "/foo here"
           injected `shouldBe` "<skill name=\"foo\">\nOut:\nhello from shell\nEnd here.\n</skill>\n\nhere"
 
         it "does not expand commands supplied through $ARGUMENTS" $ do
           sandboxRoot <- canonicalizePath sandbox
           let marker = sandboxRoot </> "argument-command-ran"
               supplied = "first\n  !touch " <> T.pack marker
-              sk = mkSkill "foo" "d" "First: $ARGUMENTS\nSecond: $ARGUMENTS" "/p" SkillGlobal
-              cat = Map.singleton "foo" sk
+          writeSkill "foo" "" "First: $ARGUMENTS\nSecond: $ARGUMENTS"
           markerExists <- doesFileExist marker
           if markerExists then removeFile marker else pure ()
-          injected <- expandSlashInvokedPrompt sandbox cat ("/foo " <> supplied)
+          injected <- expandSlashInvokedPrompt sandbox ("/foo " <> supplied)
           doesFileExist marker `shouldReturn` False
           injected `shouldSatisfy` (T.isInfixOf ("First: first\n  !touch " <> T.pack marker))
           injected `shouldSatisfy` (T.isInfixOf ("Second: first\n  !touch " <> T.pack marker))
 
         it "does not expand file placeholders supplied through $ARGUMENTS" $ do
           TIO.writeFile (sandbox </> "argument.txt") "argument file contents"
-          let sk = mkSkill "foo" "d" "Value: $ARGUMENTS" "/p" SkillGlobal
-              cat = Map.singleton "foo" sk
-          injected <- expandSlashInvokedPrompt sandbox cat "/foo {{file:argument.txt}}"
+          writeSkill "foo" "" "Value: $ARGUMENTS"
+          injected <- expandSlashInvokedPrompt sandbox "/foo {{file:argument.txt}}"
           injected `shouldSatisfy` (T.isInfixOf "Value: {{file:argument.txt}}")
           injected `shouldNotSatisfy` (T.isInfixOf "argument file contents")
 
         it "leaves prompts without slash skills unchanged" $ do
-          let cat = Map.singleton "foo" (mkSkill "foo" "d" "body" "/p" SkillGlobal)
-          injected <- expandSlashInvokedPrompt sandbox cat "plain prompt"
+          writeSkill "foo" "" "body"
+          injected <- expandSlashInvokedPrompt sandbox "plain prompt"
           injected `shouldBe` "plain prompt"
 
         it "expands slash-invoked skills even when disable-model-invocation is true" $ do
-          let sk = (mkSkill "deploy-prod" "d" "SECRET-DEPLOY-STEPS: run ./deploy.sh --prod" "/p" SkillGlobal)
-                    { skillDisableModelInvocation = True }
-              cat = Map.singleton "deploy-prod" sk
-          injected <- expandSlashInvokedPrompt sandbox cat "/deploy-prod"
+          writeSkill "deploy-prod" "disable-model-invocation: true\n" "SECRET-DEPLOY-STEPS: run ./deploy.sh --prod"
+          injected <- expandSlashInvokedPrompt sandbox "/deploy-prod"
           injected `shouldBe` "<skill name=\"deploy-prod\">\nSECRET-DEPLOY-STEPS: run ./deploy.sh --prod\n</skill>"
+
+    describe "slash invocation reads the current workspace catalog (issue #273)" $ do
+      let sandbox = "dist-newstyle/test-sandbox-slash-current-catalog"
+          skillDir = sandbox </> ".claude" </> "skills" </> "issue-273-live"
+          writeSkill body = do
+            createDirectoryIfMissing True skillDir
+            TIO.writeFile (skillDir </> "SKILL.md")
+              ("---\nname: issue-273-live\ndescription: d\n---\n" <> body)
+      around_ (\action -> do
+        createDirectoryIfMissing True sandbox
+        action `finally` removeDirectoryRecursive sandbox) $ do
+        it "expands a skill's current content after its file changes" $ do
+          writeSkill "Old body"
+          initial <- expandSlashInvokedPrompt sandbox "/issue-273-live go"
+          initial `shouldBe` "<skill name=\"issue-273-live\">\nOld body\n</skill>\n\ngo"
+          writeSkill "New body"
+          current <- expandSlashInvokedPrompt sandbox "/issue-273-live go"
+          current `shouldBe` "<skill name=\"issue-273-live\">\nNew body\n</skill>\n\ngo"
+
+        it "expands a skill added after an earlier invocation" $ do
+          initial <- expandSlashInvokedPrompt sandbox "/issue-273-live"
+          initial `shouldBe` "/issue-273-live"
+          writeSkill "Added mid-session"
+          current <- expandSlashInvokedPrompt sandbox "/issue-273-live"
+          current `shouldBe` "<skill name=\"issue-273-live\">\nAdded mid-session\n</skill>"
+
+        it "resolves a name the same way as the Skill tool after an edit" $ do
+          writeSkill "Old body"
+          _ <- expandSlashInvokedPrompt sandbox "/issue-273-live"
+          writeSkill "New body"
+          viaTool <- executeSkill sandbox (SkillToolArgs "issue-273-live" Nothing)
+          viaSlash <- expandSlashInvokedPrompt sandbox "/issue-273-live"
+          viaTool `shouldBe` ToolSuccess "Skill 'issue-273-live' content:\nNew body\n"
+          viaSlash `shouldBe` "<skill name=\"issue-273-live\">\nNew body\n</skill>"
 
     describe "skillInvocationCompletion" $ do
       let goal  = mkSkill "goal"  "Goal skill"  "body" "/p" SkillGlobal
