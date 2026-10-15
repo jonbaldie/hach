@@ -1,16 +1,20 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Hach.TUISpec (spec) where
 
 import Hach.Core (AgentAlgebra(..))
-import Hach.Interpreter.IO (IOEnv(..), ioAlgebra, newIOEnv)
+import Hach.Inference (InferenceInterface(..), mkInferenceConnection)
+import qualified Hach.InferenceFixture as Fixture
+import Hach.Interpreter.IO (IOEnv(..), defaultIOEnvPermissions, ioAlgebra, newIOEnv, newIOEnvWithPermissions)
 import Hach.Sessions (buildSessionHistory)
 import Hach.Skills (SkillSource(..), mkSkill)
 import Hach.TUI.App
   ( buildTuiSystemPrompt
   , brickToUserKey
   , cancelledToolCallPlaceholder
+  , emitRunEnd
   , dialogueToMessages
   , goalAgentConfig
   , runEnvForModel
@@ -21,6 +25,7 @@ import Hach.TUI.App
   , runGoalWorker
   , runGoalWorkerWithHistory
   , transcriptToMessages
+  , tuiAlgebra
   , vtyToUserKey
   )
 import Test.QuickCheck
@@ -48,6 +53,7 @@ import Hach.Types
   , modelContextLimit
   , toolResultToText
   )
+import Brick.BChan (newBChan, readBChan)
 import qualified Brick.Main as M
 import Brick.Types (BrickEvent(..), Location(..))
 import Control.Monad (forM_, unless)
@@ -64,6 +70,7 @@ import qualified Graphics.Vty.Span as Span
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 import System.FilePath ((</>))
 import qualified Data.Text.IO as TIO
+import System.Timeout (timeout)
 import Test.Hspec
 
 renderTestRows :: TuiState -> (Int, Int) -> [T.Text]
@@ -104,6 +111,27 @@ instance Arbitrary TranscriptItem where
     , TiNotice <$> (T.pack <$> listOf (elements ['a'..'z']))
     , TiToolCard <$> arbitrary
     ]
+
+-- | Run a TUI worker against a scripted inference endpoint through the real
+-- IO interpreter and TUI event channel, then apply every event the TUI would
+-- receive to a busy state.
+runThroughTui
+  :: Fixture.Fixture
+  -> (AgentAlgebra IO -> AgentConfig -> ([Message] -> AgentEvent -> IO ()) -> IO ())
+  -> IO TuiState
+runThroughTui fx run = do
+  conn <- either fail pure
+    (mkInferenceConnection InterfaceOpenAICompatible (Fixture.fixtureBaseUrl fx) Nothing)
+  env <- newIOEnvWithPermissions defaultIOEnvPermissions conn "test-model" "/tmp" False
+  chan <- newBChan 64
+  run (tuiAlgebra chan env) (goalAgentConfig env "system" Nothing Nothing) (emitRunEnd chan)
+  events <- drain chan
+  let busy = (initialTuiState "test-model" Nothing) { tsStatus = StatusThinking }
+  pure (foldl (\st ev -> fst (updateTui ev st)) busy events)
+  where
+    drain chan = timeout 100000 (readBChan chan) >>= \case
+      Just ev -> (ev :) <$> drain chan
+      Nothing -> pure []
 
 spec :: Spec
 spec = do
@@ -855,7 +883,7 @@ spec = do
       it "initializes context tokens to 0, token usage to Nothing, and session tokens to 0" $ do
         tsContextTokens baseState `shouldBe` 0
         tsTokenUsage baseState `shouldBe` Nothing
-        tsSessionTokens baseState `shouldBe` initialSessionTokenUsage
+        tsDisplayedSessionTokens baseState `shouldBe` initialSessionTokenUsage
         tsUsageStatus baseState `shouldBe` UsageVerified
 
       it "updates context tokens and session tokens on EvLLMResponse" $ do
@@ -863,9 +891,9 @@ spec = do
             (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
         tsContextTokens s1 `shouldBe` 150
         tsTokenUsage s1 `shouldBe` Just usage
-        stuTotalTokens (tsSessionTokens s1) `shouldBe` 150
-        stuPromptTokens (tsSessionTokens s1) `shouldBe` 120
-        stuCompletionTokens (tsSessionTokens s1) `shouldBe` 30
+        stuTotalTokens (tsDisplayedSessionTokens s1) `shouldBe` 150
+        stuPromptTokens (tsDisplayedSessionTokens s1) `shouldBe` 120
+        stuCompletionTokens (tsDisplayedSessionTokens s1) `shouldBe` 30
         tsUsageStatus s1 `shouldBe` UsageVerified
 
       it "accumulates session tokens while context tokens tracks latest turn" $ do
@@ -875,17 +903,17 @@ spec = do
             (s2, _) = updateTui (EvHarness (EvLLMResponse (Just "Done") [] (Just usage2))) s1
         tsContextTokens s2 `shouldBe` 245
         tsTokenUsage s2 `shouldBe` Just usage2
-        stuTotalTokens (tsSessionTokens s2) `shouldBe` 395
-        stuPromptTokens (tsSessionTokens s2) `shouldBe` 320
-        stuCompletionTokens (tsSessionTokens s2) `shouldBe` 75
+        stuTotalTokens (tsDisplayedSessionTokens s2) `shouldBe` 395
+        stuPromptTokens (tsDisplayedSessionTokens s2) `shouldBe` 320
+        stuCompletionTokens (tsDisplayedSessionTokens s2) `shouldBe` 75
 
       it "accumulates prompt cache metrics and monetary cost across turns" $ do
         let usage1 = TokenUsage 100 20 120 80 (Just 0.0015)
             usage2 = TokenUsage 200 30 230 150 (Just 0.0025)
             (s1, _) = updateTui (EvHarness (EvLLMResponse Nothing [] (Just usage1))) baseState
             (s2, _) = updateTui (EvHarness (EvLLMResponse (Just "Done") [] (Just usage2))) s1
-        stuCachedTokens (tsSessionTokens s2) `shouldBe` 230
-        case stuTotalCost (tsSessionTokens s2) of
+        stuCachedTokens (tsDisplayedSessionTokens s2) `shouldBe` 230
+        case stuTotalCost (tsDisplayedSessionTokens s2) of
           Just c  -> c `shouldSatisfy` (\v -> abs (v - 0.0040) < 0.00001)
           Nothing -> expectationFailure "Expected cumulative total cost to be present"
 
@@ -902,8 +930,8 @@ spec = do
             (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Task done") [] (Just usage1))) baseState
             (s2, _) = updateTui (EvHarness (EvGoalEvaluationUsage evalUsage)) s1
         tsContextTokens s2 `shouldBe` 150
-        stuTotalTokens (tsSessionTokens s2) `shouldBe` 700
-        stuEvaluationTokens (tsSessionTokens s2) `shouldBe` 550
+        stuTotalTokens (tsDisplayedSessionTokens s2) `shouldBe` 700
+        stuEvaluationTokens (tsDisplayedSessionTokens s2) `shouldBe` 550
 
       it "resets context tokens to 0 when history is cleared with 'c' while preserving session totals" $ do
         let usage = mkTokenUsage 120 30 150
@@ -912,7 +940,7 @@ spec = do
             (s3, _) = updateTui (EvUserKey (KeyChar 'c')) s2
         tsContextTokens s3 `shouldBe` 0
         tsTokenUsage s3 `shouldBe` Nothing
-        stuTotalTokens (tsSessionTokens s3) `shouldBe` 150
+        stuTotalTokens (tsDisplayedSessionTokens s3) `shouldBe` 150
 
       it "resets context tokens to 0 on /clear while preserving session totals" $ do
         let usage = mkTokenUsage 120 30 150
@@ -920,13 +948,13 @@ spec = do
             (s2, _) = updateTui (EvSubmit "/clear") s1
         tsContextTokens s2 `shouldBe` 0
         tsTokenUsage s2 `shouldBe` Nothing
-        stuTotalTokens (tsSessionTokens s2) `shouldBe` 150
+        stuTotalTokens (tsDisplayedSessionTokens s2) `shouldBe` 150
 
       it "resets session tokens to 0 on /cost reset" $ do
         let usage = mkTokenUsage 120 30 150
             (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
             (s2, _) = updateTui (EvSubmit "/cost reset") s1
-        stuTotalTokens (tsSessionTokens s2) `shouldBe` 0
+        stuTotalTokens (tsDisplayedSessionTokens s2) `shouldBe` 0
 
       it "generates an informative breakdown with context, session, and capacity on /cost" $ do
         let usage = TokenUsage 120 30 150 50 (Just 0.0012)
@@ -1369,7 +1397,7 @@ spec = do
               , AssistantMsg Nothing [ToolCall "call_1" "list_dir" "{\"path\":\".\"}"]
               , ToolMsg "call_1" "list_dir" "MARKER.txt"
               ]
-            captureResult _ history event = writeIORef resultRef (Just (history, event))
+            captureResult history event = writeIORef resultRef (Just (history, event))
         runAgentWorker mockAlgebra config "next task" priorHistory captureResult
         historySeen <- readIORef historySeenRef
         historySeen `shouldBe`
@@ -1395,41 +1423,64 @@ spec = do
           , EvDone "answer"
           )
 
-      it "reports a normal run's spend with its final history (Issue #253)" $ do
-        spendRef <- newIORef Nothing
-        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
-        let usage = (mkTokenUsage 10 5 15) { tuCost = Just 0.25 }
-            mockAlgebra = (ioAlgebra mockIOEnv)
-              { interpPrompt = \_ _ -> pure (Right (AssistantResponse (Just "answer") [] (Just usage)))
-              , interpLog = \_ -> pure ()
-              }
-            config = goalAgentConfig mockIOEnv "system" Nothing Nothing
-        runAgentWorker mockAlgebra config "task" [] (\spent _ _ -> writeIORef spendRef (Just spent))
-        readIORef spendRef `shouldReturn` Just 0.25
+      it "saves a completed run's billed cost once (Issues #253, #275)" $
+        Fixture.withInferenceFixture [Fixture.completionWith "answer" (Just (Fixture.usage 10 5 (Just 0.25)))] $ \fx -> do
+          final <- runThroughTui fx $ \algebra config emit ->
+            runAgentWorker algebra config "task" [] emit
+          tsIncurredSpendUsd final `shouldBe` 0.25
+          stuTotalCost (tsDisplayedSessionTokens final) `shouldBe` Just 0.25
 
-      it "reports a goal run's spend, including the evaluator, with its final history (Issue #253)" $ do
-        spendRef <- newIORef Nothing
-        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
-        let usage c = (mkTokenUsage 10 5 15) { tuCost = Just c }
-            mockAlgebra = (ioAlgebra mockIOEnv)
-              { interpPrompt = \_ _ -> pure (Right (AssistantResponse (Just "done") [] (Just (usage 0.25))))
-              , interpLog = \_ -> pure ()
-              , interpEvaluate = \_ _ -> pure (GoalEvaluation GoalMet "met" (Just (usage 0.5)))
-              }
-            config = goalAgentConfig mockIOEnv "system" Nothing Nothing
-        runGoalWorkerWithHistory mockAlgebra config "goal" [] (\spent _ _ -> writeIORef spendRef (Just spent))
-        readIORef spendRef `shouldReturn` Just 0.75
+      it "saves a completed goal run's response and evaluator cost once (Issues #253, #275)" $
+        Fixture.withInferenceFixture
+          [ Fixture.completionWith "done" (Just (Fixture.usage 10 5 (Just 0.25)))
+          , Fixture.completionWith "{\"verdict\":\"met\",\"reason\":\"ok\"}" (Just (Fixture.usage 10 5 (Just 0.5)))
+          ] $ \fx -> do
+            final <- runThroughTui fx $ \algebra config emit ->
+              runGoalWorkerWithHistory algebra config "goal" [] emit
+            tsIncurredSpendUsd final `shouldBe` 0.75
+            stuTotalCost (tsDisplayedSessionTokens final) `shouldBe` Just 0.75
 
-      it "accumulates run spend for the saved session, even after /clear while busy (Issue #253)" $ do
-        let s0 = baseState
+      it "keeps incurred spend when /clear interrupts a busy run (Issue #253)" $ do
+        let usage' c = (mkTokenUsage 10 5 15) { tuCost = Just c }
+            s0 = baseState
               { tsStatus = StatusThinking
               , tsTranscript = [DiUser "Hello"]
               , tsInputBuffer = "/clear"
               }
-            (s1, _) = updateTui (EvRunSpend 0.25) s0
+            (s1, _) = updateTui (EvHarness (EvLLMResponse Nothing [ToolCall "c1" "bash" "{}"] (Just (usage' 0.25)))) s0
             (s2, _) = updateTui (EvUserKey KeyEnter) s1
-            (s3, _) = updateTui (EvRunSpend 0.5) s2
-        tsRunSpendUsd s3 `shouldBe` 0.75
+        tsCancelRequested s2 `shouldBe` True
+        tsIncurredSpendUsd s2 `shouldBe` 0.25
+
+      it "saves the spend of an interrupted run's billed responses (Issue #275)" $ do
+        let usage c = (mkTokenUsage 10 5 15) { tuCost = Just c }
+            s0 = baseState { tsStatus = StatusThinking }
+            (s1, _) = updateTui (EvHarness (EvLLMResponse Nothing [ToolCall "c1" "bash" "{}"] (Just (usage 0.25)))) s0
+            (s2, _) = updateTui (EvHarness (EvLLMResponse Nothing [ToolCall "c2" "bash" "{}"] (Just (usage 0.5)))) s1
+            (s3, _) = updateTui (EvUserKey KeyEsc) s2
+        tsIncurredSpendUsd s3 `shouldBe` 0.75
+
+      it "saves the cost of a billed response that arrives after Esc (Issue #275)" $ do
+        let usage c = (mkTokenUsage 10 5 15) { tuCost = Just c }
+            s0 = baseState { tsStatus = StatusThinking }
+            (s1, _) = updateTui (EvUserKey KeyEsc) s0
+            (s2, _) = updateTui (EvHarness (EvLLMResponse (Just "late") [] (Just (usage 0.25)))) s1
+            (s3, _) = updateTui (EvHarness (EvGoalEvaluationUsage (usage 0.5))) s2
+        tsCancelRequested s1 `shouldBe` True
+        tsTranscript s3 `shouldBe` tsTranscript s1
+        tsIncurredSpendUsd s3 `shouldBe` 0.75
+
+      it "adds nothing to incurred spend for usage without a reported cost (Issue #275)" $ do
+        let (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "hi") [] (Just (mkTokenUsage 10 5 15)))) baseState
+        tsIncurredSpendUsd s1 `shouldBe` 0
+        stuTotalCost (tsDisplayedSessionTokens s1) `shouldBe` Nothing
+
+      it "keeps incurred spend when /cost reset clears the displayed usage (Issue #275)" $ do
+        let usage = (mkTokenUsage 10 5 15) { tuCost = Just 0.25 }
+            (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "hi") [] (Just usage))) baseState
+            (s2, _) = updateTui (EvSubmit "/cost reset") s1
+        tsDisplayedSessionTokens s2 `shouldBe` initialSessionTokenUsage
+        tsIncurredSpendUsd s2 `shouldBe` 0.25
 
     describe "Transcript Auto-Scroll Policy and Thinking Indicator (Issue #25)" $ do
       describe "Auto-Scroll Policy (shouldAutoScroll)" $ do

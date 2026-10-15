@@ -152,8 +152,10 @@ data TuiState = TuiState
   , tsTranscript         :: ![TranscriptItem]
   , tsConversation       :: ![Message]
     -- ^ Canonical Core history for model calls and session persistence.
-  , tsRunSpendUsd        :: !Double
-    -- ^ Reported spend of every run finished in this TUI, for the saved session.
+  , tsIncurredSpendUsd   :: !Double
+    -- ^ Reported cost of every billed request observed in this TUI, including
+    -- requests of interrupted runs. Saved as the session's spend; @/cost reset@
+    -- does not clear it.
   , tsTranscriptScroll   :: !Int
   , tsTranscriptManualScroll :: !Bool
   , tsSelectedToolIndex  :: !Int
@@ -165,7 +167,8 @@ data TuiState = TuiState
   , tsPromptDraft        :: !Text
   , tsContextTokens      :: !Int
   , tsTokenUsage         :: !(Maybe TokenUsage)
-  , tsSessionTokens      :: !SessionTokenUsage
+  , tsDisplayedSessionTokens :: !SessionTokenUsage
+    -- ^ Session usage shown by @/cost@. @/cost reset@ clears it.
   , tsUsageStatus        :: !UsageStatus
   , tsSkills             :: !SkillCatalog
   , tsGoalState          :: !(Maybe GoalState)
@@ -203,7 +206,7 @@ initialTuiState model maxTurns = TuiState
   , tsInputBuffer        = ""
   , tsTranscript         = []
   , tsConversation       = []
-  , tsRunSpendUsd        = 0
+  , tsIncurredSpendUsd   = 0
   , tsTranscriptScroll   = 0
   , tsTranscriptManualScroll = False
   , tsSelectedToolIndex  = 0
@@ -215,7 +218,7 @@ initialTuiState model maxTurns = TuiState
   , tsPromptDraft        = ""
   , tsContextTokens      = 0
   , tsTokenUsage         = Nothing
-  , tsSessionTokens      = initialSessionTokenUsage
+  , tsDisplayedSessionTokens = initialSessionTokenUsage
   , tsUsageStatus        = UsageVerified
   , tsSkills             = Map.empty
   , tsGoalState          = Nothing
@@ -250,7 +253,6 @@ data TuiEvent
   = EvUserKey !UserKey
   | EvHarness !AgentEvent
   | EvConversation ![Message]
-  | EvRunSpend !Double
   | EvSubmit !Text
   deriving (Show, Eq)
 

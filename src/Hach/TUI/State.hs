@@ -38,7 +38,7 @@ import Hach.Types
   , modelContextLimit
   )
 import qualified Data.Map.Strict as Map
-import Data.Maybe (listToMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import qualified Data.Text as T
 import Text.Printf (printf)
 
@@ -107,15 +107,26 @@ updateTui event state = case event of
     handleUserKey key state
 
   EvHarness agentEv ->
-    (handleAgentEvent agentEv state, [])
+    (handleAgentEvent agentEv (recordBilledUsage agentEv state), [])
 
   EvConversation messages
     | tsCancelRequested state -> (state, [])
     | otherwise -> (state { tsConversation = messages }, [])
 
-  -- Spend is real even when the run's history is discarded.
-  EvRunSpend spent ->
-    (state { tsRunSpendUsd = tsRunSpendUsd state + spent }, [])
+-- | Add a billed request's usage to the session the moment the TUI observes
+-- it. This is the only adder of session usage and spend. It runs before the
+-- cancel guard because a request is billed even when its run is interrupted
+-- or its output is discarded.
+recordBilledUsage :: AgentEvent -> TuiState -> TuiState
+recordBilledUsage event state = case event of
+  EvLLMResponse _ _ (Just u) -> addUsage u False
+  EvGoalEvaluationUsage u    -> addUsage u True
+  _                          -> state
+  where
+    addUsage u isEval = state
+      { tsDisplayedSessionTokens = addUsageToSession u isEval (tsDisplayedSessionTokens state)
+      , tsIncurredSpendUsd       = tsIncurredSpendUsd state + fromMaybe 0 (tuCost u)
+      }
 
 -- | Whether the agent harness is currently busy running an inference turn or tool.
 isBusy :: TuiStatus -> Bool
@@ -144,7 +155,7 @@ formatCostReport TuiState{..} =
           "Tokens: " <> formatTokens tsContextTokens <> " in context window — " <>
           formatTokens tsContextTokens <> "/" <> formatTokens limit <> " capacity (" <> T.pack (show pct) <> "%)"
 
-      stu = tsSessionTokens
+      stu = tsDisplayedSessionTokens
       cacheSessionPart = if stuCachedTokens stu > 0 then ", " <> formatTokens (stuCachedTokens stu) <> " cached" else ""
       evalSessionPart = if stuEvaluationTokens stu > 0 then ", " <> formatTokens (stuEvaluationTokens stu) <> " goal-eval" else ""
       sessionLine =
@@ -208,7 +219,7 @@ handleSubmitPrompt rawPrompt state
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
-                 , tsSessionTokens      = initialSessionTokenUsage
+                 , tsDisplayedSessionTokens = initialSessionTokenUsage
                  }
          , []
          )
@@ -839,15 +850,14 @@ handleAgentEvent event state@TuiState{..}
                     ]
         newTranscript = tsTranscript ++ textItems ++ cardItems
         newStatus = if null calls then StatusFinished else tsStatus
-        (newContextTokens, newUsage, newSessionTokens, newUsageStatus) = case mUsage of
-          Just u  -> (tuTotalTokens u, Just u, addUsageToSession u False tsSessionTokens, UsageVerified)
-          Nothing -> (tsContextTokens, tsTokenUsage, tsSessionTokens, UsageMissing)
+        (newContextTokens, newUsage, newUsageStatus) = case mUsage of
+          Just u  -> (tuTotalTokens u, Just u, UsageVerified)
+          Nothing -> (tsContextTokens, tsTokenUsage, UsageMissing)
     in state
          { tsTranscript    = newTranscript
          , tsStatus        = newStatus
          , tsContextTokens = newContextTokens
          , tsTokenUsage    = newUsage
-         , tsSessionTokens = newSessionTokens
          , tsUsageStatus   = newUsageStatus
          }
 
@@ -899,8 +909,9 @@ handleAgentEvent event state@TuiState{..}
         }
       Nothing -> state
 
-  EvGoalEvaluationUsage u ->
-    state { tsSessionTokens = addUsageToSession u True tsSessionTokens }
+  -- Recorded by 'recordBilledUsage'.
+  EvGoalEvaluationUsage _ ->
+    state
 
   EvGoalAchieved cond ->
     case tsGoalState of
