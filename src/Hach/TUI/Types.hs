@@ -269,6 +269,8 @@ data SlashCommandResult
     -- ^ The task list exactly as the @task_list@ tool reports it.
   | ClipboardResult !(Either Text Int)
     -- ^ Characters copied to the clipboard, or why the copy failed.
+  | SkillsReloaded !SkillCatalog
+    -- ^ The skill catalog just read from the current workspace.
   deriving (Show, Eq)
 
 -- | Actions requested by the reducer for the external environment to perform.
@@ -277,6 +279,7 @@ data TuiAction
   | ActionShowDiff
   | ActionListTasks
   | ActionCopyToClipboard !Text
+  | ActionReloadSkills
   | ActionRunAgent !Text
   | ActionRunGoal !Text
   | ActionCancelAgent
@@ -320,5 +323,5 @@ builtinCommands =
 pattern ActionScrollHistory :: Int -> TuiAction
 pattern ActionScrollHistory delta = ActionScrollTranscript delta
 
-{-# COMPLETE ActionInitializeProject, ActionShowDiff, ActionListTasks, ActionCopyToClipboard, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}
-{-# COMPLETE ActionInitializeProject, ActionShowDiff, ActionListTasks, ActionCopyToClipboard, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}
+{-# COMPLETE ActionInitializeProject, ActionShowDiff, ActionListTasks, ActionCopyToClipboard, ActionReloadSkills, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}
+{-# COMPLETE ActionInitializeProject, ActionShowDiff, ActionListTasks, ActionCopyToClipboard, ActionReloadSkills, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}
