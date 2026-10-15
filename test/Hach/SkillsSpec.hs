@@ -227,8 +227,7 @@ spec = do
               ("---\nname: " <> name <> "\ndescription: d\n" <> extraFrontmatter <> "---\n" <> body)
       around_ (\action -> do
         createDirectoryIfMissing True sandbox
-        action
-        removeDirectoryRecursive sandbox) $ do
+        action `finally` removeDirectoryRecursive sandbox) $ do
         it "substitutes leftover prompt text for $ARGUMENTS" $ do
           writeSkill "foo" "" "Target: $ARGUMENTS"
           injected <- expandSlashInvokedPrompt sandbox "/foo src/Main.hs"
