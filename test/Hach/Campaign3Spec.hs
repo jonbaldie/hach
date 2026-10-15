@@ -143,7 +143,7 @@ spec = do
               , stuCompletionTokens = c
               , stuTotalTokens      = p + c
               }
-            st0 = (initialTuiState model Nothing) { tsSessionTokens = stu }
+            st0 = (initialTuiState model Nothing) { tsDisplayedSessionTokens = stu }
             (st1, _) = updateTui (EvSubmit "/cost") st0
             expected = estimateCostUsd model p c
             needle = T.pack (printf "%.4f" expected)

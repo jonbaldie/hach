@@ -244,7 +244,7 @@ renderHeader TuiState{..} =
     , withAttr dimAttr (txt "  │  turn: ")
     , withAttr turnAttr (txt (T.pack (show tsCurrentTurn) <> "/" <> renderMaxTurns tsMaxTurns))
     , withAttr dimAttr (txt "  │  ")
-    , renderTokensDisplay tsContextTokens (stuTotalTokens tsSessionTokens) (modelContextLimit tsModelName) tsUsageStatus
+    , renderTokensDisplay tsContextTokens (stuTotalTokens tsDisplayedSessionTokens) (modelContextLimit tsModelName) tsUsageStatus
     , withAttr dimAttr (txt "  │  ")
     , renderStatus tsStatus
     , padLeft Max (withAttr dimAttr (txt "press ? for help "))
