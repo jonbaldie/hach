@@ -6,7 +6,6 @@
 -- names, role alternation, containment, MCP names, and task ids.  This
 -- wave hunts the remaining TUI / cost / CLI / codec seams:
 --
--- * TUI cost estimate vs 'estimateCostUsd' identity
 -- * slash-command completion for built-ins and skills
 -- * auto-scroll coverage of every transcript-appending event
 -- * prompt-history browse abandoned on edit
@@ -61,19 +60,6 @@ genTxt = T.pack <$> listOf (elements ['a'..'z'])
 genNonEmptyTxt :: Gen Text
 genNonEmptyTxt = T.pack <$> listOf1 (elements ['a'..'z'])
 
-genModel :: Gen Text
-genModel = T.pack <$> elements
-  [ "~anthropic/claude-opus-latest"
-  , "~anthropic/claude-sonnet-latest"
-  , "~openai/gpt-luna-latest"
-  , "~anthropic/claude-haiku-latest"
-  , "openai/gpt-4o-mini"
-  , "openai/gpt-4o"
-  , "~deepseek/deepseek-pro-latest"
-  , "meta/muse-glimmer-30b"
-  , "claude-unknown-tier"
-  ]
-
 genBuiltinPrefix :: Gen (Text, Text)
 genBuiltinPrefix = do
   cmd <- elements builtinCommands
@@ -96,19 +82,6 @@ genCatalog = do
 -- ---------------------------------------------------------------------------
 -- * Coverage labels
 -- ---------------------------------------------------------------------------
-
-costFamily :: Text -> String
-costFamily m
-  | "opus"     `T.isInfixOf` lower = "opus"
-  | "sonnet"   `T.isInfixOf` lower = "sonnet"
-  | "haiku"    `T.isInfixOf` lower = "haiku"
-  | "gpt-4o-mini" `T.isInfixOf` lower = "gpt-4o-mini"
-  | "gpt-4o"   `T.isInfixOf` lower = "gpt-4o"
-  | "claude"   `T.isInfixOf` lower = "claude-fallback"
-  | "deepseek" `T.isInfixOf` lower = "deepseek"
-  | otherwise                      = "default"
-  where
-    lower = T.toLower m
 
 appendingProfile :: AgentEvent -> String
 appendingProfile = \case
@@ -133,33 +106,6 @@ appendingProfile = \case
 
 spec :: Spec
 spec = do
-  describe "CGPT wave-3: cost estimator identity" $ do
-    it "/cost estimated line uses estimateCostUsd (not a second rate table)" $ vigorous $
-      forAll genModel $ \model ->
-      forAll (choose (1, 200000) :: Gen Int) $ \p ->
-      forAll (choose (1, 200000) :: Gen Int) $ \c ->
-        let stu = initialSessionTokenUsage
-              { stuPromptTokens     = p
-              , stuCompletionTokens = c
-              , stuTotalTokens      = p + c
-              }
-            st0 = (initialTuiState model Nothing) { tsDisplayedSessionTokens = stu }
-            (st1, _) = updateTui (EvSubmit "/cost") st0
-            expected = estimateCostUsd model p c
-            needle = T.pack (printf "%.4f" expected)
-            notices = [ n | TiNotice n <- tsTranscript st1 ]
-        in collect (costFamily model) $
-             any (needle `T.isInfixOf`) notices
-
-    it "reproducer: claude-3-opus is billed at opus rates, not generic claude" $
-      estimateCostUsd "anthropic/claude-3-opus" 1000000 1000000 `shouldBe` 90.0
-
-    it "reproducer: gpt-4o-mini is not billed as generic gpt-4" $
-      estimateCostUsd "openai/gpt-4o-mini" 1000000 1000000 `shouldBe` 0.75
-
-    it "reproducer: generic gpt-4 uses the folded-back $2.50/$10.00 table" $ do
-      estimateCostUsd "openai/gpt-4" 1000000 1000000 `shouldBe` 12.5
-      estimateCostUsd "openai/gpt-4o" 1000000 1000000 `shouldBe` 20.0
 
   describe "CGPT wave-3: slash-command completion" $ do
     it "a proper prefix of a built-in completes to a built-in" $ vigorous $

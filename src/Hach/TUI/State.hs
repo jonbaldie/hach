@@ -13,7 +13,6 @@ module Hach.TUI.State
   ) where
 
 import Hach.Inference (CostPolicy(..))
-import Hach.Sessions (estimateCostUsd)
 import Hach.Skills (inputSlashCompletion, parseSkillInvocations, skillName)
 import Hach.TUI.Conversation (compactTranscriptHistory)
 import Hach.TUI.Types
@@ -138,9 +137,14 @@ isBusy = \case
 
 -- | Format a comprehensive cost and token breakdown report.
 formatCostReport :: TuiState -> T.Text
-formatCostReport TuiState{..} =
-  let limit = modelContextLimit tsModelName
-      pct = contextSaturationPercent tsContextTokens tsModelName
+formatCostReport state@TuiState{..} =
+  let mLimit = tuiModelContextLimit state
+      capacityPart = case mLimit of
+        Just limit | limit > 0 ->
+          let pct = contextSaturationPercent tsContextTokens limit
+          in " — " <> formatTokens tsContextTokens <> "/" <> formatTokens limit <> " capacity (" <> T.pack (show pct) <> "%)"
+        _ ->
+          " — " <> formatTokens tsContextTokens <> "/? capacity"
       contextLine = case tsTokenUsage of
         Just TokenUsage{..} ->
           let cachePart = if tuCachedTokens > 0 then ", " <> formatTokens tuCachedTokens <> " cached" else ""
@@ -149,11 +153,9 @@ formatCostReport TuiState{..} =
                 Nothing -> ""
           in "Tokens: " <> formatTokens tsContextTokens <> " in context window (" <>
              formatTokens tuPromptTokens <> " prompt" <> cachePart <> ", " <>
-             formatTokens tuCompletionTokens <> " completion" <> costPart <> ") — " <>
-             formatTokens tsContextTokens <> "/" <> formatTokens limit <> " capacity (" <> T.pack (show pct) <> "%)"
+             formatTokens tuCompletionTokens <> " completion" <> costPart <> ")" <> capacityPart
         Nothing ->
-          "Tokens: " <> formatTokens tsContextTokens <> " in context window — " <>
-          formatTokens tsContextTokens <> "/" <> formatTokens limit <> " capacity (" <> T.pack (show pct) <> "%)"
+          "Tokens: " <> formatTokens tsContextTokens <> " in context window" <> capacityPart
 
       stu = tsDisplayedSessionTokens
       cacheSessionPart = if stuCachedTokens stu > 0 then ", " <> formatTokens (stuCachedTokens stu) <> " cached" else ""
@@ -167,10 +169,6 @@ formatCostReport TuiState{..} =
         (Just c, _) -> "\nReported API Cost: $" <> T.pack (printf "%.4f" c)
         (Nothing, CostReportedOnly) ->
           "\nAPI Cost: not reported by the endpoint (no estimate is made)"
-        (Nothing, _) | stuTotalTokens stu == 0 -> ""
-        (Nothing, CostEstimateFromModel) ->
-          let est = estimateCostUsd tsModelName (stuPromptTokens stu) (stuCompletionTokens stu)
-          in "\nEstimated Cost: ~$" <> T.pack (printf "%.4f" est)
   in contextLine <> "\n" <> sessionLine <> costLine
 
 -- | Handle submitting a user task prompt.

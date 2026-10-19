@@ -35,8 +35,9 @@ import Hach.Core
 import Hach.CLI (renderRunOutcome)
 import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions, loadProjectInstructionsFile)
 import Hach.Git (getGitDiff)
-import Hach.Inference (connectionCostPolicy)
+import Hach.Inference (connectionCostPolicy, fetchOpenRouterModels)
 import Hach.Interpreter.IO
+import qualified Data.Map.Strict as Map
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
 import Hach.Sessions (buildSessionHistory, saveRunSession)
 import Hach.TUI.Conversation
@@ -289,6 +290,8 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
       loadedTurns = case mLoadedSession of
         Just (info, _) -> siTurns info
         Nothing        -> 0
+  mModelLimits <- fetchOpenRouterModels (ioManager ioEnv) (ioConnection ioEnv)
+  let modelLimits = fromMaybe Map.empty mModelLimits
       baseState = (initialTuiState (ioModel ioEnv) mMaxTurns)
         { tsSkills = skills
         , tsPermissionMode = initialMode
@@ -298,6 +301,7 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
         , tsTheme = mTheme
         , tsProjectInstructions = listToMaybe loadedInstructions
         , tsCostPolicy = connectionCostPolicy (ioConnection ioEnv)
+        , tsModelLimits = modelLimits
         }
       (startingState, initialActions) = initialTuiLaunch initialPrompt baseState
 

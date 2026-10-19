@@ -19,7 +19,7 @@ module Hach.TUI.UI
 import Hach.Skills (inputSlashCompletion)
 import Hach.TUI.Types
 import Hach.Tools (toolTarget)
-import Hach.Types (SessionTokenUsage(..), ToolCall(..), ToolResult(..), modelContextLimit)
+import Hach.Types (SessionTokenUsage(..), ToolCall(..), ToolResult(..), contextSaturationPercent)
 import Brick
 import Brick.Widgets.Border
 import Brick.Widgets.Border.Style
@@ -212,18 +212,22 @@ formatCompactLimit n
   | otherwise = T.pack (show n)
 
 -- | Render context and session token consumption widget with saturation warning styling.
-renderTokensDisplay :: Int -> Int -> Int -> UsageStatus -> Widget Name
-renderTokensDisplay ctxTokens sesTokens limit status =
-  let pct = if limit <= 0 then 0 else (ctxTokens * 100) `div` limit
-      attr = if pct >= 90
-               then tokenCritAttr
-               else if pct >= 80
-                      then tokenWarnAttr
-                      else tokenAttr
+renderTokensDisplay :: Int -> Int -> Maybe Int -> UsageStatus -> Widget Name
+renderTokensDisplay ctxTokens sesTokens mLimit status =
+  let (pctPart, limitPart, attr) = case mLimit of
+        Just limit | limit > 0 ->
+          let pct = contextSaturationPercent ctxTokens limit
+              a = if pct >= 90
+                    then tokenCritAttr
+                    else if pct >= 80
+                           then tokenWarnAttr
+                           else tokenAttr
+          in (" (" <> T.pack (show pct) <> "%)", "/" <> formatCompactLimit limit, a)
+        _ -> ("", "/?", tokenAttr)
       missingTag = case status of
         UsageMissing  -> " [?]"
         UsageVerified -> ""
-      ctxText = "ctx: " <> formatCompactLimit ctxTokens <> "/" <> formatCompactLimit limit <> " (" <> T.pack (show pct) <> "%)" <> missingTag
+      ctxText = "ctx: " <> formatCompactLimit ctxTokens <> limitPart <> pctPart <> missingTag
       sesText = "ses: " <> formatCompactLimit sesTokens
   in hBox
        [ withAttr attr (txt ctxText)
@@ -233,7 +237,7 @@ renderTokensDisplay ctxTokens sesTokens limit status =
 
 -- | Modern, sleek status bar (Claude Code / AGY CLI style).
 renderHeader :: TuiState -> Widget Name
-renderHeader TuiState{..} =
+renderHeader state@TuiState{..} =
   withBorderStyle unicodeRounded $
   border $
   hBox
@@ -244,7 +248,7 @@ renderHeader TuiState{..} =
     , withAttr dimAttr (txt "  │  turn: ")
     , withAttr turnAttr (txt (T.pack (show tsCurrentTurn) <> "/" <> renderMaxTurns tsMaxTurns))
     , withAttr dimAttr (txt "  │  ")
-    , renderTokensDisplay tsContextTokens (stuTotalTokens tsDisplayedSessionTokens) (modelContextLimit tsModelName) tsUsageStatus
+    , renderTokensDisplay tsContextTokens (stuTotalTokens tsDisplayedSessionTokens) (tuiModelContextLimit state) tsUsageStatus
     , withAttr dimAttr (txt "  │  ")
     , renderStatus tsStatus
     , padLeft Max (withAttr dimAttr (txt "press ? for help "))

@@ -20,6 +20,14 @@ module Hach.Inference
   , validateApiKey
   , CostPolicy(..)
   , connectionCostPolicy
+    -- * Model metadata & context limits
+  , ModelLimits
+  , openRouterModelsEndpoint
+  , parseOpenRouterModels
+  , openRouterCacheFilePath
+  , saveOpenRouterModelsCache
+  , loadOpenRouterModelsCache
+  , fetchOpenRouterModels
     -- * Requests and responses
   , ChatRequest(..)
   , encodeChatRequest
@@ -42,6 +50,9 @@ import Data.Aeson
   ( FromJSON(..), ToJSON(..), Value, object, withObject, (.:), (.:?), (.=)
   )
 import qualified Data.Aeson as Aeson
+import Control.Monad (forM, forM_, void)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Aeson.Types as AesonTypes
 import qualified Data.ByteString.Lazy as LBS
@@ -61,10 +72,17 @@ import Network.HTTP.Client
   , httpLbs
   , newManager
   , parseRequest
+  , responseTimeoutMicro
   )
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Header (hAuthorization, hContentType)
 import Network.HTTP.Types.Status (statusCode, statusMessage)
+import System.Directory
+  ( createDirectoryIfMissing, doesFileExist, getHomeDirectory, getXdgDirectory
+  , XdgDirectory(XdgCache)
+  )
+import System.Environment (lookupEnv)
+import System.FilePath ((</>), takeDirectory)
 import Text.Read (readMaybe)
 
 --------------------------------------------------------------------------------
@@ -213,17 +231,124 @@ chatCompletionsEndpoint raw = do
           | otherwise = Left (baseUrlError "the path contains characters that must be percent-encoded.")
 
 -- | How the TUI accounts for cost the endpoint does not report. OpenRouter
--- prices are estimated from the model name; an arbitrary compatible endpoint
--- has no known price, so a missing cost stays unknown.
+-- and compatible providers use reported cost only; missing cost stays unknown.
 data CostPolicy
-  = CostEstimateFromModel
-  | CostReportedOnly
+  = CostReportedOnly
   deriving (Show, Eq)
 
 connectionCostPolicy :: InferenceConnection -> CostPolicy
-connectionCostPolicy conn = case icInterface conn of
-  InterfaceOpenRouter       -> CostEstimateFromModel
-  InterfaceOpenAICompatible -> CostReportedOnly
+connectionCostPolicy _ = CostReportedOnly
+
+--------------------------------------------------------------------------------
+-- OpenRouter Model Metadata & Context Limits
+--------------------------------------------------------------------------------
+
+-- | Model limits mapping model identifiers and aliases to context length in tokens.
+type ModelLimits = Map Text Int
+
+-- | Extract models endpoint from an inference connection.
+-- For an OpenRouter connection ending in "/chat/completions",
+-- this resolves to "/models".
+openRouterModelsEndpoint :: InferenceConnection -> Maybe Text
+openRouterModelsEndpoint conn
+  | icInterface conn == InterfaceOpenRouter =
+      let ep = icEndpoint conn
+      in if "/chat/completions" `T.isSuffixOf` ep
+           then Just (T.dropEnd (T.length "/chat/completions") ep <> "/models")
+           else Just (openRouterBaseUrl <> "/models")
+  | otherwise = Nothing
+
+-- | Parse OpenRouter /models response into a mapping of model ID to context length.
+parseOpenRouterModels :: LBS.ByteString -> Either String ModelLimits
+parseOpenRouterModels bs = do
+  val <- Aeson.eitherDecode bs
+  AesonTypes.parseEither parseModels val
+  where
+    parseModels = withObject "OpenRouterModels" $ \o -> do
+      items <- (o .: "data" :: AesonTypes.Parser [Value])
+      entries <- forM items $ withObject "ModelEntry" $ \m -> do
+        mid <- m .: "id"
+        mSlug <- m .:? "canonical_slug"
+        mClen <- m .:? "context_length"
+        pure [ (k, clen) | Just clen <- [mClen], k <- mid : maybe [] pure mSlug ]
+      pure (Map.fromList (concat entries))
+
+-- | Determine cache file path for OpenRouter model metadata.
+openRouterCacheFilePath :: IO (Maybe FilePath)
+openRouterCacheFilePath = do
+  mCustom <- lookupEnv "HACH_CACHE_DIR"
+  case mCustom of
+    Just dir | not (null dir) -> pure (Just (dir </> "openrouter-models.json"))
+    _ -> do
+      res <- try (getXdgDirectory XdgCache "hach") :: IO (Either SomeException FilePath)
+      case res of
+        Right cacheDir -> pure (Just (cacheDir </> "openrouter-models.json"))
+        Left _ -> do
+          homeRes <- try getHomeDirectory :: IO (Either SomeException FilePath)
+          case homeRes of
+            Right home -> pure (Just (home </> ".cache" </> "hach" </> "openrouter-models.json"))
+            Left _     -> pure Nothing
+
+-- | Save model limits mapping to disk cache.
+saveOpenRouterModelsCache :: FilePath -> ModelLimits -> IO ()
+saveOpenRouterModelsCache path limits = do
+  let dir = takeDirectory path
+  createDirectoryIfMissing True dir
+  LBS.writeFile path (Aeson.encode limits)
+
+-- | Load model limits from disk cache. Supports both the map format and raw OpenRouter response.
+loadOpenRouterModelsCache :: FilePath -> IO (Maybe ModelLimits)
+loadOpenRouterModelsCache path = do
+  exists <- doesFileExist path
+  if not exists
+    then pure Nothing
+    else do
+      bsRes <- try (LBS.readFile path) :: IO (Either SomeException LBS.ByteString)
+      case bsRes of
+        Left _ -> pure Nothing
+        Right bs -> case Aeson.decode bs of
+          Just limits -> pure (Just limits)
+          Nothing -> case parseOpenRouterModels bs of
+            Right limits -> pure (Just limits)
+            Left _       -> pure Nothing
+
+-- | Fetch model metadata from OpenRouter models endpoint with bounded timeout and disk caching.
+-- When offline or when the endpoint fails, returns the cached metadata if available.
+fetchOpenRouterModels :: Manager -> InferenceConnection -> IO (Maybe ModelLimits)
+fetchOpenRouterModels mgr conn = do
+  case openRouterModelsEndpoint conn of
+    Nothing -> pure Nothing
+    Just endpoint -> do
+      mCachePath <- openRouterCacheFilePath
+      netRes <- try (fetchWithTimeout endpoint) :: IO (Either SomeException (Maybe ModelLimits))
+      case netRes of
+        Right (Just limits) -> do
+          forM_ mCachePath $ \cp ->
+            void (try (saveOpenRouterModelsCache cp limits) :: IO (Either SomeException ()))
+          pure (Just limits)
+        _ -> do
+          case mCachePath of
+            Nothing -> pure Nothing
+            Just cp -> do
+              cacheRes <- try (loadOpenRouterModelsCache cp) :: IO (Either SomeException (Maybe ModelLimits))
+              pure (either (const Nothing) id cacheRes)
+  where
+    fetchWithTimeout endpoint = do
+      req0 <- parseRequest (T.unpack endpoint)
+      let req = req0
+            { requestHeaders =
+                [ ("User-Agent", "hach/0.1.15.0")
+                , ("Accept", "application/json")
+                ] ++ maybe [] (\k -> [("Authorization", "Bearer " <> TE.encodeUtf8 k)]) (icApiKey conn)
+            , responseTimeout = responseTimeoutMicro 3000000
+            }
+      resp <- httpLbs req mgr
+      let status = statusCode (responseStatus resp)
+      if status >= 200 && status < 300
+        then case parseOpenRouterModels (responseBody resp) of
+          Right limits -> pure (Just limits)
+          Left _       -> pure Nothing
+        else pure Nothing
 
 --------------------------------------------------------------------------------
 -- Requests
