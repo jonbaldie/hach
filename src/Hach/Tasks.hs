@@ -49,7 +49,7 @@ import System.Process
 import System.Posix.Signals (Signal, nullSignal, sigKILL, sigTERM, signalProcessGroup)
 import System.Posix.Types (ProcessGroupID)
 
--- | Model task item for TodoWrite / TaskCreate / TaskList.
+-- | Tracked task item for TaskCreate / TaskList, independent of the workspace checklist.
 data Task = Task
   { taskId     :: !Text
   , taskTitle  :: !Text

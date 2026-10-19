@@ -166,7 +166,7 @@ import Hach.Types
 import Control.Applicative ((<|>))
 import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, writeTVar)
 import Control.Concurrent.Async (wait, withAsync)
-import Control.Exception (SomeAsyncException(..), SomeException, fromException, onException, try, tryJust)
+import Control.Exception (IOException, SomeAsyncException(..), SomeException, fromException, onException, try, tryJust)
 import Control.Monad (forM)
 import Data.Aeson
   ( FromJSON(..), (.:), (.:?), (.!=), object, (.=)
@@ -199,6 +199,7 @@ import System.FilePath
   , takeFileName
   )
 import System.IO (hClose)
+import System.IO.Error (isDoesNotExistError)
 import System.Posix.Signals (sigKILL)
 import System.Process (CreateProcess(..), StdStream(CreatePipe), cleanupProcess, createProcess, getPid, shell, waitForProcess)
 import System.Timeout (timeout)
@@ -583,7 +584,7 @@ taskGetToolDef = ToolDef
 taskListToolDef :: ToolDef
 taskListToolDef = ToolDef
   { toolName = "TaskList"
-  , toolDescription = "List all tracked background tasks."
+  , toolDescription = "List the workspace checklist and tracked background tasks in separate sections."
   , toolParameters = object [ "type" .= ("object" :: Text), "properties" .= object [] ]
   }
 
@@ -1005,7 +1006,7 @@ toolRegistry =
   , registration "Monitor" ["Monitor", "monitor"] AuthorityRead [monitorToolDef] (target parseMonitorArgs (unTaskId . monitorTaskId)) noTarget (run parseMonitorArgs (\_ -> executeMonitor))
   , ToolRegistration "TaskCreate" ["TaskCreate", "task_create", "taskcreate"] AuthorityWorkspaceWrite [taskCreateToolDef] taskCreateTarget noTarget (run parseTaskCreateArgs (executeTaskCreate . wsRoot))
   , registration "TaskGet" ["TaskGet", "task_get", "taskget"] AuthorityRead [taskGetToolDef] (target parseTaskGetArgs (unTaskId . taskGetId)) noTarget (run parseTaskGetArgs (\_ -> executeTaskGet))
-  , registration "TaskList" ["TaskList", "task_list", "tasklist"] AuthorityRead [taskListToolDef] (noArgs (const (Right ()))) noTarget (const (const executeTaskList))
+  , registration "TaskList" ["TaskList", "task_list", "tasklist"] AuthorityRead [taskListToolDef] (noArgs (const (Right ()))) noTarget (\ws _ -> executeTaskList (wsRoot ws))
   , registration "TaskUpdate" ["TaskUpdate", "task_update", "taskupdate"] AuthorityWorkspaceWrite [taskUpdateToolDef] (target parseTaskUpdateArgs (unTaskId . taskUpdateId)) noTarget (run parseTaskUpdateArgs (\_ -> executeTaskUpdate))
   , registration "TaskStop" ["TaskStop", "task_stop", "taskstop"] AuthorityCommand [taskStopToolDef] (target parseTaskStopArgs (unTaskId . taskStopId)) noTarget (run parseTaskStopArgs (\_ -> executeTaskStop))
   , registration "EnterWorktree" ["EnterWorktree", "enter_worktree", "enterworktree"] AuthorityCommand [enterWorktreeToolDef] (target parseEnterWorktreeArgs worktreeName) noTarget (run parseEnterWorktreeArgs (executeEnterWorktree . wsRoot))
@@ -1538,11 +1539,31 @@ executeTaskGet (TaskGetArgs (TaskId tid)) = do
     Nothing -> pure $ ToolError ("Task not found: " <> tid)
     Just t  -> pure $ ToolSuccess (formatTaskList [t])
 
-executeTaskList :: IO ToolResult
-executeTaskList = do
+-- | A shared view for TaskList and /tasks. Checklists survive a restart;
+-- tracked tasks retain their independent in-memory lifecycle and controls.
+executeTaskList :: FilePath -> IO ToolResult
+executeTaskList root = do
+  checklist <- readChecklist root
   store <- readTVarIO globalTaskStore
   let ts = listTasks store
-  pure $ ToolSuccess (formatTaskList ts)
+      checklistSections = case checklist of
+        Left err -> ["Checklist error (.claude/todos.json): " <> err]
+        Right [] -> []
+        Right items -> ["Checklist:\n" <> T.unlines (map ("- [ ] " <>) items)]
+      taskSections = ["Background tasks:\n" <> formatTaskList ts | not (null ts)]
+      sections = checklistSections <> taskSections
+  pure $ ToolSuccess $ if null sections then "No active tasks." else T.intercalate "\n" sections
+
+readChecklist :: FilePath -> IO (Either Text [Text])
+readChecklist root = do
+  result <- try (BS.readFile (root </> ".claude" </> "todos.json"))
+  pure $ case result of
+    Left (ex :: IOException)
+      | isDoesNotExistError ex -> Right []
+      | otherwise -> Left (T.pack (show ex))
+    Right bytes -> case Aeson.eitherDecodeStrict' bytes of
+      Left err -> Left (T.pack err)
+      Right items -> Right items
 
 executeTaskUpdate :: TaskUpdateArgs -> IO ToolResult
 executeTaskUpdate (TaskUpdateArgs (TaskId tid) st) = do

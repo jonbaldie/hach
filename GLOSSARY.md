@@ -4,6 +4,14 @@ A minimalist, principled agentic coding harness in Haskell.
 
 ## Language
 
+**Checklist**:
+The workspace's replaceable list of work reminders, retained across runs. Checklist items have no task identifier, process, or execution status.
+_Avoid_: Background task list
+
+**Tracked Task**:
+An individually identified work item with a mutable status for the current run. A background task is a tracked task associated with a command.
+_Avoid_: Checklist item
+
 **Hach**:
 The canonical name for the project, CLI binary, Cabal package, and repository.
 _Avoid_: Agent, Hatch, agent-harness

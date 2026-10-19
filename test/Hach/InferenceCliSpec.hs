@@ -34,6 +34,7 @@ spec = describe "hach against an inference fixture" $ do
   baseUrlSpec
   requestShapeSpec
   toolCycleSpec
+  checklistSpec
   responseSpec
   failureSpec
   goalSpec
@@ -44,6 +45,74 @@ spec = describe "hach against an inference fixture" $ do
 --------------------------------------------------------------------------------
 -- Helpers
 --------------------------------------------------------------------------------
+
+-- Exercise the public tool-dispatch path in a fresh process on every run.
+checklistSpec :: Spec
+checklistSpec = describe "workspace checklist visibility (#222)" $ do
+  it "lists a freshly saved checklist" $
+    withSandbox $ \ws -> do
+      result <- checklistRun ws
+        [ toolCall "save" "TodoWrite" (object ["tasks" .= (["ship-the-report"] :: [Text])])
+        , toolCall "list" "TaskList" (object [])
+        ]
+      output result `shouldSatisfy` ("Checklist:\n- [ ] ship-the-report" `isInfixOf`)
+
+  it "reads a saved checklist in a new process and keeps it workspace-local" $
+    withSandbox $ \ws -> withSandbox $ \other -> do
+      _ <- checklistRun ws [toolCall "save" "TodoWrite" (object ["tasks" .= (["persisted-item"] :: [Text])])]
+      listed <- checklistRun ws [toolCall "list" "TaskList" (object [])]
+      output listed `shouldSatisfy` ("persisted-item" `isInfixOf`)
+      elsewhere <- checklistRun other [toolCall "list" "TaskList" (object [])]
+      output elsewhere `shouldSatisfy` ("No active tasks." `isInfixOf`)
+      output elsewhere `shouldNotSatisfy` ("persisted-item" `isInfixOf`)
+
+  it "preserves TodoWrite replacement and clearing semantics" $
+    withSandbox $ \ws -> do
+      _ <- checklistRun ws [toolCall "old" "TodoWrite" (object ["tasks" .= (["old-item"] :: [Text])])]
+      _ <- checklistRun ws [toolCall "new" "TodoWrite" (object ["tasks" .= (["new-item"] :: [Text])])]
+      listed <- checklistRun ws [toolCall "list" "TaskList" (object [])]
+      output listed `shouldSatisfy` ("new-item" `isInfixOf`)
+      output listed `shouldNotSatisfy` ("old-item" `isInfixOf`)
+      _ <- checklistRun ws [toolCall "clear" "TodoWrite" (object ["tasks" .= ([] :: [Text])])]
+      empty <- checklistRun ws [toolCall "list" "TaskList" (object [])]
+      output empty `shouldSatisfy` ("No active tasks." `isInfixOf`)
+
+  it "keeps the empty message when the checklist is missing" $
+    withSandbox $ \ws -> do
+      result <- checklistRun ws [toolCall "list" "TaskList" (object [])]
+      output result `shouldSatisfy` ("No active tasks." `isInfixOf`)
+
+  forM_ ["not-json", "{}", "[42]"] $ \bad ->
+    it ("reports an unreadable checklist without hiding background tasks: " <> T.unpack bad) $
+      withSandbox $ \ws -> do
+        writeWorkspaceFile ws ".claude/todos.json" bad
+        result <- checklistRun ws
+          [ toolCall "create" "TaskCreate" (object ["name" .= ("short-worker" :: Text), "command" .= ("true" :: Text)])
+          , toolCall "list" "TaskList" (object [])
+          ]
+        output result `shouldSatisfy` ("Checklist error (.claude/todos.json):" `isInfixOf`)
+        output result `shouldSatisfy` ("Background tasks:\n- [pending] #bg-1: short-worker" `isInfixOf`)
+
+  it "shows distinct checklist and background states and preserves task control" $
+    withSandbox $ \ws -> do
+      result <- checklistRun ws
+        [ toolCall "save" "TodoWrite" (object ["tasks" .= (["ship-the-report"] :: [Text])])
+        , toolCall "create" "TaskCreate" (object ["name" .= ("short-worker" :: Text), "command" .= ("true" :: Text)])
+        , toolCall "stop" "TaskStop" (object ["task_id" .= ("bg-1" :: Text)])
+        , toolCall "list" "TaskList" (object [])
+        ]
+      output result `shouldSatisfy` ("Checklist:\n- [ ] ship-the-report" `isInfixOf`)
+      output result `shouldSatisfy` ("Background tasks:\n- [stopped] #bg-1: short-worker" `isInfixOf`)
+
+checklistRun :: FilePath -> [Value] -> IO HachResult
+checklistRun ws calls =
+  withInferenceFixture (map (\c -> toolCallCompletion [c] Nothing) calls <> [completion "done"]) $ \fx -> do
+    result <- runWith ws []
+      (["--no-tui", "--provider", "openai-compatible", "--base-url", T.unpack (fixtureBaseUrl fx)
+       , "--model", "fixture", "--permission-mode", "dontAsk", "run checklist tools"])
+    (hrExit result, output result) `shouldSatisfy` ((== ExitSuccess) . fst)
+    length <$> fixtureRequests fx `shouldReturn` length calls + 1
+    pure result
 
 compatible :: Fixture -> [String]
 compatible fx =
