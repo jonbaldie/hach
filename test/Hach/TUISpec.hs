@@ -2055,7 +2055,7 @@ spec = do
         tsHistory s `shouldBe` []
 
         _ <- executeTaskCreate "/tmp" (TaskCreateArgs "issue-155-task" Nothing)
-        listed <- executeTaskList
+        listed <- executeTaskList "."
         let shown = applySlashCommandResult (TaskListResult (toolResultToText listed)) s
         toolResultToText listed `shouldSatisfy` T.isInfixOf "issue-155-task"
         tsHistory shown `shouldBe` [DiNotice ("Tasks:\n" <> T.stripEnd (toolResultToText listed))]

@@ -221,7 +221,7 @@ runTuiAction eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd = \case
     diff <- liftIO (currentIOWorkspace ioEnv >>= getGitDiff)
     modify (applySlashCommandResult (DiffResult diff))
   ActionListTasks -> do
-    tasks <- liftIO executeTaskList
+    tasks <- liftIO (currentIOWorkspace ioEnv >>= executeTaskList)
     modify (applySlashCommandResult (TaskListResult (toolResultToText tasks)))
   ActionCopyToClipboard text -> do
     copied <- liftIO (copyToClipboard text)
