@@ -7,6 +7,8 @@ import Hach.Interpreter.IO (ioAlgebra, newIOEnv)
 import Hach.Permissions (isProtectedPath)
 import Hach.Sessions
 import Hach.Types
+import Hach.TUI.State (updateTui)
+import Hach.TUI.Types
 import Control.Exception (SomeException, try)
 import Data.Text (Text)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, removeDirectoryRecursive)
@@ -196,7 +198,12 @@ spec = describe "Hach.Sessions" $ do
             let resumed = buildSessionHistory "sys" (Just loaded) "Please continue."
             openaiToolCallContractHolds resumed `shouldBe` True
 
-    describe "saved session cost (Issue #253)" $ do
+    around_ (\action -> do
+      exists <- doesDirectoryExist testDir
+      when exists (removeDirectoryRecursive testDir)
+      action
+      existsAfter <- doesDirectoryExist testDir
+      when existsAfter (removeDirectoryRecursive testDir)) $ describe "saved session cost (Issue #253)" $ do
       let wsDir = testDir </> "ws-253"
           history = [SystemMsg "sys", UserMsg "Reply OK", AssistantMsg (Just "OK") []]
 
@@ -204,6 +211,46 @@ spec = describe "Hach.Sessions" $ do
         saveRunSession wsDir "sess-253-new" "test-model" Nothing 0.25 history
         fmap (siCostUsd . fst) <$> loadWorkspaceSession wsDir "sess-253-new"
           `shouldReturn` Just 0.25
+
+      it "persists interrupted-only TUI spend with empty history (Issue #278)" $ do
+        let usage c = (mkTokenUsage 10 5 15) { tuCost = Just c }
+            s0 = (initialTuiState "test-model" Nothing) { tsStatus = StatusThinking }
+            (s1, _) = updateTui (EvHarness (EvLLMResponse Nothing [ToolCall "c1" "read_file" "{}"] (Just (usage 0.25)))) s0
+            (s2, _) = updateTui (EvHarness (EvLLMResponse Nothing [ToolCall "c2" "read_file" "{}"] (Just (usage 0.5)))) s1
+            (interrupted, _) = updateTui (EvUserKey KeyEsc) s2
+            sid = "sess-278-interrupted"
+        tsConversation interrupted `shouldBe` []
+        tsIncurredSpendUsd interrupted `shouldBe` 0.75
+        saveRunSession wsDir sid "test-model" Nothing
+          (tsIncurredSpendUsd interrupted) (tsConversation interrupted)
+        loaded <- resolveSessionLoad wsDir (SessionSpecific sid)
+        case loaded of
+          Right (Just (info, messages)) -> do
+            siTurns info `shouldBe` 0
+            siCostUsd info `shouldBe` 0.75
+            messages `shouldBe` []
+            resolveSessionLoad wsDir SessionContinue `shouldReturn` loaded
+            buildSessionHistory "sys" (Just messages) "next"
+              `shouldBe` [SystemMsg "sys", UserMsg "next"]
+            -- A resumed process starts with zero newly incurred spend. Clearing
+            -- its history must retain the loaded cost without counting it twice.
+            let (cleared, _) = updateTui (EvSubmit "/clear")
+                  ((initialTuiState "test-model" Nothing) { tsConversation = messages })
+            saveRunSession wsDir sid "test-model" (Just info)
+              (tsIncurredSpendUsd cleared) (tsConversation cleared)
+            unchanged <- loadWorkspaceSession wsDir sid
+            fmap (\(i, ms) -> (siId i, siTurns i, siCostUsd i, ms)) unchanged
+              `shouldBe` Just (sid, 0, 0.75, [])
+            saveRunSession wsDir sid "test-model" (Just info) 0.25 []
+            reloaded <- loadWorkspaceSession wsDir sid
+            fmap (\(i, ms) -> (siTurns i, siCostUsd i, ms)) reloaded
+              `shouldBe` Just (0, 1.0, [])
+          _ -> expectationFailure ("Expected saved zero-turn session, got " <> show loaded)
+
+      it "does not create an unused zero-spend session (Issue #278)" $ do
+        saveRunSession wsDir "sess-278-unused" "test-model" Nothing 0 []
+        loadWorkspaceSession wsDir "sess-278-unused" `shouldReturn` Nothing
+        doesDirectoryExist (wsDir </> ".agents" </> "sessions") `shouldReturn` False
 
       it "adds a resumed run's spend to the saved total" $ do
         saveRunSession wsDir "sess-253-resume" "test-model" Nothing 0.25 history

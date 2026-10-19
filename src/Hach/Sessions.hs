@@ -275,8 +275,9 @@ buildSessionHistory sysPrompt mPriorHistory prompt =
         Just msgs -> cleanHistoryForSession (filter (not . isSystemMsg) msgs)
   in SystemMsg sysPrompt : priorDialogue ++ [UserMsg prompt]
 
--- | Persist completed agent dialogue to the workspace session directory,
--- adding the run's reported spend to the session's saved cost.
+-- | Persist agent dialogue or billed spend to the workspace session directory,
+-- adding the run's reported spend to the session's saved cost. Interrupted-only
+-- sessions may have empty history, but must not lose their incurred spend.
 saveRunSession
   :: FilePath
   -> Text
@@ -288,15 +289,15 @@ saveRunSession
 saveRunSession workspace activeSid model mPrevInfo runSpendUsd finalHistory = do
   let cleanHistory = cleanHistoryForSession finalHistory
       totalTurns = length [() | AssistantMsg _ _ <- cleanHistory]
-  when (totalTurns > 0) $ do
+      totalCost = maybe 0.0 siCostUsd mPrevInfo + runSpendUsd
+  when (totalTurns > 0 || totalCost /= 0) $ do
     timestamp <- currentTimestampIso8601
-    let prevCost = maybe 0.0 siCostUsd mPrevInfo
-        sessionInfo = SessionInfo
+    let sessionInfo = SessionInfo
           { siId        = activeSid
           , siCreatedAt = timestamp
           , siModel     = model
           , siTurns     = totalTurns
-          , siCostUsd   = prevCost + runSpendUsd
+          , siCostUsd   = totalCost
           }
     saveWorkspaceSession workspace sessionInfo cleanHistory
 
