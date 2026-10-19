@@ -91,6 +91,7 @@ module Hach.Types
   , parseEffortLevel
   ) where
 
+import Control.Applicative ((<|>))
 import Data.Aeson
   ( FromJSON(..), ToJSON(..), FromJSONKey(..), ToJSONKey(..), Value, object, withObject, (.:), (.:?), (.!=), (.=)
   )
@@ -99,6 +100,8 @@ import Data.Aeson.Types (FromJSONKeyFunction(..), Parser, parseMaybe, toJSONKeyT
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isSpace)
 import Data.Foldable (toList)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -333,27 +336,21 @@ addUsageToSession u isEval s =
        , stuTotalCost        = costInc
        }
 
--- | Standard context limits for known model families.
-modelContextLimit :: Text -> Int
-modelContextLimit m
-  | "claude" `T.isInfixOf` lower = 200000
-  | "gpt-4" `T.isInfixOf` lower = 128000
-  | "gpt-3.5" `T.isInfixOf` lower = 16384
-  | "llama-3" `T.isInfixOf` lower = 128000
-  | "deepseek" `T.isInfixOf` lower = 128000
-  | "qwen" `T.isInfixOf` lower = 128000
-  | "gemini" `T.isInfixOf` lower = 1000000
-  | "mistral" `T.isInfixOf` lower = 128000
-  | "muse" `T.isInfixOf` lower = 128000
-  | otherwise = 128000
+-- | Resolve a model's context limit from metadata, supporting exact IDs and aliases.
+-- Returns 'Nothing' when metadata is missing or the model is not found.
+modelContextLimit :: Map Text Int -> Text -> Maybe Int
+modelContextLimit limits model =
+  Map.lookup model limits
+    <|> Map.lookup (T.toLower model) lowerLimits
+    <|> (if "~" `T.isPrefixOf` model then Map.lookup (T.drop 1 model) limits else Map.lookup ("~" <> model) limits)
+    <|> (if "~" `T.isPrefixOf` model then Map.lookup (T.toLower (T.drop 1 model)) lowerLimits else Map.lookup (T.toLower ("~" <> model)) lowerLimits)
   where
-    lower = T.toLower m
+    lowerLimits = Map.mapKeys T.toLower limits
 
--- | Calculate context window saturation percentage (clamped to 0..100).
-contextSaturationPercent :: Int -> Text -> Int
-contextSaturationPercent tokens model =
-  let limit = modelContextLimit model
-  in if limit <= 0 then 0 else max 0 (min 100 ((tokens * 100) `div` limit))
+-- | Calculate context window saturation percentage (clamped to 0..100) given token count and context limit.
+contextSaturationPercent :: Int -> Int -> Int
+contextSaturationPercent tokens limit =
+  if limit <= 0 then 0 else max 0 (min 100 ((tokens * 100) `div` limit))
 
 -- | The model's response for a turn.
 data AssistantResponse = AssistantResponse

@@ -5,7 +5,15 @@
 module Hach.TUISpec (spec) where
 
 import Hach.Core (AgentAlgebra(..))
-import Hach.Inference (InferenceInterface(..), mkInferenceConnection)
+import Hach.Inference
+  ( InferenceInterface(..)
+  , mkInferenceConnection
+  , openRouterConnection
+  , openRouterModelsEndpoint
+  , parseOpenRouterModels
+  , saveOpenRouterModelsCache
+  , loadOpenRouterModelsCache
+  )
 import qualified Hach.InferenceFixture as Fixture
 import Hach.Interpreter.IO (IOEnv(..), defaultIOEnvPermissions, ioAlgebra, newIOEnv, newIOEnvWithPermissions)
 import Hach.Sessions (buildSessionHistory)
@@ -966,6 +974,14 @@ spec = do
         notices `shouldSatisfy` (\l -> any ("Session Cumulative: 150 tokens" `T.isInfixOf`) l)
         notices `shouldSatisfy` (\l -> any ("Reported API Cost: $0.0012" `T.isInfixOf`) l)
 
+      it "reports cost as not reported when endpoint omits cost, without estimating" $ do
+        let usage = TokenUsage 120 30 150 50 Nothing
+            (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
+            (s2, _) = updateTui (EvSubmit "/cost") s1
+        let notices = [ m | DiNotice m <- tsHistory s2 ]
+        notices `shouldSatisfy` (\l -> any ("API Cost: not reported by the endpoint (no estimate is made)" `T.isInfixOf`) l)
+        notices `shouldNotSatisfy` (\l -> any ("Estimated Cost" `T.isInfixOf`) l)
+
     describe "formatCompactLimit" $ do
       it "formats zero and small numbers directly" $ do
         formatCompactLimit 0 `shouldBe` "0"
@@ -981,19 +997,76 @@ spec = do
         formatCompactLimit 1500000 `shouldBe` "1.5M"
 
     describe "modelContextLimit and contextSaturationPercent" $ do
-      it "maps known model families to context limits" $ do
-        modelContextLimit "~anthropic/claude-sonnet-latest" `shouldBe` 200000
-        modelContextLimit "openai/gpt-4o" `shouldBe` 128000
-        modelContextLimit "~google/gemini-flash-latest" `shouldBe` 1000000
-        modelContextLimit "unknown-custom-model" `shouldBe` 128000
+      let sampleLimits = Map.fromList
+            [ ("openai/gpt-5.6-luna", 1050000)
+            , ("~anthropic/claude-sonnet-latest", 1000000)
+            , ("openai/gpt-4o", 128000)
+            , ("~google/gemini-flash-latest", 1000000)
+            ]
 
-      it "calculates context saturation percentage accurately" $ do
-        contextSaturationPercent 160000 "~anthropic/claude-sonnet-latest" `shouldBe` 80
-        contextSaturationPercent 115200 "openai/gpt-4o" `shouldBe` 90
+      it "resolves context limits for known models and aliases from metadata" $ do
+        modelContextLimit sampleLimits "openai/gpt-5.6-luna" `shouldBe` Just 1050000
+        modelContextLimit sampleLimits "~anthropic/claude-sonnet-latest" `shouldBe` Just 1000000
+        -- alias resolution: without tilde finds tilde alias and vice versa
+        modelContextLimit sampleLimits "anthropic/claude-sonnet-latest" `shouldBe` Just 1000000
+        modelContextLimit sampleLimits "~openai/gpt-5.6-luna" `shouldBe` Just 1050000
+        -- case-insensitivity
+        modelContextLimit sampleLimits "OPENAI/GPT-5.6-LUNA" `shouldBe` Just 1050000
+
+      it "returns Nothing for unknown models or empty metadata" $ do
+        modelContextLimit sampleLimits "unknown-custom-model" `shouldBe` Nothing
+        modelContextLimit Map.empty "openai/gpt-5.6-luna" `shouldBe` Nothing
+
+      it "calculates context saturation percentage accurately with known limit" $ do
+        contextSaturationPercent 160000 200000 `shouldBe` 80
+        contextSaturationPercent 115200 128000 `shouldBe` 90
 
       it "clamps context saturation percentage strictly between 0 and 100" $ do
-        contextSaturationPercent 300000 "~anthropic/claude-sonnet-latest" `shouldBe` 100
-        contextSaturationPercent (-50) "openai/gpt-4o" `shouldBe` 0
+        contextSaturationPercent 300000 200000 `shouldBe` 100
+        contextSaturationPercent (-50) 128000 `shouldBe` 0
+        contextSaturationPercent 50 0 `shouldBe` 0
+
+      it "displays unknown context limit and no fabricated saturation percentage when metadata is absent" $ do
+        let s0 = baseState { tsContextTokens = 150, tsModelLimits = Map.empty }
+            (s1, _) = updateTui (EvSubmit "/cost") s0
+        let notices = [ m | DiNotice m <- tsHistory s1 ]
+        notices `shouldSatisfy` (\l -> any ("150/? capacity" `T.isInfixOf`) l)
+        notices `shouldNotSatisfy` (\l -> any ("(0%)" `T.isInfixOf`) l)
+
+      it "displays authoritative context limit when model metadata is present" $ do
+        let s0 = baseState
+              { tsModelName = "openai/gpt-5.6-luna"
+              , tsContextTokens = 210000
+              , tsModelLimits = sampleLimits
+              }
+            (s1, _) = updateTui (EvSubmit "/cost") s0
+        let notices = [ m | DiNotice m <- tsHistory s1 ]
+        notices `shouldSatisfy` (\l -> any ("210,000/1,050,000 capacity (20%)" `T.isInfixOf`) l)
+
+    describe "OpenRouter /models metadata and caching" $ do
+      it "extracts /models endpoint for OpenRouter connections" $ do
+        let conn = openRouterConnection "test-key"
+        openRouterModelsEndpoint conn `shouldBe` Just "https://openrouter.ai/api/v1/models"
+
+      it "returns Nothing for openai-compatible connections" $ do
+        case mkInferenceConnection InterfaceOpenAICompatible "http://localhost:8080/v1" Nothing of
+          Right compatConn -> openRouterModelsEndpoint compatConn `shouldBe` Nothing
+          Left err -> expectationFailure err
+
+      it "parses OpenRouter /models response carrying context_length and aliases" $ do
+        let jsonPayload = "{\"data\":[{\"id\":\"openai/gpt-5.6-luna\",\"context_length\":1050000},{\"id\":\"~anthropic/claude-sonnet-latest\",\"context_length\":1000000}]}"
+        case parseOpenRouterModels jsonPayload of
+          Right limits -> do
+            Map.lookup "openai/gpt-5.6-luna" limits `shouldBe` Just 1050000
+            Map.lookup "~anthropic/claude-sonnet-latest" limits `shouldBe` Just 1000000
+          Left err -> expectationFailure err
+
+      it "persists and restores model limits cache on disk" $ do
+        let tmpCache = "dist-newstyle/test-models-cache/cache.json"
+        let limits = Map.fromList [("test/model", 500000)]
+        saveOpenRouterModelsCache tmpCache limits
+        loaded <- loadOpenRouterModelsCache tmpCache
+        loaded `shouldBe` Just limits
 
 
     describe "formatTokens" $ do

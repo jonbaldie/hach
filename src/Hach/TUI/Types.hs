@@ -28,6 +28,7 @@ module Hach.TUI.Types
   , tsHistory
   , tsTools
   , tsHistoryScroll
+  , tuiModelContextLimit
   , UsageStatus(..)
 
     -- * Events and Actions
@@ -44,7 +45,8 @@ module Hach.TUI.Types
 
 import Hach.Inference (CostPolicy(..))
 import Hach.Skills (SkillCatalog)
-import Hach.Types (AgentEvent, GoalState, Message, PermissionMode (..), SessionTokenUsage, TokenUsage, ToolResult, initialSessionTokenUsage)
+import Hach.Types (AgentEvent, GoalState, Message, PermissionMode (..), SessionTokenUsage, TokenUsage, ToolResult, initialSessionTokenUsage, modelContextLimit)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 
@@ -181,7 +183,14 @@ data TuiState = TuiState
   , tsCostPolicy         :: !CostPolicy
     -- ^ How @/cost@ treats cost the endpoint did not report. Non-secret; set
     -- from the connection at launch, not guessed from the model name.
+  , tsModelLimits        :: !(Map Text Int)
+    -- ^ Model metadata context limits.
   } deriving (Show, Eq)
+
+-- | Resolve the active model's context limit in the TUI, if known.
+tuiModelContextLimit :: TuiState -> Maybe Int
+tuiModelContextLimit state =
+  modelContextLimit (tsModelLimits state) (tsModelName state)
 
 -- | Project tool cards from the transcript for the Tool Activity pane.
 tsTools :: TuiState -> [ToolCard]
@@ -226,7 +235,8 @@ initialTuiState model maxTurns = TuiState
   , tsPendingAsk         = Nothing
   , tsTheme              = Nothing
   , tsProjectInstructions = Nothing
-  , tsCostPolicy         = CostEstimateFromModel
+  , tsCostPolicy         = CostReportedOnly
+  , tsModelLimits        = Map.empty
   }
 
 -- | Simplified user keystroke events abstracted from Vty.
