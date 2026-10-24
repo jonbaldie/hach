@@ -1,0 +1,34 @@
+Usage: hach [options] [task prompt...]
+
+Options:
+  -h, --help                      Show this help and exit
+  -v, --version                   Print the version and exit
+  -m, --model MODEL               Model identifier to request, passed unchanged (overrides .env)
+  --provider PROVIDER             Inference API: openrouter (default) or openai-compatible
+  --base-url URL                  Inference API root, e.g. http://localhost:8080/v1 (/chat/completions is appended)
+  --no-tui                        Run the agent headless instead of the terminal UI
+  -p, --print                     Run headless and print only the final answer
+  --output-format text|json       Format of the --print answer (default: text)
+  -c, --continue                  Continue the most recent session in this workspace
+  -r, --resume                    Resume the most recent session in this workspace
+  --session-id ID                 Resume the session with this ID
+  --max-turns N                   Stop the agent after N turns
+  --max-budget-usd USD            Stop the agent after spending this many US dollars
+  --append-system-prompt TEXT     Append TEXT to the system prompt
+  --add-dir DIR                   Add a working directory tools may reach (repeatable)
+  -w, --worktree NAME             Work in the git worktree NAME, creating it if needed
+  --init                          Create a CLAUDE.md guidelines template and exit
+  --exec CMD                      Run the shell command CMD in the workspace and exit
+  --permission-mode MODE          default, acceptEdits, plan, auto, dontAsk or bypassPermissions
+  --dangerously-skip-permissions  Skip all permission prompts
+  --                              Treat every remaining argument as prompt text
+
+Inference (each setting: flag > process environment > .env > settings.json):
+  Provider  --provider, HACH_PROVIDER, or llm_provider; openrouter by default.
+  openrouter         key OPENROUTER_API_KEY (required), model OPENROUTER_MODEL;
+                     API root --base-url, else https://openrouter.ai/api/v1.
+  openai-compatible  key OPENAI_API_KEY (optional), model OPENAI_MODEL;
+                     API root --base-url, OPENAI_BASE_URL, or llm_base_url,
+                     else https://api.openai.com/v1.
+  The API root ends before /chat/completions, which Hach appends.
+  Keys and models never carry over from one provider to the other.

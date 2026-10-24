@@ -1,0 +1,44 @@
+Run start: Sat Oct 24 00:51:00 UTC 2026
+Source: e6f93f79969537669670001361809c9005946652
+TMPDIR=/Users/jonathanbaldie/.fleet/events/scratch/087ccf20016510f0f0aeadedf77e02a4932dece4df3a15eb8e553d72731ebbe3
+No tracked lockfile/freeze file exists. Offline build only; no dependency update/install requested.
+drwxr-xr-x@ 4 jonathanbaldie  staff  128 Oct 22 10:25 dist-newstyle
+Build profile: -w ghc-9.12.1 -O1
+In order, the following will be built (use -v for more details):
+ - hach-0.1.15.0 (lib) (first run)
+ - hach-0.1.15.0 (exe:hach) (first run)
+Configuring library for hach-0.1.15.0...
+Preprocessing library for hach-0.1.15.0...
+Building library for hach-0.1.15.0...
+[ 1 of 26] Compiling Hach.Clipboard   ( src/Hach/Clipboard.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Clipboard.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Clipboard.dyn_o )
+[ 2 of 26] Compiling Hach.Notifications ( src/Hach/Notifications.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Notifications.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Notifications.dyn_o )
+[ 3 of 26] Compiling Hach.Paths       ( src/Hach/Paths.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Paths.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Paths.dyn_o )
+[ 4 of 26] Compiling Hach.Skills      ( src/Hach/Skills.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Skills.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Skills.dyn_o )
+[ 5 of 26] Compiling Hach.Subagents   ( src/Hach/Subagents.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Subagents.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Subagents.dyn_o )
+[ 6 of 26] Compiling Hach.Types       ( src/Hach/Types.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Types.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Types.dyn_o )
+[ 7 of 26] Compiling Hach.Tasks       ( src/Hach/Tasks.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Tasks.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Tasks.dyn_o )
+[ 8 of 26] Compiling Hach.Settings    ( src/Hach/Settings.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Settings.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Settings.dyn_o )
+[ 9 of 26] Compiling Hach.Sessions    ( src/Hach/Sessions.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Sessions.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Sessions.dyn_o )
+[10 of 26] Compiling Hach.MCP         ( src/Hach/MCP.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/MCP.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/MCP.dyn_o )
+[11 of 26] Compiling Hach.Inference   ( src/Hach/Inference.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Inference.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Inference.dyn_o )
+[12 of 26] Compiling Hach.TUI.Types   ( src/Hach/TUI/Types.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/TUI/Types.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/TUI/Types.dyn_o )
+[13 of 26] Compiling Hach.TUI.Conversation ( src/Hach/TUI/Conversation.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/TUI/Conversation.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/TUI/Conversation.dyn_o )
+[14 of 26] Compiling Hach.Git         ( src/Hach/Git.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Git.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Git.dyn_o )
+[15 of 26] Compiling Hach.Tools       ( src/Hach/Tools.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Tools.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Tools.dyn_o )
+[16 of 26] Compiling Hach.TUI.UI      ( src/Hach/TUI/UI.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/TUI/UI.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/TUI/UI.dyn_o )
+[17 of 26] Compiling Hach.TUI.State   ( src/Hach/TUI/State.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/TUI/State.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/TUI/State.dyn_o )
+[18 of 26] Compiling Hach.Permissions ( src/Hach/Permissions.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Permissions.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Permissions.dyn_o )
+[19 of 26] Compiling Hach.Memory      ( src/Hach/Memory.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Memory.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Memory.dyn_o )
+[20 of 26] Compiling Hach.Hooks       ( src/Hach/Hooks.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Hooks.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Hooks.dyn_o )
+[21 of 26] Compiling Hach.Env         ( src/Hach/Env.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Env.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Env.dyn_o )
+[22 of 26] Compiling Hach.Core        ( src/Hach/Core.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Core.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Core.dyn_o )
+[23 of 26] Compiling Hach.Interpreter.Pure ( src/Hach/Interpreter/Pure.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Interpreter/Pure.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Interpreter/Pure.dyn_o )
+[24 of 26] Compiling Hach.Interpreter.IO ( src/Hach/Interpreter/IO.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Interpreter/IO.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/Interpreter/IO.dyn_o )
+[25 of 26] Compiling Hach.CLI         ( src/Hach/CLI.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/CLI.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/CLI.dyn_o )
+[26 of 26] Compiling Hach.TUI.App     ( src/Hach/TUI/App.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/TUI/App.o, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/build/Hach/TUI/App.dyn_o )
+Configuring executable 'hach' for hach-0.1.15.0...
+Preprocessing executable 'hach' for hach-0.1.15.0...
+Building executable 'hach' for hach-0.1.15.0...
+[1 of 2] Compiling Paths_hach       ( dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/x/hach/build/hach/autogen/Paths_hach.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/x/hach/build/hach/hach-tmp/Paths_hach.o )
+[2 of 2] Compiling Main             ( app/Main.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/x/hach/build/hach/hach-tmp/Main.o )
+[3 of 3] Linking dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/x/hach/build/hach/hach
