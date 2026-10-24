@@ -1,8 +1,11 @@
 # Exploratory testing: coding, workspaces, and session reliability
 
-**Date:** 2026-10-24 (UTC)  
-**Source:** `e6f93f79969537669670001361809c9005946652` (`hach 0.1.15.0`)  
-**Environment:** macOS arm64, GHC 9.12.1, cabal-install 3.16.1.0; `GHCRTS=-N2` for Hach.  
+**Date:** 2026-10-24 (UTC)
+
+**Source:** `e6f93f79969537669670001361809c9005946652` (`hach 0.1.15.0`)
+
+**Environment:** macOS arm64, GHC 9.12.1, cabal-install 3.16.1.0; `GHCRTS=-N2` for Hach.
+
 **Evidence:** [actions, output, and lasting effects](evidence/2026-10-24-cli/journeys.jsonl), [driver](evidence/2026-10-24-cli/explore.py), [build log](evidence/2026-10-24-cli/setup.log), [regression log](evidence/2026-10-24-cli/regression.log).
 
 ## Result
