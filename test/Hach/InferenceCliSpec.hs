@@ -20,9 +20,9 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Encoding.Error as TE
 import Network.Socket
-import System.Directory (doesFileExist, listDirectory, doesDirectoryExist)
+import System.Directory (doesFileExist, listDirectory, doesDirectoryExist, createDirectoryIfMissing, copyFile, renameDirectory)
 import System.Exit (ExitCode (..))
-import System.FilePath ((</>))
+import System.FilePath ((</>), dropExtension)
 import Test.Hspec
 
 import Hach.InferenceFixture
@@ -759,7 +759,61 @@ goalSpec = describe "goal evaluation" $ do
 --------------------------------------------------------------------------------
 
 sessionSpec :: Spec
-sessionSpec = describe "sessions" $
+sessionSpec = describe "sessions" $ do
+  forM_ ["--continue", "--resume", "--session-id", "tui"] $ \selection ->
+    forM_ ["{CORRUPTED private message", "{\"role\":\"unknown-private-role\"}"] $ \bad ->
+      it ("rejects a corrupt transcript without effects (#285): " <> selection <> " " <> BC.unpack bad) $
+        withSandbox $ \ws -> do
+          (sid, transcript) <- createSession ws
+          -- A valid same-ID legacy copy must not mask canonical corruption.
+          let canonical = ws </> ".agents/sessions"
+              legacy = ws </> ".agent/sessions"
+          createDirectoryIfMissing True legacy
+          names <- listDirectory canonical
+          forM_ names $ \name -> copyFile (canonical </> name) (legacy </> name)
+          original <- BS.readFile transcript
+          let lines' = "" : BC.lines original -- blank lines still count in diagnostics
+              isTarget = BS.isInfixOf "remember private requirement"
+              damaged = BC.unlines $ map (\line -> if isTarget line then bad else line) lines'
+              lineNumbers = [n | (n, line) <- zip [1 :: Int ..] lines', isTarget line]
+          BS.writeFile transcript damaged
+          files <- (++) <$> filesUnder (ws </> ".agents") <*> filesUnder (ws </> ".agent")
+          before <- mapM BS.readFile files
+          withInferenceFixture [completion "must not run"] $ \fx -> do
+            let selector = if selection == "--session-id" then [selection, sid]
+                           else if selection == "tui" then ["--continue"] else [selection]
+                args = if selection == "tui"
+                       then filter (/= "--print") (compatible fx)
+                       else compatible fx <> ["--output-format", "json"]
+            result <- runWith ws [] (args <> selector <> ["continue"])
+            hrExit result `shouldNotBe` ExitSuccess
+            shouldHaveNoRequests fx
+            mapM BS.readFile files `shouldReturn` before
+            output result `shouldSatisfy` (transcript `isInfixOf`)
+            forM_ lineNumbers $ \n -> output result `shouldSatisfy` (("line " <> show n <> ":") `isInfixOf`)
+            output result `shouldNotSatisfy` (BC.unpack bad `isInfixOf`)
+            if selection == "tui" then pure () else do
+              let json = Aeson.decodeStrict (BC.pack (hrStdout result)) :: Maybe Value
+              (json >>= jsonAt ["error"]) `shouldSatisfy` isJust
+              (json >>= jsonAt ["answer"]) `shouldBe` Nothing
+
+  forM_ [False, True] $ \legacyOnly ->
+    it ("resumes valid tool history and empty lines (#285), legacy-only=" <> show legacyOnly) $
+      withSandbox $ \ws -> do
+        (_, transcript) <- createSession ws
+        original <- BS.readFile transcript
+        BS.writeFile transcript ("\n" <> original <> "\n")
+        if legacyOnly then do
+          createDirectoryIfMissing True (ws </> ".agent")
+          renameDirectory (ws </> ".agents/sessions") (ws </> ".agent/sessions")
+        else pure ()
+        withInferenceFixture [completion "resumed"] $ \fx -> do
+          result <- runWith ws [] (compatible fx <> ["--continue", "continue"])
+          hrExit result `shouldBe` ExitSuccess
+          req <- singleRequest fx
+          bodyText req `shouldSatisfy` T.isInfixOf "remember private requirement"
+          toolResults req `shouldSatisfy` (not . null)
+          bodyText req `shouldSatisfy` T.isInfixOf "call_saved"
   it "continues a saved session at a newly configured endpoint and key" $
     withSandbox $ \ws ->
       withInferenceFixture [completion "noted the zebra"] $ \old ->
@@ -778,6 +832,22 @@ sessionSpec = describe "sessions" $
           savedArtifactsShouldNotContain ws "sk-old-key"
           savedArtifactsShouldNotContain ws "sk-new-key"
           savedArtifactsShouldNotContain ws (show (fixturePort old))
+
+-- Generate saved data through the executable, including a real tool round trip.
+createSession :: FilePath -> IO (String, FilePath)
+createSession ws = do
+  withInferenceFixture
+    [ toolCallCompletion [toolCall "call_saved" "list_dir" (object ["path" .= ("." :: Text)])] Nothing
+    , completion "noted"
+    ] $ \fx -> do
+      result <- runWith ws [] (compatible fx <> ["--permission-mode", "dontAsk", "remember private requirement"])
+      hrExit result `shouldBe` ExitSuccess
+      length <$> fixtureRequests fx `shouldReturn` 2
+  let dir = ws </> ".agents/sessions"
+  names <- filter (isInfixOf ".jsonl") <$> listDirectory dir
+  case names of
+    [name] -> pure (dropExtension name, dir </> name)
+    _ -> expectationFailure ("expected one transcript, got " <> show names) >> fail "unreachable"
 
 --------------------------------------------------------------------------------
 -- Budgets

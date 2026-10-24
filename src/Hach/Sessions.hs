@@ -24,7 +24,7 @@ module Hach.Sessions
   ) where
 
 import Hach.Types
-import Control.Exception (SomeException, try)
+import Control.Exception (Exception, SomeException, catch, throwIO, try)
 import Control.Monad (when)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
@@ -68,7 +68,17 @@ saveSession dir info msgs = do
       hPutStrLn stderr ("Session save error: " <> show ex)
     Right () -> pure ()
 
+-- | A selected transcript is not an absent session. Keep this failure distinct
+-- so workspace lookup cannot fall back to an older, legacy copy.
+newtype SessionLoadError = SessionLoadError String
+  deriving (Show)
+
+instance Exception SessionLoadError
+
 -- | Load session metadata and transcript messages from the sessions directory.
+-- Reject the entire transcript before exposing any history if a nonempty line
+-- cannot decode. Diagnostics deliberately omit both content and decoder errors,
+-- which may contain private messages.
 loadSession :: FilePath -> Text -> IO (Maybe (SessionInfo, [Message]))
 loadSession dir sid = do
   let sidStr = T.unpack sid
@@ -84,8 +94,13 @@ loadSession dir sid = do
       case Aeson.decodeStrict metaBytes of
         Nothing -> pure Nothing
         Just info -> do
-          let rawLines = BS.split 10 jsonlBytes -- newline '\n'
-              parsedMsgs = catMaybes [ Aeson.decodeStrict l | l <- rawLines, not (BS.null l) ]
+          let numberedLines = zip [1 :: Int ..] (BS.split 10 jsonlBytes)
+              decodeLine (lineNumber, bytes) = case Aeson.decodeStrict bytes of
+                Just msg -> pure msg
+                Nothing -> throwIO $ SessionLoadError
+                  ("Session load error: " <> jsonlFile <> ": line " <> show lineNumber
+                    <> ": invalid message in transcript.")
+          parsedMsgs <- mapM decodeLine (filter (not . BS.null . snd) numberedLines)
           pure (Just (info, parsedMsgs))
 
 -- | List all sessions in the directory, sorted by creation date descending.
@@ -212,22 +227,25 @@ resolveSessionLoad
   :: FilePath
   -> SessionTarget
   -> IO (Either String (Maybe (SessionInfo, [Message])))
-resolveSessionLoad workspace = \case
-  SessionNone -> pure (Right Nothing)
-  SessionContinue -> do
-    mLatestId <- getLatestWorkspaceSessionId workspace
-    case mLatestId of
-      Nothing -> pure (Left "No stored session found in workspace.")
-      Just sid -> do
-        mSession <- loadWorkspaceSession workspace sid
-        case mSession of
-          Just sess -> pure (Right (Just sess))
-          Nothing   -> pure (Left ("No stored session found in workspace (failed to load " <> T.unpack sid <> ")."))
-  SessionSpecific sid -> do
-    mSession <- loadWorkspaceSession workspace sid
-    case mSession of
-      Just sess -> pure (Right (Just sess))
-      Nothing   -> pure (Left ("No stored session found for session ID: " <> T.unpack sid))
+resolveSessionLoad workspace target =
+  resolve target `catch` \(SessionLoadError err) -> pure (Left err)
+  where
+  resolve = \case
+    SessionNone -> pure (Right Nothing)
+    SessionContinue -> do
+      mLatestId <- getLatestWorkspaceSessionId workspace
+      case mLatestId of
+        Nothing -> pure (Left "No stored session found in workspace.")
+        Just sid -> do
+          mSession <- loadWorkspaceSession workspace sid
+          case mSession of
+            Just sess -> pure (Right (Just sess))
+            Nothing   -> pure (Left ("No stored session found in workspace (failed to load " <> T.unpack sid <> ")."))
+    SessionSpecific sid -> do
+      mSession <- loadWorkspaceSession workspace sid
+      case mSession of
+        Just sess -> pure (Right (Just sess))
+        Nothing   -> pure (Left ("No stored session found for session ID: " <> T.unpack sid))
 
 isSystemMsg :: Message -> Bool
 isSystemMsg (SystemMsg _) = True
