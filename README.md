@@ -185,6 +185,8 @@ Compatible APIs often do not report a cost. When the cost is missing, the termin
 
 ## Development and testing
 
+Exploratory feedback: [2026-10-24 CLI coding, workspaces, and session reliability](docs/exploratory-testing/2026-10-24-cli-reliability.md).
+
 Fleet shares an 8-core macOS host with other repositories. Run only one Hach test or fuzz campaign at a time. The standard test command is `cabal test hach:test:hach-test --test-show-details=always`.
 
 The `hach` and `hach-integration-test` executables use the threaded RTS and default to `-N`. Set `GHCRTS=-N2` when you run those executables locally to limit them to two capabilities. Do not export `GHCRTS=-N2` for `hach-test` unless that test suite is first built with `-threaded`; the current test binary rejects `-N2`.
