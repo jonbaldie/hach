@@ -45,3 +45,6 @@ jobs:
 
       - name: Run Tests
         run: cabal test hach:test:hach-test --test-show-details=always
+
+      - name: Public CLI permission-outcome regression
+        run: python3 scripts/repro-288.py "$(cabal list-bin exe:hach)"
