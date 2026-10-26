@@ -5,9 +5,11 @@ module Hach.ToolsSpec (spec) where
 import Hach.Paths (Workspace(..), workspaceAt)
 import Hach.Tools
 import Hach.Types
+import Control.Monad (forM_)
+import Data.List (sort)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import System.Directory (Permissions(..), canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesFileExist, getPermissions, removeDirectoryRecursive, removeFile, removePathForcibly, setPermissions)
+import System.Directory (Permissions(..), canonicalizePath, createDirectoryIfMissing, createDirectoryLink, doesFileExist, getPermissions, listDirectory, removeDirectoryRecursive, removeFile, removePathForcibly, setPermissions)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.Process (readProcessWithExitCode)
@@ -459,15 +461,15 @@ spec = do
         createDirectoryIfMissing True workspace
         createDirectoryIfMissing True outside
         writeFile secretFile "TOP SECRET CONTENT\n"
+        writeFile (workspace </> "visible.txt") "VISIBLE CONTENT\n"
         createDirectoryLink outside externalLink
 
         findRes <- timeout 2000000 (executeFindFiles (workspaceAt workspace) (FindFilesArgs "*.txt" "."))
-        grepRes <- timeout 2000000 (executeGrepSearch (workspaceAt workspace) (GrepSearchArgs "TOP SECRET" "." True))
+        grepRes <- timeout 2000000 (executeGrepSearch (workspaceAt workspace) (GrepSearchArgs "CONTENT" "." True))
         case (findRes, grepRes) of
-          (Just (ToolSuccess findOut), Just (ToolSuccess grepOut)) ->
-            [ "secret.txt" `T.isInfixOf` findOut
-            , "TOP SECRET" `T.isInfixOf` grepOut
-            ] `shouldBe` [False, False]
+          (Just (ToolSuccess findOut), Just (ToolSuccess grepOut)) -> do
+            findOut `shouldBe` "visible.txt\n"
+            grepOut `shouldBe` "visible.txt:1: VISIBLE CONTENT\n"
           (Nothing, _) -> expectationFailure "find_files timed out while traversing a directory symlink"
           (_, Nothing) -> expectationFailure "grep_search timed out while traversing a directory symlink"
           (Just (ToolError err), _) -> expectationFailure (T.unpack err)
@@ -480,16 +482,71 @@ spec = do
         removePathForcibly workspace
         createDirectoryIfMissing True workspace
         createDirectoryLink workspace cycleLink
+        writeFile (workspace </> "visible.txt") "anything visible\n"
 
         findRes <- timeout 2000000 (executeFindFiles (workspaceAt workspace) (FindFilesArgs "*" "."))
         grepRes <- timeout 2000000 (executeGrepSearch (workspaceAt workspace) (GrepSearchArgs "anything" "." True))
         case (findRes, grepRes) of
           (Just (ToolSuccess findOut), Just (ToolSuccess grepOut)) ->
-            [findOut, grepOut] `shouldBe` ["No matching files found.", "No matches found."]
+            [findOut, grepOut] `shouldBe` ["visible.txt\n", "visible.txt:1: anything visible\n"]
           (Nothing, _) -> expectationFailure "find_files did not terminate on a cyclic directory symlink"
           (_, Nothing) -> expectationFailure "grep_search did not terminate on a cyclic directory symlink"
           (Just (ToolError err), _) -> expectationFailure (T.unpack err)
           (_, Just (ToolError err)) -> expectationFailure (T.unpack err)
+
+      it "enumerates nested and extra roots with one workspace-relative traversal contract" $ do
+        sandboxRoot <- canonicalizePath testSandbox
+        let root = sandboxRoot </> "traversal-primary"
+            extra = sandboxRoot </> "traversal-extra"
+            ws = Workspace root [extra]
+        forM_ [root, extra] $ \dir -> do
+          createDirectoryIfMissing True (dir </> "nested" </> "deeper")
+          writeFile (dir </> "visible.txt") "needle visible\n"
+          writeFile (dir </> "nested" </> "deeper" </> "leaf.txt") "needle leaf\n"
+          forM_ [".git", "dist-newstyle", ".env", ".cabal-sandbox", "node_modules"] $ \ignored -> do
+            createDirectoryIfMissing True (dir </> "nested" </> ignored)
+            writeFile (dir </> "nested" </> ignored </> "hidden.txt") "needle hidden\n"
+          createDirectoryLink (dir </> "nested") (dir </> "linked")
+        forM_ [".", extra] $ \start -> do
+          let args = "\",\"path\":\"" <> T.pack start <> "\"}"
+          forM_ ["find_files", "Glob"] $ \tool -> do
+            result <- executeCodingTool ws (ToolCall "find" tool ("{\"pattern\":\"*" <> args))
+            case result of
+              ToolSuccess out -> sort (T.lines out) `shouldBe` ["nested/deeper/leaf.txt", "visible.txt"]
+              ToolError err -> expectationFailure (T.unpack err)
+          forM_ ["grep_search", "Grep"] $ \tool -> do
+            result <- executeCodingTool ws (ToolCall "grep" tool ("{\"query\":\"needle" <> args))
+            case result of
+              ToolSuccess out -> sort (T.lines out) `shouldBe`
+                ["nested/deeper/leaf.txt:1: needle leaf", "visible.txt:1: needle visible"]
+              ToolError err -> expectationFailure (T.unpack err)
+
+      it "preserves filesystem order and the directory search limit" $ do
+        let root = testSandbox </> "traversal-order"
+            ws = workspaceAt root
+        createDirectoryIfMissing True root
+        forM_ [1 :: Int .. 105] $ \n ->
+          writeFile (root </> (show n ++ ".txt")) "needle\n"
+        entries <- listDirectory root
+        executeFindFiles ws (FindFilesArgs "*.txt" ".") `shouldReturn`
+          ToolSuccess (T.unlines (map T.pack (take 100 entries)))
+        executeGrepSearch ws (GrepSearchArgs "needle" "." True) `shouldReturn`
+          ToolSuccess (T.unlines [T.pack entry <> ":1: needle" | entry <- take 100 entries])
+
+      it "preserves missing-path diagnostics and direct-file grep behavior" $ do
+        let ws = workspaceAt testSandbox
+        executeFindFiles ws (FindFilesArgs "*" "missing") `shouldReturn`
+          ToolError "Directory not found: missing"
+        executeGrepSearch ws (GrepSearchArgs "needle" "missing" True) `shouldReturn`
+          ToolError "Path does not exist: missing"
+        forM_ ["find_files", "grep_search", "Glob", "Grep"] $ \tool -> do
+          executeCodingTool ws (ToolCall "bad" tool "{\"pattern\":\"*\",\"query\":\"needle\",\"path\":\"../escape\"}")
+            `shouldReturn` ToolError "Access denied: path '../escape' escapes the workspace root."
+        writeFile (testSandbox </> "direct.txt") "Needle\nother\nneedle\n"
+        executeGrepSearch ws (GrepSearchArgs "needle" "direct.txt" False) `shouldReturn`
+          ToolSuccess "direct.txt:1: Needle\ndirect.txt:3: needle\n"
+        executeFindFiles ws (FindFilesArgs "*" "direct.txt") `shouldReturn`
+          ToolError "Directory not found: direct.txt"
 
       it "executes find_files via executeCodingTool and reports accurate error on parse failure" $ do
         let nestedFile = testSandbox </> "sub" </> "alpha.txt"

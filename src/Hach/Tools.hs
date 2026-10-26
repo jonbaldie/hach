@@ -1333,17 +1333,25 @@ executeFindFiles ws (FindFilesArgs pat searchPath) = do
       if not dirExists
         then pure $ ToolError ("Directory not found: " <> T.pack searchPath)
         else do
-          files <- traverseDir startDir
-          let matches = filter (matchPattern pat) files
+          files <- workspaceFiles ws startDir
+          let matches = filter (matchPattern pat) (map fst files)
               limited = take 100 matches
               resText = if null limited
                 then "No matching files found."
                 else T.unlines (map T.pack limited)
           pure $ ToolSuccess resText
+
+-- | Enumerate descendants of a resolved workspace directory, in filesystem
+-- order, as (workspace-relative display name, full path) pairs. Callers resolve
+-- and validate the starting path so their tool-specific diagnostics stay intact.
+-- Ignored names and symlinks are skipped; directory enumeration errors yield
+-- no files, as they did in both search tools before this shared traversal.
+workspaceFiles :: Workspace -> FilePath -> IO [(FilePath, FilePath)]
+workspaceFiles ws = walk
   where
     ignoredDirs = [".git", "dist-newstyle", ".env", ".cabal-sandbox", "node_modules"]
 
-    traverseDir current = do
+    walk current = do
       entriesRes <- try (listDirectory current) :: IO (Either SomeException [FilePath])
       case entriesRes of
         Left _ -> pure []
@@ -1357,10 +1365,10 @@ executeFindFiles ws (FindFilesArgs pat searchPath) = do
               else do
                 isDir <- doesDirectoryExist full
                 if isDir
-                  then traverseDir full
+                  then walk full
                   else do
                     rel <- relativeToWorkspace ws full
-                    pure [rel]
+                    pure [(rel, full)]
           pure (concat subResults)
 
 -- | Pattern matcher for find_files: '*' wildcards match across path separators
@@ -1389,7 +1397,7 @@ executeGrepSearch ws (GrepSearchArgs query searchPath caseSensitive) = do
           pure $ ToolSuccess (if null matches then "No matches found." else T.unlines matches)
         else if isDir
           then do
-            files <- collectFiles startPath
+            files <- workspaceFiles ws startPath
             matches <- forM files $ \(rel, full) -> grepInFile rel full
             let allMatches = concat matches
                 limited = take 100 allMatches
@@ -1397,28 +1405,6 @@ executeGrepSearch ws (GrepSearchArgs query searchPath caseSensitive) = do
           else
             pure $ ToolError ("Path does not exist: " <> T.pack searchPath)
   where
-    ignoredDirs = [".git", "dist-newstyle", ".env", ".cabal-sandbox", "node_modules"]
-
-    collectFiles current = do
-      entriesRes <- try (listDirectory current) :: IO (Either SomeException [FilePath])
-      case entriesRes of
-        Left _ -> pure []
-        Right entries -> do
-          let valid = filter (`notElem` ignoredDirs) entries
-          subResults <- forM valid $ \entry -> do
-            let full = current </> entry
-            isSymlink <- pathIsSymbolicLink full
-            if isSymlink
-              then pure []
-              else do
-                isDir <- doesDirectoryExist full
-                if isDir
-                  then collectFiles full
-                  else do
-                    rel <- relativeToWorkspace ws full
-                    pure [(rel, full)]
-          pure (concat subResults)
-
     grepInFile rel full = do
       res <- try (BS.readFile full) :: IO (Either SomeException BS.ByteString)
       case res of
