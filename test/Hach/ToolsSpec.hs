@@ -528,25 +528,31 @@ spec = do
         forM_ [1 :: Int .. 105] $ \n ->
           writeFile (root </> (show n ++ ".txt")) "needle\n"
         entries <- listDirectory root
-        executeFindFiles ws (FindFilesArgs "*.txt" ".") `shouldReturn`
-          ToolSuccess (T.unlines (map T.pack (take 100 entries)))
-        executeGrepSearch ws (GrepSearchArgs "needle" "." True) `shouldReturn`
-          ToolSuccess (T.unlines [T.pack entry <> ":1: needle" | entry <- take 100 entries])
+        forM_ ["find_files", "Glob"] $ \tool ->
+          executeCodingTool ws (ToolCall "find" tool "{\"pattern\":\"*.txt\"}") `shouldReturn`
+            ToolSuccess (T.unlines (map T.pack (take 100 entries)))
+        forM_ ["grep_search", "Grep"] $ \tool ->
+          executeCodingTool ws (ToolCall "grep" tool "{\"query\":\"needle\"}") `shouldReturn`
+            ToolSuccess (T.unlines [T.pack entry <> ":1: needle" | entry <- take 100 entries])
 
       it "preserves missing-path diagnostics and direct-file grep behavior" $ do
         let ws = workspaceAt testSandbox
-        executeFindFiles ws (FindFilesArgs "*" "missing") `shouldReturn`
-          ToolError "Directory not found: missing"
-        executeGrepSearch ws (GrepSearchArgs "needle" "missing" True) `shouldReturn`
-          ToolError "Path does not exist: missing"
+        forM_ ["find_files", "Glob"] $ \tool ->
+          executeCodingTool ws (ToolCall "find" tool "{\"pattern\":\"*\",\"path\":\"missing\"}") `shouldReturn`
+            ToolError "Directory not found: missing"
+        forM_ ["grep_search", "Grep"] $ \tool ->
+          executeCodingTool ws (ToolCall "grep" tool "{\"query\":\"needle\",\"path\":\"missing\"}") `shouldReturn`
+            ToolError "Path does not exist: missing"
         forM_ ["find_files", "grep_search", "Glob", "Grep"] $ \tool -> do
           executeCodingTool ws (ToolCall "bad" tool "{\"pattern\":\"*\",\"query\":\"needle\",\"path\":\"../escape\"}")
             `shouldReturn` ToolError "Access denied: path '../escape' escapes the workspace root."
         writeFile (testSandbox </> "direct.txt") "Needle\nother\nneedle\n"
-        executeGrepSearch ws (GrepSearchArgs "needle" "direct.txt" False) `shouldReturn`
-          ToolSuccess "direct.txt:1: Needle\ndirect.txt:3: needle\n"
-        executeFindFiles ws (FindFilesArgs "*" "direct.txt") `shouldReturn`
-          ToolError "Directory not found: direct.txt"
+        forM_ ["grep_search", "Grep"] $ \tool ->
+          executeCodingTool ws (ToolCall "grep" tool "{\"query\":\"needle\",\"path\":\"direct.txt\",\"case_sensitive\":false}") `shouldReturn`
+            ToolSuccess "direct.txt:1: Needle\ndirect.txt:3: needle\n"
+        forM_ ["find_files", "Glob"] $ \tool ->
+          executeCodingTool ws (ToolCall "find" tool "{\"pattern\":\"*\",\"path\":\"direct.txt\"}") `shouldReturn`
+            ToolError "Directory not found: direct.txt"
 
       it "executes find_files via executeCodingTool and reports accurate error on parse failure" $ do
         let nestedFile = testSandbox </> "sub" </> "alpha.txt"
