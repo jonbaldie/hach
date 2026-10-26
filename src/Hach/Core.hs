@@ -50,12 +50,13 @@ module Hach.Core
   , StopReason(..)
   , RunFailure(..)
   , runOutcome
-  , historyBlockedByHeadlessAsks
-  , headlessAskBlockedMessageForHistory
+  , ToolCallOutcome(..)
+  , outcomesBlockedByHeadlessAsks
+  , headlessAskBlockedMessageForOutcomes
   ) where
 
 import Hach.Types
-import Hach.Tools (resolveTool, resolveToolIdentity, resolvedToolCanonicalName)
+import Hach.Tools (resolveTool, resolveToolIdentity, resolvedToolCanonicalName, resolvedToolAuthority)
 import Control.Monad (forM)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
@@ -77,7 +78,7 @@ data AgentF next
   | ExecuteTool !ToolCall (ToolResult -> next)
   | LogEvent !AgentEvent next
   | EvaluateGoal !Text ![Message] (GoalEvaluation -> next)
-  | CheckPermission !Text !Text (Maybe Text -> next)
+  | CheckPermission !Text !Text (Maybe PermissionDenial -> next)
   | RunHook !HookEvent !Text (HookResult -> next)
   | SaveSession !SessionInfo (Text -> next)
   | LoadSession !SessionId (Maybe SessionInfo -> next)
@@ -131,8 +132,8 @@ logEvent ev = Free (LogEvent ev (Pure ()))
 evaluateGoal :: Text -> [Message] -> AgentProgram GoalEvaluation
 evaluateGoal condition transcript = Free (EvaluateGoal condition transcript Pure)
 
--- | 'Nothing' allows the tool; 'Just reason' denies it with that message.
-checkPermission :: Text -> Text -> AgentProgram (Maybe Text)
+-- | 'Nothing' allows the tool; a refusal retains structured permission facts.
+checkPermission :: Text -> Text -> AgentProgram (Maybe PermissionDenial)
 checkPermission tool args = Free (CheckPermission tool args Pure)
 
 runHook :: HookEvent -> Text -> AgentProgram HookResult
@@ -258,7 +259,7 @@ data AgentAlgebra m = AgentAlgebra
   , interpTool             :: ToolCall -> m ToolResult
   , interpLog              :: AgentEvent -> m ()
   , interpEvaluate         :: Text -> [Message] -> m GoalEvaluation
-  , interpCheckPermission  :: Text -> Text -> m (Maybe Text)
+  , interpCheckPermission  :: Text -> Text -> m (Maybe PermissionDenial)
   , interpRunHook          :: HookEvent -> Text -> m HookResult
   , interpSaveSession      :: SessionInfo -> m Text
   , interpLoadSession      :: SessionId -> m (Maybe SessionInfo)
@@ -365,20 +366,38 @@ agentStep
   -> Double
   -> [Message]
   -> AgentProgram (Either (AgentResult, [Message], Double) ([Message], Double))
-agentStep cfg tools turn spent currentHistory
+agentStep cfg tools turn spent hist = do
+  (step, _) <- agentStepWithOutcomes cfg tools turn spent [] hist
+  pure step
+
+-- | Execution facts are local to this run, parallel to the model-visible
+-- Transcript. Legacy sessions contain no facts and cannot invent denials.
+data ToolCallOutcome
+  = ToolExecuted !ToolAuthority
+  | ToolPermissionDenied !PermissionDenial
+  | ToolHookBlocked
+  | ToolInvalid
+  deriving (Show, Eq)
+
+type StepResult = Either (AgentResult, [Message], Double) ([Message], Double)
+
+agentStepWithOutcomes
+  :: AgentConfig -> [ToolDef] -> Int -> Double -> [ToolCallOutcome] -> [Message]
+  -> AgentProgram (StepResult, [ToolCallOutcome])
+agentStepWithOutcomes cfg tools turn spent outcomes currentHistory
   | maybe False (turn >) (cfgMaxTurns cfg) = do
       logEvent (EvError "Maximum turns exceeded")
-      pure $ Left (AgentMaxTurnsReached (turn - 1), currentHistory, spent)
+      pure (Left (AgentMaxTurnsReached (turn - 1), currentHistory, spent), outcomes)
   | Just budget <- cfgMaxBudgetUsd cfg, spent >= budget = do
       logEvent (EvError "Budget exceeded")
-      pure $ Left (AgentBudgetExceeded spent budget, currentHistory, spent)
+      pure (Left (AgentBudgetExceeded spent budget, currentHistory, spent), outcomes)
   | otherwise = do
       logEvent (EvTurnStart turn)
       logEvent (EvPromptingLLM (length currentHistory))
       promptLLM currentHistory tools >>= \case
         Left err -> do
           logEvent (EvError err)
-          pure $ Left (AgentFailed err, currentHistory, spent)
+          pure (Left (AgentFailed err, currentHistory, spent), outcomes)
         Right resp -> do
           logEvent (EvLLMResponse (respContent resp) (respToolCalls resp) (respUsage resp))
           let spent' = spent + responseCostUsd resp
@@ -389,21 +408,21 @@ agentStep cfg tools turn spent currentHistory
               let content = fromMaybe "" (respContent resp)
                   finalHistory = currentHistory ++ [AssistantMsg (respContent resp) []]
                   result
-                    | historyBlockedByHeadlessAsks finalHistory =
-                        AgentFailed (headlessAskBlockedMessageForHistory finalHistory)
+                    | outcomesBlockedByHeadlessAsks outcomes =
+                        AgentFailed (headlessAskBlockedMessageForOutcomes outcomes)
                     | otherwise = AgentCompleted content
               case result of
                 AgentCompleted answer -> logEvent (EvDone answer)
                 AgentFailed err -> logEvent (EvError err)
                 _ -> pure ()
-              pure $ Left (result, finalHistory, spent')
+              pure (Left (result, finalHistory, spent'), outcomes)
 
             calls -> do
               -- The assistant invoked one or more tools.
               -- Record the assistant's intention in history first.
               let asstMsg = AssistantMsg (respContent resp) calls
               -- Execute each tool call in sequence, checking hooks and permissions.
-              toolMsgs <- forM calls $ \call -> do
+              toolResults <- forM calls $ \call -> do
                 logEvent (EvToolCall (functionName call) (callArgsRaw call))
                 case resolveTool call of
                   Just (Right _) -> do
@@ -416,7 +435,7 @@ agentStep cfg tools turn spent currentHistory
                       then do
                         logEvent (EvHookTriggered "PreToolUse" "Blocked tool execution")
                         logEvent (EvPermissionDenied (functionName call) "Blocked by PreToolUse hook")
-                        pure $ ToolMsg (callId call) (functionName call) "Execution blocked by PreToolUse hook."
+                        pure (ToolMsg (callId call) (functionName call) "Execution blocked by PreToolUse hook.", ToolHookBlocked)
                       else do
                         let effectiveCall = case hrModifiedInput preHook of
                               Just newVal -> call { callArgsRaw = TE.decodeUtf8 (BSL.toStrict (Aeson.encode newVal)) }
@@ -427,9 +446,10 @@ agentStep cfg tools turn spent currentHistory
                             let permissionTool = resolvedToolCanonicalName tool
                             mDenied <- checkPermission permissionTool (callArgsRaw effectiveCall)
                             case mDenied of
-                              Just reason -> do
+                              Just denial -> do
+                                let reason = permissionDenialReason denial
                                 logEvent (EvPermissionDenied permissionTool reason)
-                                pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) reason
+                                pure (ToolMsg (callId effectiveCall) (functionName effectiveCall) reason, ToolPermissionDenied denial)
                               Nothing -> do
                                 res <- executeTool effectiveCall
                                 logEvent (EvToolResult (functionName effectiveCall) res)
@@ -438,32 +458,34 @@ agentStep cfg tools turn spent currentHistory
                                     finalOutput = case hrAdditionalContext postHook of
                                       Just extra -> baseOutput <> "\n[Additional Context]: " <> extra
                                       Nothing    -> baseOutput
-                                pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) finalOutput
+                                pure (ToolMsg (callId effectiveCall) (functionName effectiveCall) finalOutput, ToolExecuted (resolvedToolAuthority tool))
                           Just (Left err) -> do
                             let res = ToolError err
                             logEvent (EvToolResult (functionName effectiveCall) res)
-                            pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) (toolResultToText res)
+                            pure (ToolMsg (callId effectiveCall) (functionName effectiveCall) (toolResultToText res), ToolInvalid)
                           Nothing -> do
                             let res = ToolError ("Unknown tool function: " <> functionName effectiveCall)
                             logEvent (EvToolResult (functionName effectiveCall) res)
-                            pure $ ToolMsg (callId effectiveCall) (functionName effectiveCall) (toolResultToText res)
+                            pure (ToolMsg (callId effectiveCall) (functionName effectiveCall) (toolResultToText res), ToolInvalid)
                   Just (Left err) -> do
                         let res = ToolError err
                         logEvent (EvToolResult (functionName call) res)
-                        pure $ ToolMsg (callId call) (functionName call) (toolResultToText res)
+                        pure (ToolMsg (callId call) (functionName call) (toolResultToText res), ToolInvalid)
                   Nothing -> do
                     let res = ToolError ("Unknown tool function: " <> functionName call)
                     logEvent (EvToolResult (functionName call) res)
-                    pure $ ToolMsg (callId call) (functionName call) (toolResultToText res)
+                    pure (ToolMsg (callId call) (functionName call) (toolResultToText res), ToolInvalid)
 
-              let updatedHistory = currentHistory ++ [asstMsg] ++ toolMsgs
+              let (toolMsgs, newOutcomes) = unzip toolResults
+                  outcomes' = outcomes ++ newOutcomes
+                  updatedHistory = currentHistory ++ [asstMsg] ++ toolMsgs
               logEvent (EvTurnComplete turn)
               case unproductiveRepeatedToolCall updatedHistory of
                 Just err -> do
                   logEvent (EvError err)
-                  pure $ Left (AgentFailed err, updatedHistory, spent')
+                  pure (Left (AgentFailed err, updatedHistory, spent'), outcomes')
                 Nothing ->
-                  pure $ Right (updatedHistory, spent')
+                  pure (Right (updatedHistory, spent'), outcomes')
 
 responseCostUsd :: AssistantResponse -> Double
 responseCostUsd resp = fromMaybe 0 (respUsage resp >>= tuCost)
@@ -482,12 +504,13 @@ agentLoop
   -> AgentProgram (AgentResult, [Message], Double)
 agentLoop cfg tools initialHistory =
   withPromptHooks (\err -> (AgentFailed err, initialHistory, 0)) (\(result, _, _) -> result)
-    initialHistory (loop 1 0)
+    initialHistory (loop 1 0 [])
   where
-    loop turn spent hist = do
-      agentStep cfg tools turn spent hist >>= \case
-        Left done                   -> pure done
-        Right (nextHist, spent')    -> loop (turn + 1) spent' nextHist
+    loop turn spent outcomes hist = do
+      (step, outcomes') <- agentStepWithOutcomes cfg tools turn spent outcomes hist
+      case step of
+        Left done -> pure done
+        Right (nextHist, spent') -> loop (turn + 1) spent' outcomes' nextHist
 
 -- | Consecutive identical read-only tool calls with no intervening edit
 -- after which the harness fails fast instead of burning the context window.
@@ -523,7 +546,7 @@ goalLoop
 goalLoop cfg tools condition blockCap initialHistory = do
   logEvent (EvGoalSet condition)
   withPromptHooks rejected (\(result, _, _, _) -> result) initialHistory
-    (loop 1 0 (initialGoalState condition))
+    (loop 1 0 [] (initialGoalState condition))
   where
     rejected err =
       (AgentFailed err, initialHistory, (initialGoalState condition) { gsStatus = GoalFailed }, 0)
@@ -532,11 +555,12 @@ goalLoop cfg tools condition blockCap initialHistory = do
     -- the counter would otherwise exceed the cap.  1 is the smallest value
     -- that lets the invariant 'gsNoProgressCount <= blockCap' hold.
     effectiveCap = max 1 blockCap
-    loop turn spent gs hist = do
-      agentStep cfg tools turn spent hist >>= \case
+    loop turn spent outcomes gs hist = do
+      (step, outcomes') <- agentStepWithOutcomes cfg tools turn spent outcomes hist
+      case step of
         Right (nextHist, spent') ->
           -- Tool calls were made: progress.  Reset no-progress counter.
-          loop (turn + 1) spent' gs { gsNoProgressCount = 0 } nextHist
+          loop (turn + 1) spent' outcomes' gs { gsNoProgressCount = 0 } nextHist
 
         Left (result, finalHist, spent') -> case result of
           AgentCompleted content ->
@@ -584,7 +608,7 @@ goalLoop cfg tools condition blockCap initialHistory = do
                               ( "Goal not yet met. " <> reason
                               <> " Continue working toward: " <> condition )
                             newHist = finalHist ++ [guidance]
-                        loop (turn + 1) spentWithEval g1 newHist
+                        loop (turn + 1) spentWithEval outcomes' g1 newHist
 
           AgentMaxTurnsReached _n ->
             pure (result, finalHist, gs, spent')
@@ -636,44 +660,26 @@ runOutcome result mGs = case result of
       Just r | not (T.null (T.strip r)) -> r
       _                                 -> "condition not satisfied"
 
--- | True when the run requested at least one write/command that was denied
--- because headless mode cannot prompt, and no such mutation actually ran.
-historyBlockedByHeadlessAsks :: [Message] -> Bool
-historyBlockedByHeadlessAsks hist =
-  let mutationMsgs = [ content | ToolMsg _ name content <- hist, isMutationTool name ]
-      headlessDenies = filter isHeadlessAskDeniedReason mutationMsgs
-      successes = filter (not . isDeniedToolOutput) mutationMsgs
-  in not (null headlessDenies) && null successes
+-- | A headless approval refusal blocks completion only if no mutation ran.
+-- Executed errors count as execution too: this diagnoses approval, not tool
+-- success. Output text, hook context, and legacy Transcript text are irrelevant.
+outcomesBlockedByHeadlessAsks :: [ToolCallOutcome] -> Bool
+outcomesBlockedByHeadlessAsks outcomes =
+  any isHeadlessMutationDenial outcomes && not (any isExecutedMutation outcomes)
+  where
+    isHeadlessMutationDenial (ToolPermissionDenied (HeadlessAskDenied _ authority)) = authority /= AuthorityRead
+    isHeadlessMutationDenial _ = False
+    isExecutedMutation (ToolExecuted authority) = authority /= AuthorityRead
+    isExecutedMutation _ = False
 
--- | Format the blocked task error message based on the mutations that were
--- denied in history. If any command was denied or if acceptEdits was already
--- in effect, recommends dontAsk or allow rules; otherwise recommends acceptEdits.
-headlessAskBlockedMessageForHistory :: [Message] -> Text
-headlessAskBlockedMessageForHistory hist =
-  let deniedEntries =
-        [ (name, content)
-        | ToolMsg _ name content <- hist
-        , isMutationTool name
-        , isHeadlessAskDeniedReason content
-        ]
-      authorities =
-        [ if T.isInfixOf "dontAsk" content
-            then AuthorityCommand
-            else case resolveToolIdentity name of
-                   Just (_, auth) -> auth
-                   Nothing        -> AuthorityCommand
-        | (name, content) <- deniedEntries
-        ]
-      isAcceptEditsMode = any (\(_, content) -> not (T.isInfixOf "acceptEdits" content)) deniedEntries
-      mode = if isAcceptEditsMode then ModeAcceptEdits else ModeDefault
-  in headlessAskBlockedMessage mode authorities
-
-isDeniedToolOutput :: Text -> Bool
-isDeniedToolOutput content =
-  let lower = T.toLower content
-  in isHeadlessAskDeniedReason content
-     || T.isInfixOf "denied" lower
-     || T.isInfixOf "blocked" lower
+headlessAskBlockedMessageForOutcomes :: [ToolCallOutcome] -> Text
+headlessAskBlockedMessageForOutcomes outcomes =
+  let denials = [ (mode, authority)
+                | ToolPermissionDenied (HeadlessAskDenied mode authority) <- outcomes
+                , authority /= AuthorityRead
+                ]
+      mode = if any ((== ModeAcceptEdits) . fst) denials then ModeAcceptEdits else ModeDefault
+  in headlessAskBlockedMessage mode (map snd denials)
 
 isMutationTool :: Text -> Bool
 isMutationTool name =

@@ -20,6 +20,20 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "typed headless approval outcomes (Issue #288)" $ do
+    let headless = ToolPermissionDenied (HeadlessAskDenied ModeDefault AuthorityWorkspaceWrite)
+    it "ignores policy and hook denials as evidence of execution" $ do
+      outcomesBlockedByHeadlessAsks
+        [headless, ToolPermissionDenied (PolicyDenied "arbitrary wording"), ToolHookBlocked]
+        `shouldBe` True
+    it "does not let a read count as a mutation, but counts any executed mutation" $ do
+      outcomesBlockedByHeadlessAsks [headless, ToolExecuted AuthorityRead] `shouldBe` True
+      outcomesBlockedByHeadlessAsks [headless, ToolExecuted AuthorityCommand] `shouldBe` False
+    it "does not infer headless approval failures from diagnostic text" $ do
+      outcomesBlockedByHeadlessAsks
+        [ToolPermissionDenied (PolicyDenied (headlessAskDeniedReason ModeDefault AuthorityWorkspaceWrite))]
+        `shouldBe` False
+
   let baseConfig = AgentConfig
         { cfgModel = "test-model"
         , cfgSystemPrompt = Just "You are an assistant."

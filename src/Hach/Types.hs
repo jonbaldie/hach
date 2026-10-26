@@ -49,6 +49,8 @@ module Hach.Types
   , ToolAuthority(..)
   , permissionModeName
   , PermissionDecision(..)
+  , PermissionDenial(..)
+  , permissionDenialReason
   , interactiveAskDeniedReason
   , headlessAskDeniedReason
   , headlessAskBlockedMessage
@@ -736,6 +738,19 @@ instance FromJSON RuleAction where
     "ask"   -> pure RuleAsk
     "deny"  -> pure RuleDeny
     other   -> fail ("Unknown rule action: " <> T.unpack other)
+
+-- | Why a permission check refused a call. Headless approval failures retain
+-- the mode and resolved authority at the decision point, not in parsed prose.
+data PermissionDenial
+  = PolicyDenied !Text
+  | ApprovalDenied !Text
+  | HeadlessAskDenied !PermissionMode !ToolAuthority
+  deriving (Show, Eq, Generic)
+
+permissionDenialReason :: PermissionDenial -> Text
+permissionDenialReason (PolicyDenied reason) = reason
+permissionDenialReason (ApprovalDenied reason) = reason
+permissionDenialReason (HeadlessAskDenied mode authority) = headlessAskDeniedReason mode authority
 
 -- | Permission rule matching by tool and optional path glob.
 data PermissionRule = PermissionRule

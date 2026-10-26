@@ -216,7 +216,7 @@ pureAlgebra = AgentAlgebra
       env <- getEnv
       pure $ if mockPermissions env tool args
         then Nothing
-        else Just interactiveAskDeniedReason
+        else Just (ApprovalDenied interactiveAskDeniedReason)
 
   , interpRunHook = \ev payload -> do
       modifyEnv $ \e -> e { mockHookCalls = mockHookCalls e ++ [(ev, payload)] }
