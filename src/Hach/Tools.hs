@@ -1432,7 +1432,7 @@ executeWebFetch (WebFetchArgs url) = do
       case reqRes of
         Left ex -> pure $ ToolError ("Invalid URL '" <> url <> "': " <> T.pack (show ex))
         Right req -> do
-          let req' = req { requestHeaders = [("User-Agent", "hach/0.1.15.0")] }
+          let req' = req { requestHeaders = [("User-Agent", "hach/0.1.16.0")] }
           respRes <- try (httpLbs req' mgr) :: IO (Either SomeException (Response BSL.ByteString))
           case respRes of
             Left ex -> pure $ ToolError ("HTTP fetch error: " <> T.pack (show ex))

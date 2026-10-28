@@ -337,7 +337,7 @@ fetchOpenRouterModels mgr conn = do
       req0 <- parseRequest (T.unpack endpoint)
       let req = req0
             { requestHeaders =
-                [ ("User-Agent", "hach/0.1.15.0")
+                [ ("User-Agent", "hach/0.1.16.0")
                 , ("Accept", "application/json")
                 ] ++ maybe [] (\k -> [("Authorization", "Bearer " <> TE.encodeUtf8 k)]) (icApiKey conn)
             , responseTimeout = responseTimeoutMicro 3000000
