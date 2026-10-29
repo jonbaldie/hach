@@ -24,7 +24,7 @@ cabal update
 cabal build exe:hach
 ```
 
-To try another GHC version, copy the project file and build with the copy. Cabal will resolve dependencies without the release freeze file. Other compiler versions are not supported. GHC 9.8.4 fails to compile the current source. The resulting dependency plan is not reproducible.
+To try another GHC version, copy the project file and build with the copy. Cabal resolves dependencies without the release freeze file but retains the project constraints. Other compiler versions are not supported. GHC 9.8.4 fails to compile the current source. GHC 9.12.4 built successfully on Linux with this method. The resulting dependency plan is not reproducible unless you freeze the separate plan.
 
 ```bash
 cp cabal.project cabal.source.project
