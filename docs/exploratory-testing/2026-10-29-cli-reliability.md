@@ -14,7 +14,7 @@ No new bugs were confirmed. The session corruption replay checked the previously
 | Initialize a project and work in an isolated git worktree | `--init` created guidelines and `-w explore --exec` edited a tracked file. | A second `--init` left the file unchanged. Reopening the worktree retained the edit and the root file remained `original`. A path with spaces and `café` worked. A traversal name returned a JSON error. |
 | Recover from an API error and protect saved sessions | A local compatible API returned a response. A 503 produced a JSON error, and a retry succeeded. | Zero budget made no request. A final answer costing more than the positive budget completed, as documented. Two damaged transcripts each produced a JSON load error, made no request, and retained their damaged bytes. |
 
-The `--exec` command preserved stdout, stderr, and exit status 7. Invalid UTF-8 in command output produced replacement characters without a crash. These are CLI observations, not model evaluations.
+The `--exec` command preserved stdout, stderr, and exit status 7. A command emitting invalid UTF-8 completed without a crash. The driver decodes captured output with replacement, so it cannot attribute the replacement characters to Hach. These are CLI observations, not model evaluations.
 
 ## Session corruption replay
 
@@ -28,4 +28,4 @@ The checked-in `cabal.project.freeze` was used for `cabal build exe:hach -j2`. T
 
 Each CLI journey used a fresh temporary workspace and isolated configuration. The HTTP fixture returned deterministic responses. It cannot establish real-provider availability or model quality. No OpenRouter key was available in the environment or checkout, so a live coding journey was not attempted. Interactive TUI, cancellation, MCP, and long-running tasks were not explored. No full test suite was run.
 
-The driver shuts down the fixture in a `finally` block and removes its temporary workspace. The container was registered with an exit trap before it started. The run removed its container and pulled image after the build. No Docker volumes were created. Build outputs and the compiler installation were confined to the worktree and removed after publication.
+The driver shuts down the fixture in a `finally` block and removes its temporary workspace. The container was registered with an exit trap before it started. The run removed its container and pulled image after the build. No Docker volumes were created. Build outputs and the compiler installation were confined to the worktree. The run plans to remove them with the worktree after publication.
