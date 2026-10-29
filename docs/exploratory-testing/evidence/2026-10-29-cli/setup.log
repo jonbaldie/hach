@@ -1,0 +1,55 @@
++ docker image inspect haskell:9.12-bookworm
++ trap 'docker rm -f hach-explore-20261029 >/dev/null 2>&1 || true; docker image rm haskell:9.12-bookworm >/dev/null 2>&1 || true' EXIT
++ docker pull haskell:9.12-bookworm
+9.12-bookworm: Pulling from library/haskell
+c3427bc290e8: Pulling fs layer
+7062f2aa45e0: Pulling fs layer
+6f7c95770609: Pulling fs layer
+a4aa977c0d0e: Pulling fs layer
+07f1ecbc01a5: Pulling fs layer
+7062f2aa45e0: Download complete
+7dfd05aac580: Download complete
+c3427bc290e8: Download complete
+74ab34dbeb84: Download complete
+a4aa977c0d0e: Download complete
+6f7c95770609: Download complete
+a4aa977c0d0e: Pull complete
+07f1ecbc01a5: Download complete
+6f7c95770609: Pull complete
+c3427bc290e8: Pull complete
+7062f2aa45e0: Pull complete
+07f1ecbc01a5: Pull complete
+Digest: sha256:c7ceb9a04e353674d486e3ba2d051abfc57e6c9ba1392567d76903394074951c
+Status: Downloaded newer image for haskell:9.12-bookworm
+docker.io/library/haskell:9.12-bookworm
++ docker run --name hach-explore-20261029 --cpus=2 --memory=2g -v /home/ubuntu/Code/pstack/jonbaldie/hach-explore-20261029:/workspace -w /workspace -e HOME=/workspace/.explore-home -e CABAL_DIR=/workspace/.explore-home/.cabal haskell:9.12-bookworm sh -c 'ghc --version; cabal --version; cabal update && cabal build exe:hach -j2'
+The Glorious Glasgow Haskell Compilation System, version 9.12.4
+cabal-install version 3.14.1.1
+compiled using version 3.14.1.1 of the Cabal library
+Config file path source is default config file.
+Config file not found: /workspace/.explore-home/.cabal/config
+Writing default configuration to /workspace/.explore-home/.cabal/config
+Configuration is affected by the following files:
+- cabal.project
+- cabal.project.freeze
+Downloading the latest package list from hackage.haskell.org
+Package list of hackage.haskell.org has been updated.
+The index-state is set to 2026-10-29T08:59:13Z.
+Configuration is affected by the following files:
+- cabal.project
+- cabal.project.freeze
+Resolving dependencies...
+Error: [Cabal-7107]
+Could not resolve dependencies:
+[__0] trying: hach-0.1.16.0 (user goal)
+[__1] next goal: base (dependency of hach)
+[__1] rejecting: base; 4.21.2.0/installed-b708, 4.22.0.0, 4.21.2.0, 4.21.1.0
+      (constraint from cabal.project.freeze requires ==4.21.0.0)
+[__1] rejecting: base-4.21.0.0 (constraint from non-reinstallable package requires installed instance)
+[__1] rejecting: base; 4.20.2.0, 4.20.1.0, 4.20.0.1, 4.20.0.0, 4.19.2.0, 4.19.1.0, 4.19.0.0, 4.18.3.0, 4.18.2.1, 4.18.2.0, 4.18.1.0, 4.18.0.0, 4.17.2.1, 4.17.2.0, 4.17.1.0, 4.17.0.0, 4.16.4.0, 4.16.3.0, 4.16.2.0, 4.16.1.0, 4.16.0.0, 4.15.1.0, 4.15.0.0, 4.14.3.0, 4.14.2.0, 4.14.1.0, 4.14.0.0, 4.13.0.0, 4.12.0.0, 4.11.1.0, 4.11.0.0, 4.10.1.0, 4.10.0.0, 4.9.1.0, 4.9.0.0, 4.8.2.0, 4.8.1.0, 4.8.0.0, 4.7.0.2, 4.7.0.1, 4.7.0.0, 4.6.0.1, 4.6.0.0, 4.5.1.0, 4.5.0.0, 4.4.1.0, 4.4.0.0, 4.3.1.0, 4.3.0.0, 4.2.0.2, 4.2.0.1, 4.2.0.0, 4.1.0.0, 4.0.0.0, 3.0.3.2, 3.0.3.1
+      (constraint from cabal.project.freeze requires ==4.21.0.0)
+[__1] fail (backjumping, conflict set: base, hach)
+After searching the rest of the dependency tree exhaustively, these were the goals I've had most trouble fulfilling: base, hach
+
+++ docker rm -f hach-explore-20261029
+++ docker image rm haskell:9.12-bookworm

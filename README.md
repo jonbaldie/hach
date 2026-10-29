@@ -194,7 +194,7 @@ Compatible APIs often do not report a cost. When the cost is missing, the termin
 
 ## Development and testing
 
-Exploratory feedback: [2026-10-24 CLI coding, workspaces, and session reliability](docs/exploratory-testing/2026-10-24-cli-reliability.md).
+Exploratory feedback: [2026-10-24 CLI coding, workspaces, and session reliability](docs/exploratory-testing/2026-10-24-cli-reliability.md) and [2026-10-29 workspaces and session recovery](docs/exploratory-testing/2026-10-29-cli-reliability.md).
 
 Fleet shares an 8-core macOS host with other repositories. Run only one Hach test or fuzz campaign at a time. The standard test command is `cabal test hach:test:hach-test --test-show-details=always`.
 

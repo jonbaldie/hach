@@ -1,0 +1,12 @@
++ docker image inspect haskell:9.12.1-bookworm
++ trap 'docker rm -f hach-explore-20261029 >/dev/null 2>&1 || true; docker image rm haskell:9.12.1-bookworm >/dev/null 2>&1 || true' EXIT
++ docker pull haskell:9.12.1-bookworm
+Error response from daemon: failed to resolve reference "docker.io/library/haskell:9.12.1-bookworm": docker.io/library/haskell:9.12.1-bookworm: not found
++ docker run --name hach-explore-20261029 --cpus=2 --memory=2g -v /home/ubuntu/Code/pstack/jonbaldie/hach-explore-20261029:/workspace -w /workspace -e HOME=/workspace/.explore-home -e CABAL_DIR=/workspace/.explore-home/.cabal haskell:9.12.1-bookworm sh -c 'ghc --version; cabal --version; cabal build exe:hach -j2'
+Unable to find image 'haskell:9.12.1-bookworm' locally
+docker: Error response from daemon: failed to resolve reference "docker.io/library/haskell:9.12.1-bookworm": docker.io/library/haskell:9.12.1-bookworm: not found
+
+Run 'docker run --help' for more information
+++ docker rm -f hach-explore-20261029
+++ docker image rm haskell:9.12.1-bookworm
+++ true
