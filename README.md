@@ -15,12 +15,21 @@ brew install jonbaldie/tap/hach
 
 ### Build from source
 
-Clone the repository and build the binary with Cabal (requires GHC 9.8 or later and Cabal 3.10 or later):
+The checked-in release freeze file requires GHC 9.12.1. Install GHC 9.12.1 and Cabal 3.10 or later, then clone and build:
 
 ```bash
 git clone https://github.com/jonbaldie/hach.git
 cd hach
+cabal update
 cabal build exe:hach
+```
+
+To try another GHC version, copy the project file and build with the copy. Cabal will resolve dependencies without the release freeze file. Other compiler versions are not supported. GHC 9.8.4 fails to compile the current source. The resulting dependency plan is not reproducible.
+
+```bash
+cp cabal.project cabal.source.project
+cabal update
+cabal build exe:hach --project-file=cabal.source.project
 ```
 
 ### Docker
