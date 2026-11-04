@@ -180,13 +180,13 @@ evalPermissionForAuthorityAs mode rules canonical displayName args authority
              else case listToMaybe (concatMap (\r -> maybe [] pure (matchRule r canonical mPath)) rules) of
                Just decision -> decision
                Nothing -> case mode of
-                 ModePlan | isCoordinationTool canonical -> PermAllow
+                 ModePlan | authority == AuthorityInteraction -> PermAllow
                  ModePlan | authority /= AuthorityRead -> PermDeny "Plan mode is read-only. Tool execution denied."
                  ModePlan -> PermAllow
-                 ModeDefault | isCoordinationTool canonical -> PermAllow
+                 ModeDefault | authority == AuthorityInteraction -> PermAllow
                  ModeDefault | authority /= AuthorityRead -> PermAsk ("Tool execution requires approval: " <> displayName)
                  ModeDefault -> PermAllow
-                 ModeAcceptEdits | isCoordinationTool canonical -> PermAllow
+                 ModeAcceptEdits | authority == AuthorityInteraction -> PermAllow
                  ModeAcceptEdits | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
                  ModeAcceptEdits | authority == AuthorityCommand -> PermAsk ("Command execution requires approval: " <> displayName)
                  ModeAcceptEdits -> PermAsk ("Tool execution requires approval: " <> displayName)
@@ -194,7 +194,3 @@ evalPermissionForAuthorityAs mode rules canonical displayName args authority
                  ModeAuto -> PermAsk ("Auto mode requires approval for: " <> displayName)
                  ModeDontAsk -> PermAllow
                  ModeBypassPermissions -> PermAllow
-
-isCoordinationTool :: Text -> Bool
-isCoordinationTool tool = tool `elem`
-  [ "AskUserQuestion", "EndConversation", "EnterPlanMode", "ExitPlanMode", "Monitor" ]

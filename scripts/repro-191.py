@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Exercise interaction permissions through the public CLI with a local model fixture."""
 import json
 import os
 from pathlib import Path
