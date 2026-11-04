@@ -28,7 +28,16 @@ spec = do
         `shouldBe` True
     it "does not let a read count as a mutation, but counts any executed mutation" $ do
       outcomesBlockedByHeadlessAsks [headless, ToolExecuted AuthorityRead] `shouldBe` True
+      outcomesBlockedByHeadlessAsks [headless, ToolExecuted AuthorityInteraction] `shouldBe` True
+      outcomesBlockedByHeadlessAsks [headless, ToolExecuted AuthorityWorkspaceWrite] `shouldBe` False
       outcomesBlockedByHeadlessAsks [headless, ToolExecuted AuthorityCommand] `shouldBe` False
+    it "does not report denied interactions as blocked writes" $ do
+      let deniedInteraction = ToolPermissionDenied (HeadlessAskDenied ModeDefault AuthorityInteraction)
+      outcomesBlockedByHeadlessAsks [deniedInteraction, ToolExecuted AuthorityInteraction] `shouldBe` False
+      outcomesBlockedByHeadlessAsks [deniedInteraction] `shouldBe` False
+      outcomesBlockedByHeadlessAsks [deniedInteraction, headless] `shouldBe` True
+      headlessAskBlockedMessageForOutcomes [deniedInteraction, headless]
+        `shouldBe` headlessAskBlockedMessage ModeDefault [AuthorityWorkspaceWrite]
     it "does not infer headless approval failures from diagnostic text" $ do
       outcomesBlockedByHeadlessAsks
         [ToolPermissionDenied (PolicyDenied (headlessAskDeniedReason ModeDefault AuthorityWorkspaceWrite))]

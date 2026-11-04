@@ -48,3 +48,17 @@ jobs:
 
       - name: Public CLI permission-outcome regression
         run: python3 scripts/repro-288.py "$(cabal list-bin exe:hach)"
+
+      - name: Public CLI interaction-permission regression
+        run: python3 scripts/repro-191.py "$(cabal list-bin exe:hach)"
+
+      - name: Stage Linux CLI for independent verification
+        if: matrix.os == 'ubuntu-latest'
+        run: cp "$(cabal list-bin exe:hach)" "$RUNNER_TEMP/hach"
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: hach-linux-ci
+          path: ${{ runner.temp }}/hach
+          retention-days: 1

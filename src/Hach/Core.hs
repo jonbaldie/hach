@@ -667,16 +667,19 @@ outcomesBlockedByHeadlessAsks :: [ToolCallOutcome] -> Bool
 outcomesBlockedByHeadlessAsks outcomes =
   any isHeadlessMutationDenial outcomes && not (any isExecutedMutation outcomes)
   where
-    isHeadlessMutationDenial (ToolPermissionDenied (HeadlessAskDenied _ authority)) = authority /= AuthorityRead
+    isHeadlessMutationDenial (ToolPermissionDenied (HeadlessAskDenied _ authority)) = isMutationAuthority authority
     isHeadlessMutationDenial _ = False
-    isExecutedMutation (ToolExecuted authority) = authority /= AuthorityRead
+    isExecutedMutation (ToolExecuted authority) = isMutationAuthority authority
     isExecutedMutation _ = False
+
+isMutationAuthority :: ToolAuthority -> Bool
+isMutationAuthority authority = authority `elem` [AuthorityWorkspaceWrite, AuthorityCommand]
 
 headlessAskBlockedMessageForOutcomes :: [ToolCallOutcome] -> Text
 headlessAskBlockedMessageForOutcomes outcomes =
   let denials = [ (mode, authority)
                 | ToolPermissionDenied (HeadlessAskDenied mode authority) <- outcomes
-                , authority /= AuthorityRead
+                , isMutationAuthority authority
                 ]
       mode = if any ((== ModeAcceptEdits) . fst) denials then ModeAcceptEdits else ModeDefault
   in headlessAskBlockedMessage mode (map snd denials)
