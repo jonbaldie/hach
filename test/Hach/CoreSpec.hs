@@ -28,6 +28,8 @@ spec = do
         `shouldBe` True
     it "does not let a read count as a mutation, but counts any executed mutation" $ do
       outcomesBlockedByHeadlessAsks [headless, ToolExecuted AuthorityRead] `shouldBe` True
+      outcomesBlockedByHeadlessAsks [headless, ToolExecuted AuthorityInteraction] `shouldBe` True
+      outcomesBlockedByHeadlessAsks [headless, ToolExecuted AuthorityWorkspaceWrite] `shouldBe` False
       outcomesBlockedByHeadlessAsks [headless, ToolExecuted AuthorityCommand] `shouldBe` False
     it "does not infer headless approval failures from diagnostic text" $ do
       outcomesBlockedByHeadlessAsks

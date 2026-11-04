@@ -669,7 +669,7 @@ outcomesBlockedByHeadlessAsks outcomes =
   where
     isHeadlessMutationDenial (ToolPermissionDenied (HeadlessAskDenied _ authority)) = authority /= AuthorityRead
     isHeadlessMutationDenial _ = False
-    isExecutedMutation (ToolExecuted authority) = authority /= AuthorityRead
+    isExecutedMutation (ToolExecuted authority) = authority `elem` [AuthorityWorkspaceWrite, AuthorityCommand]
     isExecutedMutation _ = False
 
 headlessAskBlockedMessageForOutcomes :: [ToolCallOutcome] -> Text
