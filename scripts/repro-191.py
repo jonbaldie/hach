@@ -35,11 +35,17 @@ def call(name, args):
         "name": name, "arguments": json.dumps(args)}}
 
 
-def run(binary, mode, interaction, write=False):
+def run(binary, mode, interaction, write=False, ask=False):
     with tempfile.TemporaryDirectory(prefix="hach-191-") as tmp:
         server = ThreadingHTTPServer(("127.0.0.1", 0), Model)
         server.results = []
         server.calls = [interaction]
+        if ask:
+            settings = Path(tmp) / ".claude"
+            settings.mkdir()
+            (settings / "settings.json").write_text(json.dumps({"permission_rules": [
+                {"action": "ask", "tool": "SendMessage"}]}))
+            server.calls.append(call("AskUserQuestion", {"question": "hello"}))
         if write:
             server.calls.append(call("write_file", {"path": "notes.txt", "content": "hello"}))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -63,11 +69,16 @@ def run(binary, mode, interaction, write=False):
             assert "Task blocked:" in result.stdout, result.stdout
             assert len(contents) == 2 and "No interactive approval available" in contents[1], contents
             assert not (Path(tmp) / "notes.txt").exists()
+        elif ask:
+            assert result.returncode == 0, result.stderr
+            assert len(contents) == 2 and "No interactive approval available" in contents[0], contents
+            assert contents[1] == "Prompted user: hello", contents
         else:
             assert result.returncode == 0, result.stderr
-        expected = ("Message sent to agent agent-1: hello" if interaction["id"] == "SendMessage"
-                    else "Prompted user: hello")
-        assert contents[0] == expected, contents
+        if not ask:
+            expected = ("Message sent to agent agent-1: hello" if interaction["id"] == "SendMessage"
+                        else "Prompted user: hello")
+            assert contents[0] == expected, contents
 
 
 if __name__ == "__main__":
@@ -77,4 +88,5 @@ if __name__ == "__main__":
         run(binary, mode, send)
     run(binary, "default", call("AskUserQuestion", {"question": "hello"}), write=True)
     run(binary, "default", send, write=True)
+    run(binary, "default", send, ask=True)
     print("All interaction permission CLI regressions passed.")
