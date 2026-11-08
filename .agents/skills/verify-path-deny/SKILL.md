@@ -21,7 +21,7 @@ From the Hach repository root, run:
 GHCRTS=-N2 hach --exec 'python3 .agents/skills/verify-path-deny/scripts/check.py'
 ```
 
-The script builds `exe:hach` from the checked-out source, starts it against a loopback-only OpenAI-compatible fixture, and checks files in temporary workspaces. It uses only the Python standard library and adds no package dependency. It requires Python 3.7 or newer. The recorded validation used Python 3.14.5, Cabal 3.16.1.0, GHC 9.12.1, and Hach 0.1.15.0 built at the sync commit. The GHC version matches the repository's CI toolchain in `.github/workflows/ci.yml`. Run one checker at a time.
+The script builds `exe:hach` from the checked-out source, starts it against a loopback-only OpenAI-compatible fixture, and checks files in temporary workspaces. It uses only the Python standard library and adds no package dependency. It requires Python 3.7 or newer. The recorded validation used Python 3.14.5, Cabal 3.16.1.0, GHC 9.12.1, and Hach 0.1.17.0 built at the sync commit. The GHC version matches the repository's CI toolchain in `.github/workflows/ci.yml`. Run one checker at a time.
 
 Exit status:
 
@@ -44,7 +44,7 @@ This is bounded verification of those generated cases, not a proof for every pat
 
 ## Current finding
 
-At sync commit `9d84acae31831bb29e355ad29c0d7c0c066b2e80`, the checker finds 48 violations. They are the file, chained, and directory symlink cases for every write tool spelling, rule shape, and permission mode. Direct, `./`, and `..` spellings are denied. The symlink cases change `secret.txt` through an alias even though the rule names `secret.txt`.
+At sync commit `57595832b599d41af494bb1c83f05ec58b7fb299`, the checker finds 48 violations. They are the file, chained, and directory symlink cases for every write tool spelling, rule shape, and permission mode. Direct, `./`, and `..` spellings are denied. The symlink cases change `secret.txt` through an alias even though the rule names `secret.txt`.
 
 This behavior is filed as [Hach issue #310](https://github.com/jonbaldie/hach/issues/310). Keep reporting these failures until the implementation is fixed. Do not suppress these IDs or weaken the property to make the check pass. A new violation outside those 48 cases is a regression; if a fix removes some or all known violations, review the new output against the intended policy.
 
@@ -56,7 +56,7 @@ The check covers:
 - `src/Hach/Tools.hs`: the `toolRegistry` write aliases and the registered write/edit executors.
 - `src/Hach/Paths.hs`: workspace path resolution used by those executors.
 
-The recorded sync commit is the source snapshot where the property was reproduced and the checker was mutation-tested. When any covered code changes, run the checker and inspect every changed case ID. Update the sync commit only after confirming the generated cases still describe the code and the outcome is understood. If the intended policy changes, update the property, generated cases, expected results, mutation check, and coverage record together.
+The recorded sync commit is the source snapshot where the property was reproduced. The checker was mutation-tested at `9d84acae31831bb29e355ad29c0d7c0c066b2e80`. When any covered code changes, run the checker and inspect every changed case ID. Update the sync commit only after confirming the generated cases still describe the code and the outcome is understood. If the intended policy changes, update the property, generated cases, expected results, mutation check, and coverage record together.
 
 To demonstrate that the checker detects a broken implementation, use a disposable worktree and temporarily change the `RuleDeny` branch in `Hach.Permissions.matchRule` to return `Just PermAllow`. Run the command above: it must report new `direct`, `dot`, and `parent` counterexamples in addition to the known symlink cases. Remove the mutation, rebuild, and rerun; the original set of counterexamples must return. Never keep the mutation.
 
