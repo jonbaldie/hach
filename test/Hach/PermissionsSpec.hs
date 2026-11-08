@@ -249,6 +249,35 @@ spec = describe "Hach.Permissions" $ do
       mapM_ (\t -> mapM_ (\(m, a) -> evalPermission m [] t a `shouldBe` PermAllow)
                          [ (m, a) | m <- [ModeAcceptEdits, ModeAuto], a <- [noCmdArgs, blankCmdArgs] ]) tools
 
+  describe "Interaction authority (issue #191)" $ do
+    let modes = [ModeDefault, ModeAcceptEdits, ModePlan]
+        interactions =
+          [ ("Agent", object ["name" .= ("helper" :: String), "prompt" .= ("help" :: String)])
+          , ("agent", object ["name" .= ("helper" :: String), "prompt" .= ("help" :: String)])
+          , ("SendMessage", object ["agent_id" .= ("agent-1" :: String), "message" .= ("hello" :: String)])
+          , ("send_message", object ["agent_id" .= ("agent-1" :: String), "message" .= ("hello" :: String)])
+          , ("PushNotification", object ["message" .= ("hello" :: String)])
+          , ("push_notification", object ["message" .= ("hello" :: String)])
+          ]
+
+    it "allows registered interaction tools and aliases in coordination modes" $
+      mapM_ (\(tool, args) -> mapM_ (\mode ->
+        evalPermission mode [] tool args `shouldBe` PermAllow) modes) interactions
+
+    it "uses authority for a new interaction without a name list" $
+      mapM_ (\mode -> evalPermissionForAuthority mode [] "FutureInteraction" (object []) AuthorityInteraction
+        `shouldBe` PermAllow) modes
+
+    it "keeps explicit deny rules ahead of interaction authority" $ do
+      let rule = PermissionRule RuleDeny (Just "SendMessage") Nothing
+          args = object ["agent_id" .= ("agent-1" :: String), "message" .= ("hello" :: String)]
+      mapM_ (\mode -> evalPermission mode [rule] "send_message" args
+        `shouldBe` PermDeny "Denied by permission rule for SendMessage") modes
+
+    it "keeps auto mode approval for interactions" $
+      evalPermissionForAuthority ModeAuto [] "FutureInteraction" (object []) AuthorityInteraction
+        `shouldBe` PermAsk "Auto mode requires approval for: FutureInteraction"
+
   describe "Coordination tools (issue #125)" $ do
     let args = object []
         tools =

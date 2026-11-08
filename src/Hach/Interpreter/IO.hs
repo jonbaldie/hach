@@ -141,7 +141,7 @@ data IOEnv = IOEnv
   , ioVerbose          :: !Bool
   , ioPerms            :: !PermissionRuntime
   , ioEffortLevel      :: !(Maybe EffortLevel)
-  , ioResolveAsk       :: Text -> Text -> Text -> IO (Maybe Text)
+  , ioResolveAsk       :: Text -> Text -> Text -> IO (Maybe PermissionDenial)
   }
 
 -- | Initialize a new 'IOEnv' for the default OpenRouter connection with the
@@ -176,7 +176,7 @@ newIOEnvWithPermissions perms conn model workspace verbose = do
               Just (Right resolved) -> resolvedToolAuthority resolved
               _ | Just (_, a) <- resolveToolIdentity tool -> a
               _ -> AuthorityCommand
-        pure (Just (headlessAskDeniedReason mode auth))
+        pure (Just (HeadlessAskDenied mode auth))
     }
 
 -- | Switch the live permission mode; subsequent tool calls are checked
@@ -446,7 +446,7 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
             _ -> evalPermission mode prtRules tool argsVal
       case decision of
         PermAllow      -> pure Nothing
-        PermDeny reason -> pure (Just reason)
+        PermDeny reason -> pure (Just (PolicyDenied reason))
         PermAsk reason -> ioResolveAsk tool args reason
 
   , interpRunHook = \ev payload -> do

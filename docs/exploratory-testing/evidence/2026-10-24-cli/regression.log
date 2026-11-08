@@ -1,0 +1,2429 @@
+Build profile: -w ghc-9.12.1 -O1
+In order, the following will be built (use -v for more details):
+ - hach-0.1.15.0 (test:hach-test) (first run)
+Configuring test suite 'hach-test' for hach-0.1.15.0...
+Preprocessing test suite 'hach-test' for hach-0.1.15.0...
+Building test suite 'hach-test' for hach-0.1.15.0...
+[ 1 of 32] Compiling Hach.Campaign2Spec ( test/Hach/Campaign2Spec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/Campaign2Spec.o )
+[ 2 of 32] Compiling Hach.Campaign3Spec ( test/Hach/Campaign3Spec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/Campaign3Spec.o )
+[ 3 of 32] Compiling Hach.CampaignSpec ( test/Hach/CampaignSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/CampaignSpec.o )
+[ 4 of 32] Compiling Hach.CoreSpec    ( test/Hach/CoreSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/CoreSpec.o )
+test/Hach/CoreSpec.hs:802:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘aid’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:806:13
+    |
+802 |             aid <- spawnAgent "researcher" "Conducts codebase research"
+    |             ^^^
+
+test/Hach/CoreSpec.hs:803:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘msg’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:806:18
+    |
+803 |             msg <- sendMessageToAgent aid "Check tests"
+    |             ^^^
+
+test/Hach/CoreSpec.hs:804:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘agents’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:806:23
+    |
+804 |             agents <- listRunningAgents
+    |             ^^^^^^
+
+test/Hach/CoreSpec.hs:813:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘st’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:818:13
+    |
+813 |             st <- gitStatus
+    |             ^^
+
+test/Hach/CoreSpec.hs:814:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘wtPath’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:818:17
+    |
+814 |             wtPath <- createWorktree "feat/branch"
+    |             ^^^^^^
+
+test/Hach/CoreSpec.hs:825:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘tid’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:829:13
+    |
+825 |             tid <- runBackground "cargo test"
+    |             ^^^
+
+test/Hach/CoreSpec.hs:826:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘info’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:829:18
+    |
+826 |             info <- getTaskOutput tid
+    |             ^^^^
+
+test/Hach/CoreSpec.hs:827:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘stopped’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:829:24
+    |
+827 |             stopped <- stopTask tid
+    |             ^^^^^^^
+
+test/Hach/CoreSpec.hs:841:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘tools’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:844:13
+    |
+841 |             tools <- listMcpTools
+    |             ^^^^^
+
+test/Hach/CoreSpec.hs:842:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘res’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:844:20
+    |
+842 |             res <- callMcpTool "git-server" "diff" "{}"
+    |             ^^^
+
+test/Hach/CoreSpec.hs:850:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘mem’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:853:13
+    |
+850 |             mem <- loadMemory "CLAUDE.md"
+    |             ^^^
+
+test/Hach/CoreSpec.hs:851:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘imp’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:853:18
+    |
+851 |             imp <- resolveImport "doc.md"
+    |             ^^^
+
+test/Hach/CoreSpec.hs:902:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘rBash’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:912:13
+    |
+902 |             rBash <- executeTool (ToolCall "c1" "Bash" "{\"command\":\"ls\"}")
+    |             ^^^^^
+
+test/Hach/CoreSpec.hs:903:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘rEdit’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:912:20
+    |
+903 |             rEdit <- executeTool (ToolCall "c2" "Edit" "{\"path\":\"a.txt\",\"old_content\":\"old\",\"new_content\":\"new\"}")
+    |             ^^^^^
+
+test/Hach/CoreSpec.hs:904:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘rGlob’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:912:27
+    |
+904 |             rGlob <- executeTool (ToolCall "c3" "Glob" "{\"pattern\":\"*.txt\"}")
+    |             ^^^^^
+
+test/Hach/CoreSpec.hs:905:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘rGrep’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:912:34
+    |
+905 |             rGrep <- executeTool (ToolCall "c4" "Grep" "{\"query\":\"needle\"}")
+    |             ^^^^^
+
+test/Hach/CoreSpec.hs:906:13: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘rList’ shadows the existing binding
+      bound at test/Hach/CoreSpec.hs:912:41
+    |
+906 |             rList <- executeTool (ToolCall "c5" "ListDir" "{\"path\":\".\"}")
+    |             ^^^^^
+
+[ 5 of 32] Compiling Hach.EnvSpec     ( test/Hach/EnvSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/EnvSpec.o )
+[ 6 of 32] Compiling Hach.GitSpec     ( test/Hach/GitSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/GitSpec.o )
+[ 7 of 32] Compiling Hach.GoalFuzzSpec ( test/Hach/GoalFuzzSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/GoalFuzzSpec.o )
+test/Hach/GoalFuzzSpec.hs:54:1: warning: [GHC-90177] [-Worphans]
+    Orphan class instance: instance Arbitrary GoalVerdict
+    Suggested fix:
+      Move the instance declaration to the module of the class or of the type, or
+      wrap the type with a newtype and declare the instance on the new type.
+   |
+54 | instance Arbitrary GoalVerdict where
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^...
+
+[ 8 of 32] Compiling Hach.HooksSpec   ( test/Hach/HooksSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/HooksSpec.o )
+[ 9 of 32] Compiling Hach.InferenceFixture ( test/Hach/InferenceFixture.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/InferenceFixture.o )
+[10 of 32] Compiling Hach.InferenceCliSpec ( test/Hach/InferenceCliSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/InferenceCliSpec.o )
+[11 of 32] Compiling Hach.CLISpec     ( test/Hach/CLISpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/CLISpec.o )
+[12 of 32] Compiling Hach.InferenceSpec ( test/Hach/InferenceSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/InferenceSpec.o )
+[13 of 32] Compiling Hach.InferenceTuiSpec ( test/Hach/InferenceTuiSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/InferenceTuiSpec.o )
+[14 of 32] Compiling Hach.InterpreterIOSpec ( test/Hach/InterpreterIOSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/InterpreterIOSpec.o )
+[15 of 32] Compiling Hach.MCPSpec     ( test/Hach/MCPSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/MCPSpec.o )
+test/Hach/MCPSpec.hs:6:1: warning: [GHC-66111] [-Wunused-imports]
+    The import of ‘Hach.Types’ is redundant
+      except perhaps to import instances from ‘Hach.Types’
+    To import instances alone, use: import Hach.Types()
+  |
+6 | import Hach.Types
+  | ^^^^^^^^^^^^^^^^^
+
+test/Hach/MCPSpec.hs:7:1: warning: [GHC-38856] [-Wunused-imports]
+    The import of ‘.=, object’ from module ‘Data.Aeson’ is redundant
+  |
+7 | import Data.Aeson (decode, object, (.=))
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[16 of 32] Compiling Hach.MemorySpec  ( test/Hach/MemorySpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/MemorySpec.o )
+test/Hach/MemorySpec.hs:6:1: warning: [GHC-66111] [-Wunused-imports]
+    The import of ‘Hach.Permissions’ is redundant
+      except perhaps to import instances from ‘Hach.Permissions’
+    To import instances alone, use: import Hach.Permissions()
+  |
+6 | import Hach.Permissions (matchGlob)
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/Hach/MemorySpec.hs:7:1: warning: [GHC-66111] [-Wunused-imports]
+    The qualified import of ‘Data.Map.Strict’ is redundant
+      except perhaps to import instances from ‘Data.Map.Strict’
+    To import instances alone, use: import Data.Map.Strict()
+  |
+7 | import qualified Data.Map.Strict as Map
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/Hach/MemorySpec.hs:9:52: warning: [GHC-38856] [-Wunused-imports]
+    The import of ‘getHomeDirectory’
+    from module ‘System.Directory’ is redundant
+  |
+9 | import System.Directory (createDirectoryIfMissing, getHomeDirectory, removeDirectoryRecursive)
+  |                                                    ^^^^^^^^^^^^^^^^
+
+[17 of 32] Compiling Hach.NotificationsSpec ( test/Hach/NotificationsSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/NotificationsSpec.o )
+[18 of 32] Compiling Hach.PerfFuzzSpec ( test/Hach/PerfFuzzSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/PerfFuzzSpec.o )
+[19 of 32] Compiling Hach.PermissionsSpec ( test/Hach/PermissionsSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/PermissionsSpec.o )
+[20 of 32] Compiling Hach.PropertySpec ( test/Hach/PropertySpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/PropertySpec.o )
+[21 of 32] Compiling Hach.RegressionSpec ( test/Hach/RegressionSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/RegressionSpec.o )
+[22 of 32] Compiling Hach.SessionsSpec ( test/Hach/SessionsSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/SessionsSpec.o )
+test/Hach/SessionsSpec.hs:200:11: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘wsDir’ shadows the existing binding
+      bound at test/Hach/SessionsSpec.hs:97:9
+    |
+200 |       let wsDir = testDir </> "ws-253"
+    |           ^^^^^
+
+[23 of 32] Compiling Hach.SettingsSpec ( test/Hach/SettingsSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/SettingsSpec.o )
+[24 of 32] Compiling Hach.SkillsSpec  ( test/Hach/SkillsSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/SkillsSpec.o )
+[25 of 32] Compiling Hach.SubagentsSpec ( test/Hach/SubagentsSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/SubagentsSpec.o )
+test/Hach/SubagentsSpec.hs:6:1: warning: [GHC-66111] [-Wunused-imports]
+    The import of ‘Hach.Types’ is redundant
+      except perhaps to import instances from ‘Hach.Types’
+    To import instances alone, use: import Hach.Types()
+  |
+6 | import Hach.Types
+  | ^^^^^^^^^^^^^^^^^
+
+test/Hach/SubagentsSpec.hs:7:1: warning: [GHC-66111] [-Wunused-imports]
+    The qualified import of ‘Data.Map.Strict’ is redundant
+      except perhaps to import instances from ‘Data.Map.Strict’
+    To import instances alone, use: import Data.Map.Strict()
+  |
+7 | import qualified Data.Map.Strict as Map
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[26 of 32] Compiling Hach.TUILayoutSpec ( test/Hach/TUILayoutSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/TUILayoutSpec.o )
+[27 of 32] Compiling Hach.TUISpec     ( test/Hach/TUISpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/TUISpec.o )
+[28 of 32] Compiling Hach.TasksSpec   ( test/Hach/TasksSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/TasksSpec.o )
+test/Hach/TasksSpec.hs:174:7: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘before’ shadows the existing binding
+      imported from ‘Test.Hspec’ at test/Hach/TasksSpec.hs:18:1-17
+      (and originally defined in ‘hspec-core-2.11.18:Test.Hspec.Core.Hooks’)
+    |
+174 |       before <- openFdCount
+    |       ^^^^^^
+
+test/Hach/TasksSpec.hs:178:7: warning: [GHC-63397] [-Wname-shadowing]
+    This binding for ‘after’ shadows the existing binding
+      imported from ‘Test.Hspec’ at test/Hach/TasksSpec.hs:18:1-17
+      (and originally defined in ‘hspec-core-2.11.18:Test.Hspec.Core.Hooks’)
+    |
+178 |       after <- openFdCount
+    |       ^^^^^
+
+[29 of 32] Compiling Hach.ToolsSpec   ( test/Hach/ToolsSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/ToolsSpec.o )
+test/Hach/ToolsSpec.hs:5:20: warning: [GHC-38856] [-Wunused-imports]
+    The import of ‘Workspace’ from module ‘Hach.Paths’ is redundant
+  |
+5 | import Hach.Paths (Workspace(..), workspaceAt)
+  |                    ^^^^^^^^^^^^^
+
+[30 of 32] Compiling Hach.TypesSpec   ( test/Hach/TypesSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/TypesSpec.o )
+[31 of 32] Compiling Hach.WorkingDirsSpec ( test/Hach/WorkingDirsSpec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Hach/WorkingDirsSpec.o )
+[32 of 32] Compiling Main             ( test/Spec.hs, dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test-tmp/Main.o )
+[33 of 33] Linking dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/build/hach-test/hach-test
+Running 1 test suites...
+Test suite hach-test: RUNNING...
+
+Hach.Env
+  resolveEffortLevel
+    leaves unset effort as Nothing [✔]
+    accepts a supported configured effort [✔]
+    normalizes case and surrounding whitespace [✔]
+    rejects unsupported values with a clear error [✔]
+    rejects empty effort_level [✔]
+  parseEnvContent
+    parses standard key-value pairs [✔]
+    ignores comments and empty lines [✔]
+    strips quotes from values [✔]
+    strips export prefix from keys [✔]
+    handles mixed export and non-export lines [✔]
+  parseLineTwoModel
+    extracts the model from line two of .env [✔]
+    handles whitespace and quotes on line two [✔]
+    handles bare model string on line two [✔]
+    returns Nothing if fewer than two lines [✔]
+  resolveMaxBudgetUsd
+    prefers the CLI flag over settings [✔]
+    uses settings when the flag is absent [✔]
+    ignores negative settings values [✔]
+  resolveConfigWith
+    CLI flag overrides both OS env and .env for model [✔]
+    uses OS environment API key in preference to .env [✔]
+    falls back to .env when OS environment variables are missing [✔]
+    resolves config from .env with export-prefixed lines [✔]
+    uses OS environment model when no CLI flag given and .env missing [✔]
+    fails if API key is not in OS env or .env [✔]
+  buildSystemPrompt
+    returns default prompt when no project instructions exist [✔]
+    appends project guidelines when provided [✔]
+  buildSystemPromptWithAppend
+    returns base prompt when guidelines and append are Nothing [✔]
+    appends custom instructions when provided without project guidelines [✔]
+    combines project guidelines and custom appended instructions [✔]
+    ignores Nothing or whitespace-only appended instructions [✔]
+  loadProjectInstructions
+    returns Nothing when neither AGENT.md nor CLAUDE.md exists [✔]
+    loads AGENT.md when it exists [✔]
+    loads CLAUDE.md when AGENT.md does not exist [✔]
+    prefers AGENT.md over CLAUDE.md when both exist [✔]
+    loads AGENTS.md when it is the only instructions file [✔]
+    prefers AGENTS.md over AGENT.md and CLAUDE.md when all exist [✔]
+Hach.Core
+  agentLoop with Pure Interpreter
+    completes immediately when model returns direct answer [✔]
+    executes a tool call and passes observation back to model in next turn [✔]
+    authorizes a read alias under its registry canonical name [✔]
+    authorizes interaction aliases under their registry canonical name [✔]
+    rejects unknown and unresolved calls before permissions and execution [✔]
+    supports writing files purely [✔]
+    propagates token usage metadata in EvLLMResponse [✔]
+    terminates when maximum turns are reached [✔]
+    aborts before any LLM call when the spending budget is 0 [✔]
+    stops before the next billable turn once reported spend meets the budget [✔]
+    does not enforce a budget when cfgMaxBudgetUsd is Nothing [✔]
+    reports the summed spend of every request in the run (Issue #253) [✔]
+    still stops on max turns when a budget is also configured [✔]
+    runs past the old default of 10 turns when cfgMaxTurns is Nothing (unlimited) [✔]
+    never terminates with AgentMaxTurnsReached when cfgMaxTurns is Nothing [✔]
+    terminates with AgentFailed when model returns an error [✔]
+    fails fast when the same read-only tool and arguments repeat with no intervening edit [✔]
+    does not flag repeated reads interleaved with edits [✔]
+    does not flag consecutive reads of different files [✔]
+    treats near-identical JSON arguments as the same call [✔]
+    treats registry aliases of the same read tool as one call [✔]
+    allows repeats just under the unproductive limit [✔]
+  prompt lifecycle hooks (issue #168)
+    dispatches user_prompt_submit before the model and stop after it [✔]
+    dispatches stop when the run fails [✔]
+    keeps the prompt from the model when user_prompt_submit denies it [✔]
+    appends user_prompt_submit context to the prompt the model sees [✔]
+    dispatches each event once across a multi-turn goal loop [✔]
+  goalLoop with Pure Interpreter
+    continues when evaluator says not yet met, then stops when met [✔]
+    stops and marks goal failed when evaluator says impossible [✔]
+    stops with block cap warning when agent makes no progress for consecutive turns [✔]
+    ends in a state the headless path maps to failure when evaluator always returns GoalNotYetMet with no progress (Issue #223) [✔]
+    resets no-progress counter when agent uses tools between completions [✔]
+    clears the goal when a turn fails with an authentication error [✔]
+    clears the goal when a turn fails with a credit balance error [✔]
+    keeps the goal active when a turn fails with a transient error [✔]
+    logs EvGoalSet when the goal loop starts [✔]
+    logs EvGoalEvaluated for each evaluation [✔]
+    logs EvGoalEvaluationUsage when evaluator reports token usage [✔]
+    stops with AgentBudgetExceeded when evaluator spend brings the total to the budget [✔]
+    reports turn and evaluator spend, including the final evaluation (Issue #253) [✔]
+    accumulates evaluator spend across several goal turns [✔]
+    injects evaluator reason as guidance for the next turn [✔]
+    runs past the old default of 20 turns when cfgMaxTurns is Nothing (unlimited) [✔]
+    never terminates with AgentMaxTurnsReached when cfgMaxTurns is Nothing in goalLoop [✔]
+    fails fast on unproductive repeated tool calls [✔]
+  GoalEvaluation JSON Parsing
+    parses a valid met verdict [✔]
+    parses a valid not_yet_met verdict [✔]
+    parses a valid impossible verdict [✔]
+    parses with a missing reason field [✔]
+    fails on an unknown verdict [✔]
+    ToJSON/FromJSON round-trips for GoalVerdict [✔]
+  Feature Gap Closure AgentF Operations
+    saves and loads session through AgentF [✔]
+    spawns agents and manages agent messaging [✔]
+    handles git status and worktrees purely [✔]
+    manages background tasks and output retrieval [✔]
+    records desktop notifications [✔]
+    invokes MCP tools and lists registered tools [✔]
+    loads memory and resolves imports purely [✔]
+    blocks tool execution when PreToolUse hook denies permission [✔]
+    blocks tool execution when permission policy check fails [✔]
+    authorizes Edit through its canonical workspace-write capability [✔]
+    executes exposed tool aliases (Bash, Edit, Glob, Grep, ListDir) in pureAlgebra [✔]
+    applies PreToolUse hrModifiedInput when executing tool in agentStep [✔]
+Hach.Tools
+  Tool argument parsing
+    parses valid read_file arguments [✔]
+    rejects read_file arguments missing 'path' [✔]
+    parses valid write_file arguments [✔]
+    parses valid replace_file_content arguments [✔]
+    rejects replace_file_content when missing old_content [✔]
+    parses valid find_files arguments [✔]
+    parses valid grep_search arguments [✔]
+    parses valid run_command arguments [✔]
+    parses list_dir with explicit path [✔]
+    parses list_dir defaulting to '.' [✔]
+    parses Edit tool arguments [✔]
+    parses Bash tool arguments with optional timeout [✔]
+    parses Glob tool arguments [✔]
+    parses Grep tool arguments [✔]
+    parses WebFetch arguments [✔]
+    parses WebSearch arguments [✔]
+    parses Agent arguments [✔]
+    parses TodoWrite arguments [✔]
+    parses Skill arguments [✔]
+    parses PushNotification arguments [✔]
+    parses Task arguments (Create, Get, Update, Stop) [✔]
+    parses AskUserQuestion arguments [✔]
+  allToolDefs
+    contains all seven coding tools [✔]
+  unified tool capability registry
+    resolves every registered name and alias through its definition, canonical authority, and target [✔]
+    rejects invalid and unknown calls before execution through the common seam [✔]
+  truncateToolOutput
+    leaves short output intact [✔]
+    truncates output exceeding max lines [✔]
+  matchPattern (find_files)
+    evaluates pathological wildcard pattern in linear time without backtracking [✔]
+    preserves wildcard semantics matching across directory separators [✔]
+    performs non-wildcard substring searches against name and full path [✔]
+  Tool Execution
+    replaces unique text in a file [✔]
+    refuses write_file through symlinks into protected directories [✔]
+    refuses Edit through a symlink into a protected directory [✔]
+    refuses writes through chained symlinks and dot-dot segments [✔]
+    preserves the workspace escape error for writes outside the root [✔]
+    allows ordinary writes when the workspace root is under a protected directory name [✔]
+    does not expand commands supplied to the Skill tool [✔]
+    refuses Skill tool invocation when disable-model-invocation is true [✔]
+    invokes the Skill tool when disable-model-invocation is false [✔]
+    fails to replace text when target content is not found [✔]
+    fails to replace text when target content occurs multiple times [✔]
+    refuses overlapping target matches and leaves the file unchanged [✔]
+    returns ToolError and does not crash when old_content is empty [✔]
+    finds files matching glob/extension pattern [✔]
+    does not match *.hs against files with .hs elsewhere in the name [✔]
+    evaluates pathological wildcard patterns without exponential backtracking in executeFindFiles [✔]
+    preserves find_files wildcard semantics across path separators in executeFindFiles [✔]
+    performs non-wildcard substring searches in executeFindFiles [✔]
+    does not follow directory symlinks in find_files or grep_search [✔]
+    terminates when a directory symlink points back to the workspace [✔]
+    executes find_files via executeCodingTool and reports accurate error on parse failure [✔]
+    greps files for matching pattern and reports line number [✔]
+    executes Edit tool via executeCodingTool [✔]
+    runExecCommand runs the command in the workspace and returns its status [✔]
+    runExecCommand propagates a non-zero exit status [✔]
+    runExecCommand leniently decodes non-UTF-8 output and keeps the exit status (issue #240) [✔]
+    run_command returns leniently decoded non-UTF-8 output (issue #240) [✔]
+    executes Bash command via executeCodingTool [✔]
+    respects timeout in Bash tool calls via executeCodingTool [✔]
+    respects timeout in run_command tool calls via executeCodingTool [✔]
+    terminates the shell and its background children when a command times out [✔]
+    kills the process group when the calling thread is cancelled [✔]
+    executes Glob tool via executeCodingTool [✔]
+    executes EnterPlanMode and enter_plan_mode [✔]
+    executes ExitPlanMode and exit_plan_mode [✔]
+    returns ToolError for ExitWorktree and exit_worktree when not in a worktree [✔]
+    executes ListAgents and list_agents [✔]
+    executes EndConversation and end_conversation [✔]
+    manages tasks via TaskCreate and TaskList [✔]
+    writes todos via TodoWrite [✔]
+    returns ToolError when TodoWrite cannot write the workspace [✔]
+    returns ToolError when TodoWrite cannot write its todo file [✔]
+    manages background tasks with consistent IDs and error handling (BUG-6) [✔]
+Hach.Inference
+  parseChatResponse
+    parses standard text assistant completion [✔]
+    parses tool call response envelope [✔]
+    parses object-typed tool arguments into callArgsRaw JSON [✔]
+    parses array-typed tool arguments into callArgsRaw JSON [✔]
+    parses array content by concatenating text parts [✔]
+    concatenates multiple array content text parts [✔]
+    extracts error message from API error envelope [✔]
+    extracts error details when error envelope lacks message field [✔]
+    surfaces metadata.raw when the provider message is generic [✔]
+    parses token usage metadata from response envelope [✔]
+    parses cached tokens and total_cost when present [✔]
+    parses cache_read_input_tokens and direct cost when present [✔]
+    parses actual cost from cost_details.upstream_inference_cost when cost is absent [✔]
+    parses actual cost from prompt and completion cost_details when cost is absent [✔]
+    parses root-level cost when usage object has no cost [✔]
+    parses root-level total_cost when usage object has no cost [✔]
+    sets respUsage to Nothing when usage field is absent [✔]
+    rejects empty JSON object as empty success [✔]
+    rejects arbitrary non-envelope JSON as empty success [✔]
+  ChatRequest serialization
+    omits tools when list is empty [✔]
+    includes reasoning.effort when high effort is configured [✔]
+    omits reasoning when effort is unset [✔]
+    emits reasoning.effort none rather than omitting the field [✔]
+Hach.Inference (executable acceptance)
+  hach against an inference fixture
+    compatible text journey
+      sends one keyless request to <base>/chat/completions and prints the answer [✔]
+      sends the OPENAI_API_KEY as a bearer credential when one is set [✔]
+    configuration precedence
+      selects compatible mode, endpoint, model, and key from the process environment [✔]
+      reads compatible settings from named .env entries (provider first) [✔]
+      reads compatible settings from named .env entries (key first) [✔]
+      reads compatible settings from named .env entries (model first) [✔]
+      prefers flags over the process environment, and the process over .env [✔]
+      lets a nonblank .env key and model fill blank process values [✔]
+      reads llm_provider, llm_base_url, and model from layered settings [✔]
+      passes the model identifier unchanged and ignores OpenRouter model variables in compatible mode [✔]
+      requires a model in compatible mode and sends nothing without one [✔]
+      rejects an unknown effective provider without falling back [✔]
+      rejects an blank effective provider without falling back [✔]
+      lets a valid flag supersede an invalid lower-priority provider and base URL [✔]
+      fails closed on malformed provider settings even when a flag would override them [✔]
+      never uses OPENROUTER_API_KEY as a compatible credential or OPENAI_API_KEY for OpenRouter [✔]
+      ignores OPENAI_BASE_URL and llm_base_url when OpenRouter is selected [✔]
+      OpenRouter mode
+        keeps its key, model, attribution headers, and nested effort [✔]
+        keeps the legitimate legacy second-line model [✔]
+        never treats a second-line HACH_PROVIDER assignment as the model [✔]
+        never treats a second-line export HACH_PROVIDER assignment as the model [✔]
+        never treats a second-line OPENAI_API_KEY assignment as the model [✔]
+        never treats a second-line export OPENAI_API_KEY assignment as the model [✔]
+        never treats a second-line OPENAI_MODEL assignment as the model [✔]
+        never treats a second-line export OPENAI_MODEL assignment as the model [✔]
+        never treats a second-line OPENAI_BASE_URL assignment as the model [✔]
+        never treats a second-line export OPENAI_BASE_URL assignment as the model [✔]
+    base URL handling
+      posts "/v1" to /v1/chat/completions [✔]
+      posts "/v1///" to /v1/chat/completions [✔]
+      posts "" to /chat/completions [✔]
+      posts "/" to /chat/completions [✔]
+      posts "/gateway/openai/v1" to /gateway/openai/v1/chat/completions [✔]
+      posts "/team%20a/v1" to /team%20a/v1/chat/completions [✔]
+      preserves IPv6 hosts and ports in the endpoint [✔]
+      rejects "/v1/chat/completions" before any request [✔]
+      rejects "/v1/Chat/Completions/" before any request [✔]
+      rejects "/v1?x=1" before any request [✔]
+      rejects "/v1#frag" before any request [✔]
+      rejects "/v1/%zz" before any request [✔]
+      rejects "/v 1" before any request [✔]
+      rejects "ftp://example.com/v1" before any request [✔]
+      rejects "http://user:secret@127.0.0.1/v1" before any request [✔]
+      rejects "http:///v1" before any request [✔]
+      rejects "http://127.0.0.1:99999/v1" before any request [✔]
+      rejects "http://127.0.0.1:port/v1" before any request [✔]
+      rejects "localhost:8080/v1" before any request [✔]
+      rejects "   " before any request [✔]
+      rejects a credential-bearing base URL without echoing the credentials [✔]
+      rejects an API key containing a line break without echoing it [✔]
+    request shape
+      sends messages, function tools, and automatic tool choice without reasoning options [✔]
+      sends a configured effort as top-level reasoning_effort only [✔]
+      surfaces an endpoint's rejection of the effort without retrying or dropping it [✔]
+    tool cycle
+      writes and reads a real file, correlating tool results by call id [✔]
+      runs several tool calls from one completion [✔]
+      enforces a denied write through the same connection [✔]
+    response handling
+      accepts a completion without usage and reports usage without cost in verbose mode [✔]
+      tolerates object tool arguments and content-part arrays [✔]
+      fails rather than succeeding on an empty message [✔]
+      fails rather than succeeding on a usage-only body [✔]
+      fails rather than succeeding on a standalone message [✔]
+      fails rather than succeeding on a refusal-only message [✔]
+      fails rather than succeeding on a content-filtered empty completion [✔]
+      fails rather than succeeding on empty choices [✔]
+      keeps ordinary refusal text in content as a normal answer [✔]
+    failures
+      reports 401 structured once, safely, and without the key [✔]
+      reports 429 plain text once, safely, and without the key [✔]
+      reports 500 plain text once, safely, and without the key [✔]
+      reports 503 empty body once, safely, and without the key [✔]
+      reports 2xx error envelope once, safely, and without the key [✔]
+      reports non-2xx completion-shaped body once, safely, and without the key [✔]
+      reports malformed JSON once, safely, and without the key [✔]
+      reports non-UTF-8 body once, safely, and without the key [✔]
+      reports terminal control characters once, safely, and without the key [✔]
+      bounds an oversized error body and redacts a key straddling the excerpt boundary [✔]
+      emits valid inference-error JSON in JSON print mode [✔]
+      reports a connection failure against the selected endpoint [✔]
+      does not resend a request when a reused connection closes without answering [✔]
+      refuses a cross-origin redirect without contacting the target [✔]
+      refuses a same-origin redirect without a second request [✔]
+    goal evaluation
+      evaluates a met goal through the same connection without tools [✔]
+      reports an impossible goal as a failure with the evaluator's reason [✔]
+      continues after a not_yet_met verdict with another ordinary turn [✔]
+      treats an evaluator HTTP failure as not yet met, without a transport retry, under a finite cap [✔]
+    sessions
+      continues a saved session at a newly configured endpoint and key [✔]
+    budgets
+      sends no request under a zero budget [✔]
+      stops before the next request once a tool turn's reported cost crosses the budget [✔]
+      keeps a final answer whose reported cost crosses the budget [✔]
+      counts a goal evaluator's reported cost toward the budget [✔]
+    local-only intents
+      runs --help with invalid inference configuration [✔]
+      runs --version with invalid inference configuration [✔]
+      runs --exec echo local-ok with invalid inference configuration [✔]
+      runs --init with invalid inference configuration [✔]
+      runs --provider bogus --base-url nope --version with invalid inference configuration [✔]
+Hach.Inference (TUI acceptance)
+  TUI on a pseudo-terminal
+    runs a turn with a Tool Card, switches model, reports unknown cost, and recovers from cancellation [✔]
+    reports the cost and cached tokens the endpoint returns, without estimating [✔]
+    reports cost as not reported when the endpoint returns no usage at all [✔]
+    shows an inference failure without the key the endpoint echoed [✔]
+Hach.TUI (Pure Reducer Seam)
+  TUI Pure State Reducer (Pre-agreed Seam)
+    Text Input and Prompt Submission
+      accumulates characters typed by the user [✔]
+      handles backspace correctly [✔]
+      handles delete key in input buffer [✔]
+      handles Ctrl+U to clear the input buffer [✔]
+      submits prompt on Enter and emits ActionRunAgent [✔]
+      ignores empty prompt submissions [✔]
+    Long prompt visibility (Issue #89)
+      keeps a short prompt fully visible [✔]
+      keeps the typing position visible at a narrow 40-col terminal [✔]
+      keeps the typing position visible for an unbroken long token [✔]
+      keeps the typing position visible at an ordinary 80-col terminal [✔]
+      keeps the typing position visible when the prompt is several times the box width [✔]
+      keeps wide characters from pushing the cursor out of the input area [✔]
+      keeps combining characters attached while wrapping [✔]
+      submits the complete long message unchanged [✔]
+      keeps the typing position visible after backspacing across a wrap boundary [✔]
+      restores the placeholder after clearing a long prompt [✔]
+      keeps a recalled long prompt visible [✔]
+      keeps the typing position visible after a resize from 80 to 40 columns [✔]
+      still shows slash-completion ghost text on a short prompt [✔]
+    Focus Navigation
+      cycles focus with Tab between Input and Transcript [✔]
+      cycles backwards with BackTab between Input and Transcript [✔]
+    Cancellation and Quitting
+      quits on Ctrl+Q [✔]
+      quits on Ctrl+C when idle [✔]
+      cancels turn on Esc or Ctrl+C when busy [✔]
+      restores FocusInput and allows typing after cancelling turn with Esc [✔]
+      restores FocusInput and allows typing after cancelling turn with Ctrl+C when busy [✔]
+      allows submitting a new prompt after cancelling turn with Esc [✔]
+      resets tsCancelRequested when /goal is submitted following a cancellation [✔]
+    Help Overlay
+      toggles help on '?' when not typing in input [✔]
+    Agent Event Processing
+      updates status and turn counter on EvTurnStart [✔]
+      records LLM assistant text into history [✔]
+      yields assistant text followed by N Pending cards in order on EvLLMResponse [✔]
+      transitions Pending -> Running (with args replaced) on EvToolCall [✔]
+      transitions Running -> Finished on EvToolResult [✔]
+      transitions Pending/Running -> Denied on permission-denied and appends notice [✔]
+      resets status to Thinking on EvPermissionDenied after EvToolCall [✔]
+      pauses a PermAsk on the pending tool and shows the reason (Issue #91) [✔]
+      approves a pending ask with y or Enter and denies with n (Issue #91) [✔]
+      scrolls the pending approval command without responding or moving the transcript [✔]
+      cancels a pending ask with Esc and drops stale y (Issue #91) [✔]
+      renders the approval overlay with tool, target, and reason (Issue #91) [✔]
+      transitions all unresolved (Pending or Running) cards -> Cancelled on cancel [✔]
+      interleaves text and tool cards across two turns in exact emission order [✔]
+      toggles tool expansion on Enter and Space when FocusTranscript is active [✔]
+      moves and clamps tool card selection on Up and Down in FocusTranscript [✔]
+      scrolls transcript one line on Up and Down in FocusTranscript when no tool cards exist [✔]
+      scrolls transcript on Up and Down in FocusTranscript even when tool cards exist [✔]
+      scrolls transcript 5 lines on PgUp and PgDn in FocusTranscript [✔]
+      clears transcript and resets context token counters on 'c' in FocusTranscript [✔]
+      does not clear transcript or context tokens on 'c' while the agent is busy [✔]
+      quits on 'q' when FocusTranscript is active and agent is idle [✔]
+      does not quit on 'q' when FocusTranscript is active but agent is busy [✔]
+      records final completion answer on EvDone [✔]
+      records error notice on EvError [✔]
+    Multi-Turn Dialogue User Flow
+      allows typing into input box after receiving assistant response to first user message [✔]
+      restores FocusInput on EvError so user can retry [✔]
+      accumulates full conversation history across multiple turns [✔]
+    Viewport Scrolling Actions
+      scrolls transcript on KeyPageUp and KeyPageDown even when focused in FocusInput [✔]
+      scrolls transcript on mouse wheel KeyScrollUp and KeyScrollDown in FocusInput [✔]
+      keeps incoming output from undoing a wheel scroll while editing a prompt [✔]
+      does not force the selected tool card into view after wheel scrolling [✔]
+      resumes normal following after submitting a new prompt or clearing the transcript [✔]
+      reveals the selected tool again when keyboard navigation resumes [✔]
+    Headless Render Tests
+      renders user text, assistant text and tool cards with strictly increasing row indices in transcript order [✔]
+      shows output when tool card is expanded and only summary when collapsed [✔]
+    Vty to UserKey Event Conversion
+      scrolls on Brick mouse events over a viewport in either focus mode [✔]
+      converts mouse scroll wheel up to KeyScrollUp [✔]
+      converts mouse scroll wheel down to KeyScrollDown [✔]
+      converts Shift+Tab variations to KeyBackTab [✔]
+    Prompt History Navigation (Up/Down in FocusInput)
+      recalls the previous prompt on KeyUp [✔]
+      recalls earlier prompts on subsequent KeyUps [✔]
+      stops at the oldest prompt on repeated KeyUps [✔]
+      moves forward in history with KeyDown and restores draft buffer [✔]
+      leaves history browse mode when the recalled prompt is edited [✔]
+      accepting Tab completion after Up leaves history browse mode [✔]
+      appends submitted prompt to tsPromptHistory on Enter and resets index [✔]
+    Context Window and Session Token Usage Tracking
+      initializes context tokens to 0, token usage to Nothing, and session tokens to 0 [✔]
+      updates context tokens and session tokens on EvLLMResponse [✔]
+      accumulates session tokens while context tokens tracks latest turn [✔]
+      accumulates prompt cache metrics and monetary cost across turns [✔]
+      marks UsageMissing when EvLLMResponse arrives without usage, preserving context count [✔]
+      accumulates goal evaluation tokens into session tokens without polluting context tokens [✔]
+      resets context tokens to 0 when history is cleared with 'c' while preserving session totals [✔]
+      resets context tokens to 0 on /clear while preserving session totals [✔]
+      resets session tokens to 0 on /cost reset [✔]
+      generates an informative breakdown with context, session, and capacity on /cost [✔]
+    formatCompactLimit
+      formats zero and small numbers directly [✔]
+      formats thousands with k [✔]
+      formats millions with M [✔]
+    modelContextLimit and contextSaturationPercent
+      maps known model families to context limits [✔]
+      calculates context saturation percentage accurately [✔]
+      clamps context saturation percentage strictly between 0 and 100 [✔]
+    formatTokens
+      formats small counts without commas [✔]
+      formats thousands and larger counts with commas [✔]
+      does not overflow on minBound (abs minBound == minBound in Int) [✔]
+      formats small negative counts [✔]
+    formatToolTarget
+      extracts clean targets for canonical snake_case tool names [✔]
+      extracts clean targets for alias tool names (Issue #71) [✔]
+      uses resolved command and web capability targets [✔]
+      still truncates raw args for unknown tool names [✔]
+      handles non-object or malformed args by returning raw text [✔]
+    renderMaxTurns
+      shows the infinity sign when turns are unlimited (Nothing) [✔]
+      shows the numeric limit when turns are capped [✔]
+      renders the full header turn display as 0/∞ for the unlimited default [✔]
+    Local Slash Commands and Skill Invocations
+      handles /clear locally by emptying dialogue history without running agent [✔]
+      cancels running agent turn when /clear is submitted while busy [✔]
+      drops stale EvDone after /clear while busy [✔]
+      drops stale EvToolCall after /clear while busy [✔]
+      drops stale EvError after /clear while busy [✔]
+      drops stale canonical conversation updates after /clear while busy [✔]
+      resets tsCancelRequested when user submits a new prompt [✔]
+      handles /help locally by toggling help dialog without running agent [✔]
+      handles /cost locally by appending token notice without running agent [✔]
+      handles /compact locally by appending compact notice without running agent [✔]
+      compacts model history to the retained transcript while keeping one system prompt [✔]
+      invokes discovered skill when user types /skill-name [✔]
+      does not duplicate user message in dialogueToMessages when skills or notices are in history [✔]
+    Transcript Context Round-Tripping (Issue #24)
+      resumes a saved tool call as one card and one provider call with the current system prompt (Issue #231) [✔]
+      rebuilds messages from transcript with user text, assistant text, cards in every lifecycle state and notices [✔]
+      yields an assistant message with calls when tool cards stand alone with assistant text blank [✔]
+      produces placeholder tool message for unresolved cards and denial text for denied cards [✔]
+      never contains an assistant tool call without a following tool message with the same id (property test) [✔]
+        +++ OK, passed 100 tests.
+      builds context via dialogueToMessages for normal run and preserves prior tool results [✔]
+      builds goal context from canonical history, including context absent from the transcript [✔]
+      returns the final canonical history from a normal run [✔]
+      saves a completed run's billed cost once (Issues #253, #275) [✔]
+      saves a completed goal run's response and evaluator cost once (Issues #253, #275) [✔]
+      keeps incurred spend when /clear interrupts a busy run (Issue #253) [✔]
+      saves the spend of an interrupted run's billed responses (Issue #275) [✔]
+      saves the cost of a billed response that arrives after Esc (Issue #275) [✔]
+      adds nothing to incurred spend for usage without a reported cost (Issue #275) [✔]
+      keeps incurred spend when /cost reset clears the displayed usage (Issue #275) [✔]
+    Transcript Auto-Scroll Policy and Thinking Indicator (Issue #25)
+      Auto-Scroll Policy (shouldAutoScroll)
+        produces a scroll-to-end for appending events when focus is on the prompt input [✔]
+        does not produce a scroll-to-end for appending events when focus is on the transcript [✔]
+        does not produce a scroll-to-end for non-appending events in either focus mode [✔]
+      Thinking Indicator Headless Render
+        renders the thinking line under the last item when status is thinking [✔]
+        does not render the thinking line when status is idle or finished [✔]
+        renders the thinking line even when transcript has no items yet [✔]
+    /goal command
+      sets a goal and emits ActionRunGoal with the condition [✔]
+      adds a goal-set notice to history [✔]
+      shows goal status when /goal is typed with no args [✔]
+      shows no goal set when /goal is typed with no active goal [✔]
+      clears the goal with /goal clear and shows confirmation [✔]
+      clears the goal when multiple spaces precede clear (e.g. /goal  clear) [✔]
+      supports stop as an alias for clear [✔]
+      supports off as an alias for clear [✔]
+      supports reset as an alias for clear [✔]
+      supports none as an alias for clear [✔]
+      supports cancel as an alias for clear [✔]
+      prints no goal set when clearing with no active goal [✔]
+      clears the goal when /clear is used [✔]
+      rejects a condition longer than 4000 characters [✔]
+      replaces the existing goal when a new one is set [✔]
+      does not treat /goal stop the server as a clear command [✔]
+      does not treat /goal clear the cache as a clear command [✔]
+    Goal Event Processing
+      sets goal state on EvGoalSet [✔]
+      updates goal state on EvGoalEvaluated [✔]
+      marks goal achieved on EvGoalAchieved [✔]
+      marks goal failed on EvGoalFailed [✔]
+      clears goal state on EvGoalCleared [✔]
+    Skill Invocation Autocomplete (Tab accepts ghost text)
+      accepts the inline completion on Tab when a skill prefix is being typed [✔]
+      keeps focus on the input box when Tab accepts a completion [✔]
+      falls back to cycling focus on Tab when no completion is available [✔]
+      falls back to cycling focus on Tab when the slash-command is fully typed [✔]
+      falls back to cycling focus on Tab when the input buffer is empty [✔]
+      preserves leading prompt text when accepting a completion [✔]
+      cycles focus on Tab from non-input panels even with skills present [✔]
+      completes a built-in slash command with no skills present [✔]
+    Goal Execution Unlimited Turns in TUI (Bug Repro)
+      defaults cfgMaxTurns to Nothing (infinity) in goalAgentConfig [✔]
+      respects explicit turn cap when configured in goalAgentConfig [✔]
+      does not terminate with 'Maximum turns reached (20)' on turn 20 when default turn limit is infinity [✔]
+    runGoalWorker terminal event handling (Issues #49, #232)
+      ends a blocked goal (GoalActive) in failure with the evaluator's reason, not the answer [✔]
+      ends an impossible goal (GoalFailed) in failure with the evaluator's reason [✔]
+      ends an achieved goal successfully with the assistant's answer [✔]
+      ends a goal run stopped by the turn limit in a stopped state, not done [✔]
+    Built-in Slash Commands
+      registers all standard built-in slash commands [✔]
+      handles /exit and /quit by emitting ActionQuit [✔]
+      handles /model query and /model switch [✔]
+      keeps the next agent run's model in sync with /model (Issue #61) [✔]
+      handles /config [✔]
+      handles /context [✔]
+      handles /plan mode [✔]
+      runs git for /diff instead of reporting a fabricated result (Issue #155) [✔]
+      reports the task_list tool's output for /tasks (Issue #155) [✔]
+      reports the configured theme for /theme (Issue #155) [✔]
+      points /resume at the CLI flags that actually resume a session (Issue #155) [✔]
+      handles /status [✔]
+      handles /memory and /init [✔]
+      handles /permissions and /fewer-permission-prompts [✔]
+      handles /doctor, /copy, /reload-skills, /mcp, and /plugin [✔]
+      re-reads the current workspace's skills for /reload-skills (Issue #273) [✔]
+      copies the last assistant response with /copy (Issue #155) [✔]
+    CLI Initial Prompt Launch (initialTuiLaunch)
+      dispatches ActionRunGoal when CLI initial prompt is /goal [✔]
+      dispatches no actions and updates UI when CLI initial prompt is /help [✔]
+      dispatches ActionQuit when CLI initial prompt is /quit [✔]
+      dispatches ActionRunAgent when CLI initial prompt is standard text [✔]
+      returns empty actions for Nothing or whitespace prompt [✔]
+    buildTuiSystemPrompt
+      builds base prompt when no guidelines or extra prompt [✔]
+      appends custom instructions when optAppendSystemPrompt is passed [✔]
+      combines AGENT.md guidelines and optAppendSystemPrompt [✔]
+Hach.TUI (Layout / Border Alignment)
+  installWideGlyphWidths
+    gives the UI's wide glyphs their real two-column width [✔]
+    leaves other characters' widths alone [✔]
+  approval dialog
+    shows the full long shell command before approval at 80 columns [✔]
+    shows the full long shell command before approval at 140 columns [✔]
+    shows the full long shell command before approval at 240 columns [✔]
+    preserves quoted spaces and explicit newlines in approval commands [✔]
+    keeps approval controls and a scroll hint visible for a screen-sized command [✔]
+  panel borders
+    land in identical terminal columns on every row of the panel band [✔]
+    stays aligned at other terminal widths [✔]
+    stays aligned with an unlimited turn count [✔]
+  glyph inventory
+    renders no unclassified double-width glyph [✔]
+Hach.Property (CGPT & Fuzzing)
+  Property-Based Testing & Vulnerability Search
+    Security & Workspace Isolation (Path Traversal)
+      prevents reading files outside the workspace via ../ traversal [✔]
+      prevents reading files outside workspace via absolute paths [✔]
+      prevents writing files outside the workspace via ../ traversal [✔]
+    CLI Argument Parser Invariants (QuickCheck)
+      never crashes on arbitrary list of arguments [✔]
+        +++ OK, passed 2000 tests.
+      always sets optNoTui = True when --no-tui is present [✔]
+        +++ OK, passed 2000 tests.
+    OpenRouter Error Handling
+      handles string error payloads without falling back to JSON parse failure [✔]
+    TUI State Machine Invariants under Fuzzing
+      preserves state invariants across arbitrary sequences of user keys [✔]
+        +++ OK, passed 100 tests.
+      quits on 'q' when Transcript panel is focused (User Story 19) [✔]
+      toggles help overlay on KeyF1 from any focus mode [✔]
+Hach.Regression (high-level laws)
+  High-level regression laws
+    startupIntent
+      prefers help, then version, then exec, then init, then headless [✔]
+        +++ OK, passed 100 tests.
+    parseEffortLevel
+      accepts the canonical name in any case with surrounding whitespace [✔]
+        +++ OK, passed 100 tests.
+      rejects a token that is not a supported effort name [✔]
+        +++ OK, passed 100 tests.
+    EffortLevel JSON
+      binds both codecs to effortLevelName [✔]
+        +++ OK, passed 100 tests.
+    addUsageToSession
+      sums two turns onto an empty session and counts evaluation tokens only when asked [✔]
+        +++ OK, passed 100 tests.
+    matchRule
+      does not apply a path-scoped rule when the call has no path [✔]
+        +++ OK, passed 100 tests.
+      matches a tool name case-insensitively and records that name in the decision [✔]
+        +++ OK, passed 100 tests.
+      lets a star or an omitted tool match any call [✔]
+        +++ OK, passed 100 tests.
+      does not match a different tool name [✔]
+        +++ OK, passed 100 tests.
+    mergeSettings
+      appends permission rules, later layer first [✔]
+        +++ OK, passed 100 tests.
+    isProtectedPath
+      protects a path exactly when one segment is .git, .claude, .agents, or .agent [✔]
+        +++ OK, passed 100 tests.
+    resolveWorkingDirs
+      drops empty directories and keeps the first spelling, flags before settings [✔]
+        +++ OK, passed 100 tests.
+    resolveMaxBudgetUsd
+      keeps the CLI ceiling, including a negative or infinite one [✔]
+        +++ OK, passed 100 tests.
+      keeps a NaN CLI ceiling instead of the settings value [✔]
+        +++ OK, passed 100 tests.
+      drops a negative or non-finite settings ceiling and keeps a finite non-negative one [✔]
+        +++ OK, passed 100 tests.
+    countOccurrencesUpToTwo
+      returns 0 for an empty needle [✔]
+        +++ OK, passed 100 tests.
+      never reports more than two matches [✔]
+        +++ OK, passed 100 tests.
+      agrees with a full count, capped at two, when the needle cannot overlap itself [✔]
+        +++ OK, passed 100 tests.
+    parsePorcelainStatus
+      records only the destination of a rename or copy [✔]
+        +++ OK, passed 100 tests.
+      strips quotes around a path that contains a space [✔]
+        +++ OK, passed 100 tests.
+Hach.GoalFuzz (CGPT /goal campaign)
+  CGPT: goalLoop invariants over random turn sequences
+    exercises a broad spread of goal-loop termination paths [✔]
+      +++ OK, passed 1000 tests:
+      44.2% "failed"
+      41.7% "active/blocked"
+      14.1% "achieved"
+    gsNoProgressCount never exceeds blockCap (cap >= 1) [✔]
+      +++ OK, passed 1000 tests.
+    gsTurnCount == number of EvGoalEvaluated events [✔]
+      +++ OK, passed 1000 tests.
+    GoalAchieved implies last verdict was GoalMet [✔]
+      +++ OK, passed 1000 tests; 6490 discarded.
+    GoalFailed implies impossible-verdict or unrecoverable content [✔]
+      +++ OK, passed 1000 tests; 1197 discarded.
+    history only ever grows from the initial prefix [✔]
+      +++ OK, passed 1000 tests.
+  CGPT: error-classification integration (realistic IO errors)
+    classifyError flags realistic unrecoverable errors [✔]
+      +++ OK, passed 1000 tests; 778 discarded.
+    classifyError classifies transient errors mentioning model as GoalErrTransient [✔]
+    classifyError classifies model unavailability errors as GoalErrUnrecoverable [✔]
+    goalLoop keeps goal active on transient error mentioning model [✔]
+    goalLoop fails the goal on a realistic unrecoverable API error [✔]
+      +++ OK, passed 1000 tests.
+  CGPT: block-cap edge case
+    gsNoProgressCount never exceeds max 1 blockCap (incl. degenerate caps) [✔]
+      +++ OK, passed 1000 tests.
+  CGPT: /goal clear-alias vs condition disambiguation
+    a bare alias (no trailing text) is a clear command [✔]
+      +++ OK, passed 1000 tests.
+    an alias followed by trailing text is NOT a clear command [✔]
+      +++ OK, passed 1000 tests.
+    an alias with only trailing whitespace is still a clear command [✔]
+      +++ OK, passed 1000 tests.
+    an alias with leading whitespace is still a clear command [✔]
+      +++ OK, passed 1000 tests.
+    an alias with leading and trailing whitespace is still a clear command [✔]
+      +++ OK, passed 1000 tests.
+    specifically: /goal stop the server is not a clear [✔]
+Hach.Campaign (CGPT coverage-guided campaign)
+  CGPT campaign: matchGlob directory-boundary **/ 
+    **/ never matches a suffix inside a single path segment [✔]
+      +++ OK, passed 2000 tests (100.00% "**/ vs flat-name").
+    **/suffix matches the bare suffix (zero directories) [✔]
+      +++ OK, passed 2000 tests.
+    **/suffix matches after a complete directory segment [✔]
+      +++ OK, passed 2000 tests.
+    single-star * never crosses a directory separator [✔]
+      +++ OK, passed 2000 tests.
+    literal patterns match only themselves [✔]
+      +++ OK, passed 2000 tests.
+    reproducers: **/c vs abc, **/bar.txt vs foobar.txt, src/**/secret.txt vs src/nonsecret.txt [✔]
+  CGPT campaign: permission tool-alias classification
+    Plan mode allows every read-only alias (incl. snake_case) [✔]
+      +++ OK, passed 2000 tests:
+       4.75% "ListAgents"
+       4.45% "TaskList"
+       4.45% "find_files"
+       4.20% "list_agents"
+       4.15% "glob"
+       4.15% "read_file"
+       4.05% "WebFetch"
+       4.05% "task_list"
+       4.05% "web_fetch"
+       4.05% "webfetch"
+       3.90% "Glob"
+       3.90% "ListDir"
+       3.80% "listagents"
+       3.80% "monitor"
+       3.70% "grep_search"
+       3.65% "Grep"
+       3.45% "TaskGet"
+       3.45% "web_search"
+       3.35% "WebSearch"
+       3.35% "list_dir"
+       3.20% "Monitor"
+       3.20% "tasklist"
+       3.15% "grep"
+       3.10% "websearch"
+       2.95% "taskget"
+       2.90% "listdir"
+       2.80% "task_get"
+    Default mode allows every read-only alias [✔]
+      +++ OK, passed 2000 tests.
+    AcceptEdits auto-approves every write alias [✔]
+      +++ OK, passed 2000 tests:
+       8.95% "write_file"
+       8.25% "Edit"
+       8.20% "TodoWrite"
+       8.15% "TaskUpdate"
+       8.15% "taskupdate"
+       8.05% "task_update"
+       7.80% "replace_file_content"
+       7.75% "edit"
+       7.65% "todowrite"
+       7.15% "todo_write"
+       7.05% "task_create"
+       6.60% "taskcreate"
+       6.25% "TaskCreate"
+    AcceptEdits asks for every command alias [✔]
+      +++ OK, passed 2000 tests:
+       9.85% "run_command"
+       9.10% "task_stop"
+       8.90% "bash"
+       8.85% "exitworktree"
+       8.70% "exit_worktree"
+       8.35% "Bash"
+       8.35% "EnterWorktree"
+       8.35% "TaskStop"
+       7.90% "enterworktree"
+       7.65% "taskstop"
+       7.00% "ExitWorktree"
+       7.00% "enter_worktree"
+    BypassPermissions allows any tool name [✔]
+      +++ OK, passed 2000 tests.
+    DontAsk allows any tool name [✔]
+      +++ OK, passed 2000 tests.
+    Plan mode denies write and command aliases [✔]
+      +++ OK, passed 2000 tests.
+    protected-path writes are denied in AcceptEdits [✔]
+      +++ OK, passed 2000 tests.
+    cyclePermissionMode is a 6-cycle covering every mode [✔]
+    reproducers: web_fetch / task_create snake_case aliases [✔]
+  CGPT campaign: parseSkillInvocations token integrity
+    cleaned words equal original words minus exact invoked slash-tokens [✔]
+      +++ OK, passed 2000 tests:
+      48.60% 0
+      33.35% 1
+      14.05% 2
+       3.25% 3
+       0.65% 4
+       0.10% 5
+    never activates a skill with skillUserInvocable = False [✔]
+      +++ OK, passed 2000 tests.
+    a prefix-sharing neighbour word is left intact when the skill is invoked [✔]
+    non-invocable skills are ignored even when the slash token is present [✔]
+  CGPT campaign: worktree name flag-injection safety
+    accepted names never have surrounding whitespace [✔]
+      +++ OK, passed 2000 tests.
+    accepted names never start with a dash after stripping [✔]
+      +++ OK, passed 2000 tests.
+    whitespace-prefixed flag names are always rejected [✔]
+      +++ OK, passed 2000 tests:
+      17.45% "-b"
+      17.05% "-B"
+      16.95% "--detach"
+      16.25% "--force"
+      16.15% "--orphan"
+      16.15% "-f"
+    well-formed names are accepted [✔]
+      +++ OK, passed 2000 tests.
+    path separators, colon, and '..' are rejected [✔]
+      +++ OK, passed 2000 tests.
+    reproducers: " --force" and " -b" are rejected [✔]
+  CGPT campaign: dialogueToMessages role alternation
+    never emits two consecutive AssistantMsg [✔]
+      +++ OK, passed 2000 tests:
+      10.90% 1
+       9.00% 2
+       8.50% 0
+       8.35% 4
+       7.45% 3
+       5.05% 5
+       4.95% 6
+       4.35% 8
+       4.25% 9
+       3.90% 10
+       3.65% 11
+       3.60% 7
+       3.50% 12
+       3.15% 14
+       2.60% 13
+       2.15% 15
+       1.95% 17
+       1.90% 18
+       1.75% 16
+       1.70% 20
+       1.20% 19
+       1.15% 21
+       0.95% 23
+       0.85% 22
+       0.75% 25
+       0.60% 24
+       0.50% 26
+       0.50% 29
+       0.40% 27
+       0.15% 28
+       0.15% 30
+       0.10% 31
+       0.05% 32
+    always starts with SystemMsg and ends with a UserMsg carrying the current prompt [✔]
+      +++ OK, passed 2000 tests.
+    reproducer: consecutive DiAssistant items collapse instead of adjoining [✔]
+  CGPT campaign: CLI parser invariants
+    never crashes on arbitrary argument lists [✔]
+      +++ OK, passed 2000 tests.
+    --max-turns N (N>0) is always captured [✔]
+      +++ OK, passed 2000 tests.
+    --max-turns=N (N>0) is always captured [✔]
+      +++ OK, passed 2000 tests.
+    non-positive --max-turns is rejected [✔]
+      +++ OK, passed 2000 tests.
+    --no-tui is sticky regardless of surrounding words [✔]
+      +++ OK, passed 2000 tests.
+    CLI model override wins over OS env and .env [✔]
+      +++ OK, passed 2000 tests.
+  CGPT campaign: JSON codec round-trips
+    Message [✔]
+      +++ OK, passed 2000 tests.
+    ToolCall [✔]
+      +++ OK, passed 2000 tests.
+    ToolResult [✔]
+      +++ OK, passed 2000 tests.
+    PermissionMode [✔]
+      +++ OK, passed 2000 tests.
+    PermissionDecision [✔]
+      +++ OK, passed 2000 tests.
+    GoalVerdict [✔]
+      +++ OK, passed 2000 tests.
+    HookEvent [✔]
+      +++ OK, passed 2000 tests.
+    OutputStyle (non-reserved custom) [✔]
+      +++ OK, passed 2000 tests.
+    PermissionRule [✔]
+      +++ OK, passed 2000 tests.
+  CGPT campaign: token accounting & saturation
+    contextSaturationPercent is always in 0..100 [✔]
+      +++ OK, passed 2000 tests.
+    addUsageToSession is monotonic in every token counter [✔]
+      +++ OK, passed 2000 tests.
+    classifyCompletion without the [API Error] prefix is GoalNoError [✔]
+      +++ OK, passed 2000 tests.
+    goalArgIsClear is true iff the stripped first word is a bare alias [✔]
+      +++ OK, passed 2000 tests.
+  CGPT campaign: settings merge & AppleScript escape
+    mergeSettings later Maybe-fields win [✔]
+      +++ OK, passed 2000 tests.
+    escapeAppleScript leaves no raw unescaped double-quote [✔]
+      +++ OK, passed 2000 tests:
+       5.40% 0
+       4.80% 1
+       3.35% 3
+       3.20% 2
+       3.15% 7
+       2.85% 5
+       2.80% 4
+       2.80% 6
+       2.65% 10
+       2.55% 12
+       2.50% 8
+       2.25% 16
+       1.95% 9
+       1.90% 11
+       1.90% 15
+       1.85% 14
+       1.80% 17
+       1.70% 13
+       1.70% 19
+       1.65% 23
+       1.65% 24
+       1.60% 27
+       1.55% 38
+       1.50% 30
+       1.35% 20
+       1.35% 33
+       1.20% 18
+       1.20% 26
+       1.20% 29
+       1.20% 31
+       1.20% 36
+       1.20% 40
+       1.15% 46
+       1.10% 25
+       1.10% 39
+       1.05% 22
+       1.05% 44
+       1.05% 45
+       1.00% 32
+       1.00% 41
+       0.90% 43
+       0.85% 21
+       0.85% 37
+       0.80% 34
+       0.80% 48
+       0.80% 51
+       0.75% 28
+       0.75% 63
+       0.65% 35
+       0.65% 42
+       0.65% 50
+       0.65% 56
+       0.60% 47
+       0.60% 49
+       0.60% 53
+       0.60% 59
+       0.55% 58
+       0.55% 60
+       0.55% 62
+       0.55% 65
+       0.50% 52
+       0.50% 61
+       0.45% 54
+       0.45% 66
+       0.45% 69
+       0.45% 70
+       0.45% 71
+       0.40% 73
+       0.35% 64
+       0.35% 67
+       0.30% 55
+       0.30% 57
+       0.30% 68
+       0.30% 76
+       0.30% 78
+       0.30% 80
+       0.25% 75
+       0.25% 89
+       0.20% 72
+       0.20% 77
+       0.20% 84
+       0.15% 74
+       0.15% 79
+       0.15% 81
+       0.15% 82
+       0.10% 85
+       0.10% 86
+       0.10% 87
+       0.10% 88
+       0.10% 90
+       0.10% 91
+       0.10% 92
+       0.10% 93
+       0.05% 83
+       0.05% 94
+       0.05% 95
+       0.05% 97
+  CGPT campaign: task store & memory rules
+    createTask then getTask returns the created title [✔]
+      +++ OK, passed 2000 tests.
+    updateTask changes only the named task's status [✔]
+      +++ OK, passed 2000 tests.
+    a rule with no patterns matches every file list [✔]
+      +++ OK, passed 2000 tests.
+    a rule with a literal pattern matches only that exact path [✔]
+      +++ OK, passed 2000 tests.
+  CGPT campaign: porcelain status & co-author trailer
+    appendCoAuthor is idempotent [✔]
+      +++ OK, passed 2000 tests.
+    branch names containing dots survive porcelain parsing [✔]
+      +++ OK, passed 2000 tests.
+    empty porcelain body is a clean tree on the default branch [✔]
+  CGPT campaign: focus cycle & tool-output truncation
+    nextFocus . prevFocus = id [✔]
+    truncateToolOutput never grows a short input [✔]
+      +++ OK, passed 2000 tests.
+Hach.Campaign2 (CGPT wave-2 containment & identity)
+  CGPT wave-2: MCP tool-name invertibility
+    format/parse is an inverse for delimiter-free parts [✔]
+      +++ OK, passed 2000 tests:
+      57.00% "underscore"
+      33.75% "numeric-server"
+       9.25% "plain"
+    names with extra __ segments do not parse as a server/tool pair [✔]
+      +++ OK, passed 2000 tests.
+    reproducer: mcp__my__server__query is rejected rather than split early [✔]
+    reproducer: mcp__sqlite__query still round-trips [✔]
+    a server name ending in _ or a tool name starting with _ fuses the delimiter and is rejected [✔]
+  CGPT wave-2: task-id uniqueness
+    createTask never overwrites an existing custom id [✔]
+      +++ OK, passed 2000 tests:
+      95.15% "occupies-generated-namespace"
+       4.85% "custom-only"
+    reproducer: custom task-2 then createTask keeps the original [✔]
+  CGPT wave-2: dialogueToMessages user-role alternation
+    never emits two consecutive UserMsg [✔]
+      +++ OK, passed 2000 tests:
+      18.15% 1
+      12.60% 2
+       9.40% 3
+       8.75% 4
+       8.05% 5
+       5.15% 6
+       4.85% 9
+       4.75% 10
+       4.70% 7
+       4.70% 8
+       3.65% 11
+       2.95% 13
+       2.45% 14
+       2.25% 12
+       2.05% 15
+       1.25% 17
+       1.10% 16
+       1.05% 18
+       0.70% 19
+       0.55% 21
+       0.30% 20
+       0.30% 22
+       0.25% 23
+       0.05% 28
+    reproducer: adjacent DiUser items collapse instead of adjoining [✔]
+  CGPT wave-2: collapseLogicalPath
+    collapsing a path twice is identity [✔]
+      +++ OK, passed 2000 tests.
+    a trailing /.. drops the last non-root segment [✔]
+      +++ OK, passed 2000 tests.
+    reproducer: /workspace/../etc/passwd collapses to /etc/passwd [✔]
+  CGPT wave-2: CLI -- terminator
+    --no-tui before -- sets the flag; after -- it is a prompt word [✔]
+      +++ OK, passed 2000 tests.
+    --no-tui after -- is not a flag [✔]
+  CGPT wave-2: cost, hooks, and subagent bounds
+    estimateCostUsd is non-negative for non-negative token counts [✔]
+      +++ OK, passed 2000 tests.
+    canSpawnSubagent is false at or above either bound [✔]
+      +++ OK, passed 2000 tests:
+      61.60% "blocked"
+      38.40% "allowed"
+    wildcard hook matchers always match [✔]
+      +++ OK, passed 2000 tests.
+    parseHookOutput 0 is always the default pass [✔]
+      +++ OK, passed 2000 tests.
+    TokenUsage JSON round-trips for finite fields [✔]
+      +++ OK, passed 2000 tests.
+  CGPT wave-2: agentLoop history is monotone
+    final history is at least as long as the initial history [✔]
+      +++ OK, passed 2000 tests.
+  CGPT wave-2: memory @import workspace containment
+    relative imports inside the sandbox still expand [✔]
+    absolute imports outside the sandbox are denied [✔]
+    ../ traversal that leaves the sandbox is denied [✔]
+  CGPT wave-2: skill {{file:}} workspace containment
+    relative file placeholders inside the sandbox still expand [✔]
+    absolute file placeholders outside the sandbox are left intact [✔]
+    ../ traversal that leaves the sandbox is left intact [✔]
+    resolveWorkspacePath rejects absolute and escaping relative paths [✔]
+Hach.Campaign3 (CGPT wave-3 cost, completion, TUI)
+  CGPT wave-3: cost estimator identity
+    /cost estimated line uses estimateCostUsd (not a second rate table) [✔]
+      +++ OK, passed 2000 tests:
+      21.25% "default"
+      13.70% "opus"
+      11.85% "gpt-4o-mini"
+      11.00% "sonnet"
+      10.85% "claude-fallback"
+      10.75% "deepseek"
+      10.60% "haiku"
+      10.00% "gpt-4o"
+    reproducer: claude-3-opus is billed at opus rates, not generic claude [✔]
+    reproducer: gpt-4o-mini is not billed as generic gpt-4 [✔]
+    reproducer: generic gpt-4 uses the folded-back $2.50/$10.00 table [✔]
+  CGPT wave-3: slash-command completion
+    a proper prefix of a built-in completes to a built-in [✔]
+      +++ OK, passed 2000 tests:
+       3.90% "/c"
+       3.85% "/co"
+       2.90% "/m"
+       2.35% "/p"
+       1.75% "/pl"
+       1.45% "/h"
+       1.45% "/t"
+       1.40% "/di"
+       1.40% "/e"
+       1.40% "/qu"
+       1.30% "/d"
+       1.30% "/qui"
+       1.25% "/dif"
+       1.25% "/hel"
+       1.20% "/mcp"
+       1.20% "/model"
+       1.15% "/cos"
+       1.15% "/goa"
+       1.15% "/goal"
+       1.15% "/quit"
+       1.10% "/con"
+       1.10% "/conf"
+       1.10% "/pla"
+       1.05% "/diff"
+       1.05% "/he"
+       1.05% "/mem"
+       1.05% "/mod"
+       1.05% "/mode"
+       1.05% "/them"
+       1.00% "/clea"
+       1.00% "/copy"
+       1.00% "/in"
+       1.00% "/ini"
+       1.00% "/init"
+       1.00% "/mc"
+       0.95% "/i"
+       0.95% "/plan"
+       0.95% "/q"
+       0.95% "/st"
+       0.95% "/sta"
+       0.90% "/doctor"
+       0.90% "/memory"
+       0.90% "/mo"
+       0.90% "/r"
+       0.90% "/resum"
+       0.85% "/cl"
+       0.85% "/memo"
+       0.85% "/resu"
+       0.85% "/the"
+       0.80% "/cle"
+       0.80% "/com"
+       0.80% "/config"
+       0.80% "/ex"
+       0.80% "/exit"
+       0.80% "/help"
+       0.80% "/plug"
+       0.80% "/re"
+       0.80% "/stat"
+       0.80% "/theme"
+       0.75% "/res"
+       0.75% "/s"
+       0.75% "/tas"
+       0.70% "/doc"
+       0.70% "/g"
+       0.70% "/go"
+       0.70% "/memor"
+       0.70% "/status"
+       0.70% "/th"
+       0.65% "/cop"
+       0.65% "/docto"
+       0.65% "/exi"
+       0.65% "/plu"
+       0.65% "/ta"
+       0.65% "/task"
+       0.60% "/cost"
+       0.60% "/permissio"
+       0.60% "/plugi"
+       0.60% "/tasks"
+       0.55% "/clear"
+       0.55% "/confi"
+       0.55% "/cont"
+       0.55% "/contex"
+       0.55% "/reload-skil"
+       0.55% "/reload-skill"
+       0.50% "/conte"
+       0.50% "/permi"
+       0.50% "/plugin"
+       0.45% "/comp"
+       0.45% "/compa"
+       0.45% "/me"
+       0.45% "/pe"
+       0.40% "/compac"
+       0.40% "/permissions"
+       0.40% "/resume"
+       0.35% "/context"
+       0.35% "/fewer-pe"
+       0.35% "/perm"
+       0.35% "/permissi"
+       0.35% "/reload-sk"
+       0.35% "/statu"
+       0.30% "/compact"
+       0.30% "/do"
+       0.30% "/doct"
+       0.30% "/fe"
+       0.30% "/fewer-permiss"
+       0.30% "/fewer-permission-pr"
+       0.25% "/fewer-permissio"
+       0.25% "/fewer-permission"
+       0.25% "/fewer-permission-prom"
+       0.25% "/fewer-permission-prompt"
+       0.25% "/fewer-permission-prompts"
+       0.25% "/permis"
+       0.25% "/permission"
+       0.25% "/relo"
+       0.25% "/reloa"
+       0.25% "/reload-ski"
+       0.20% "/fewe"
+       0.20% "/fewer-"
+       0.20% "/fewer-per"
+       0.20% "/fewer-permissi"
+       0.20% "/fewer-permission-pro"
+       0.20% "/permiss"
+       0.20% "/rel"
+       0.20% "/reload-"
+       0.20% "/reload-skills"
+       0.15% "/f"
+       0.15% "/fewer-perm"
+       0.15% "/reload-s"
+       0.10% "/fewer-p"
+       0.10% "/fewer-permi"
+       0.10% "/fewer-permis"
+       0.05% "/few"
+       0.05% "/fewer"
+       0.05% "/fewer-permission-"
+       0.05% "/fewer-permission-p"
+       0.05% "/fewer-permission-promp"
+       0.05% "/reload"
+    completed text is always a known candidate (builtin or invocable skill) [✔]
+      +++ OK, passed 2000 tests.
+    non-invocable skills never contribute a completion [✔]
+      +++ OK, passed 2000 tests; 746 discarded.
+    reproducer: /cle completes to /clear with an empty skill catalog [✔]
+    reproducer: /co completes to the lex-least builtin (/compact) [✔]
+  CGPT wave-3: auto-scroll covers every appending constructor
+    notice-appending harness events auto-scroll when input is focused [✔]
+      +++ OK, passed 2000 tests:
+       8.95% "llm"
+       8.25% "error"
+       8.20% "tool-result"
+       8.15% "goal-block"
+       8.15% "goal-ok"
+       8.05% "goal-fail"
+       7.80% "done"
+       7.75% "tool-call"
+       7.65% "hook"
+       7.15% "perm"
+       7.05% "notice"
+       6.60% "goal-eval"
+       6.25% "session"
+    the same events never auto-scroll when the transcript is focused [✔]
+      +++ OK, passed 2000 tests.
+    reproducer: EvHookTriggered / EvSessionSaved / EvNotificationSent / EvToolResult append [✔]
+  CGPT wave-3: prompt-history browse is abandoned on edit
+    typing after Up clears the history index and keeps the edited buffer [✔]
+      +++ OK, passed 2000 tests:
+       6.95% 1
+       4.65% 2
+       3.50% 4
+       3.20% 3
+       3.05% 8
+       2.90% 7
+       2.70% 5
+       2.70% 6
+       2.55% 13
+       2.45% 9
+       2.40% 11
+       2.05% 16
+       2.05% 17
+       1.95% 15
+       1.90% 10
+       1.85% 12
+       1.80% 14
+       1.75% 18
+       1.70% 20
+       1.65% 25
+       1.60% 24
+       1.55% 28
+       1.50% 39
+       1.40% 21
+       1.40% 31
+       1.30% 34
+       1.20% 27
+       1.20% 32
+       1.20% 37
+       1.20% 41
+       1.15% 30
+       1.15% 47
+       1.10% 19
+       1.10% 23
+       1.10% 45
+       1.05% 26
+       1.05% 40
+       1.00% 42
+       1.00% 46
+       0.90% 33
+       0.90% 44
+       0.85% 22
+       0.85% 38
+       0.85% 49
+       0.80% 35
+       0.80% 52
+       0.70% 29
+       0.70% 43
+       0.70% 64
+       0.65% 36
+       0.65% 51
+       0.65% 57
+       0.60% 54
+       0.55% 48
+       0.55% 50
+       0.55% 59
+       0.55% 63
+       0.55% 66
+       0.50% 55
+       0.50% 60
+       0.50% 61
+       0.50% 62
+       0.45% 53
+       0.45% 67
+       0.45% 70
+       0.45% 71
+       0.45% 72
+       0.40% 74
+       0.35% 65
+       0.35% 68
+       0.30% 56
+       0.30% 58
+       0.30% 77
+       0.30% 79
+       0.25% 69
+       0.25% 76
+       0.25% 81
+       0.25% 90
+       0.20% 73
+       0.20% 78
+       0.20% 85
+       0.15% 75
+       0.15% 80
+       0.15% 82
+       0.15% 83
+       0.15% 88
+       0.10% 87
+       0.10% 89
+       0.10% 91
+       0.10% 92
+       0.10% 94
+       0.05% 84
+       0.05% 86
+       0.05% 93
+       0.05% 95
+       0.05% 98
+    backspace after Up also leaves browse mode [✔]
+      +++ OK, passed 2000 tests.
+    reproducer: Up then 'x' then Down does not jump to another history entry [✔]
+  CGPT wave-3: CLI print/exec/permission-mode
+    --print always implies --no-tui and optPrint [✔]
+      +++ OK, passed 2000 tests.
+    --exec CMD implies --no-tui and records the command [✔]
+      +++ OK, passed 2000 tests.
+    --permission-mode accepts every documented alias [✔]
+      +++ OK, passed 2000 tests.
+  CGPT wave-3: remaining JSON codecs
+    SessionInfo round-trips [✔]
+      +++ OK, passed 2000 tests.
+    Settings with empty collections round-trip [✔]
+    GitStatusInfo round-trips [✔]
+      +++ OK, passed 2000 tests.
+    HookResult round-trips [✔]
+      +++ OK, passed 2000 tests.
+  CGPT wave-3: hooks, env files, porcelain
+    parseHookOutput 2 with a JSON deny is a PermDeny [✔]
+      +++ OK, passed 2000 tests.
+    parseHookOutput 2 with non-JSON text is a deny of that text [✔]
+      +++ OK, passed 2000 tests.
+    parseEnvContent then lookup recovers every simple KEY=value pair [✔]
+      +++ OK, passed 2000 tests:
+       6.95% 1
+       4.65% 2
+       3.50% 4
+       3.20% 3
+       3.05% 8
+       2.90% 7
+       2.70% 5
+       2.70% 6
+       2.55% 13
+       2.45% 9
+       2.40% 11
+       2.05% 16
+       2.05% 17
+       1.95% 15
+       1.90% 10
+       1.85% 12
+       1.80% 14
+       1.75% 18
+       1.70% 20
+       1.65% 25
+       1.60% 24
+       1.55% 28
+       1.50% 39
+       1.45% 31
+       1.40% 21
+       1.30% 34
+       1.20% 27
+       1.20% 37
+       1.20% 41
+       1.15% 30
+       1.15% 32
+       1.15% 47
+       1.10% 19
+       1.10% 23
+       1.10% 45
+       1.05% 26
+       1.05% 40
+       1.00% 42
+       1.00% 46
+       0.90% 33
+       0.90% 44
+       0.85% 22
+       0.85% 38
+       0.85% 49
+       0.80% 35
+       0.80% 52
+       0.70% 29
+       0.70% 43
+       0.70% 64
+       0.65% 36
+       0.65% 51
+       0.65% 57
+       0.60% 54
+       0.55% 48
+       0.55% 50
+       0.55% 59
+       0.55% 63
+       0.55% 66
+       0.50% 55
+       0.50% 60
+       0.50% 61
+       0.50% 62
+       0.45% 53
+       0.45% 67
+       0.45% 70
+       0.45% 71
+       0.45% 72
+       0.40% 74
+       0.35% 65
+       0.35% 68
+       0.30% 56
+       0.30% 58
+       0.30% 77
+       0.30% 79
+       0.25% 69
+       0.25% 76
+       0.25% 81
+       0.25% 90
+       0.20% 73
+       0.20% 78
+       0.20% 85
+       0.15% 75
+       0.15% 80
+       0.15% 82
+       0.15% 83
+       0.15% 87
+       0.10% 88
+       0.10% 89
+       0.10% 91
+       0.10% 92
+       0.10% 94
+       0.05% 84
+       0.05% 86
+       0.05% 93
+       0.05% 95
+       0.05% 98
+    porcelain entries are partitioned into modified XOR untracked [✔]
+      +++ OK, passed 2000 tests.
+    extractPathArg reads path/file/target/filePath and nothing else [✔]
+      +++ OK, passed 2000 tests.
+  CGPT wave-3: OpenRouter error envelopes never succeed
+    a top-level string error is reported, not parsed as a completion [✔]
+      +++ OK, passed 2000 tests.
+    empty choices is a Left [✔]
+  CGPT wave-3: skill / settings / compaction identities
+    mergeSkills: workspace name wins [✔]
+      +++ OK, passed 2000 tests.
+    injectSkillsIntoPrompt is identity on an empty skill list [✔]
+      +++ OK, passed 2000 tests.
+    formatHistoryForCompaction contains every user turn [✔]
+      +++ OK, passed 2000 tests.
+    makeCompactedHistory is SystemMsg? ++ one UserMsg summary [✔]
+      +++ OK, passed 2000 tests.
+    parseSkillFile requires a name and preserves user-invocable=false [✔]
+Hach.PerfFuzz (performance-feedback campaign)
+  PerfFuzz: matchGlob polynomial bound
+    agrees with the naive backtracker on inputs that stay in budget [✔]
+      +++ OK, passed 2000 tests:
+      38.40% "literal steps<\"16\""
+      13.95% "**/ vs nested steps<\"16\""
+      13.95% "bare-** steps<\"16\""
+      10.10% "**/ vs flat steps<\"16\""
+       4.65% "*-glob vs nested steps<\"16\""
+       3.55% "*-glob vs flat steps<\"16\""
+       2.80% "empty/empty steps<\"16\""
+       1.60% "bare-** steps<\"256\""
+       1.50% "*-glob vs nested steps<\"64\""
+       1.10% "bare-** steps<\"64\""
+       1.00% "bare-** steps<\"1k\""
+       0.95% "**/ vs nested steps<\"256\""
+       0.90% "*-glob vs nested steps<\"256\""
+       0.85% "**/ vs nested steps<\"1k\""
+       0.70% "**/ vs flat steps<\"256\""
+       0.65% "**/ vs nested steps<\"4k\""
+       0.60% "**/ vs nested steps<\"4k+\""
+       0.50% "bare-** steps<\"4k+\""
+       0.45% "*-glob vs flat steps<\"256\""
+       0.40% "bare-** steps<\"4k\""
+       0.35% "*-glob vs flat steps<\"64\""
+       0.30% "**/ vs flat steps<\"64\""
+       0.30% "**/ vs nested steps<\"64\""
+       0.15% "naive-timeout/**/ vs nested"
+       0.15% "naive-timeout/bare-**"
+       0.05% "**/ vs flat steps<\"4k+\""
+       0.05% "**/ vs flat steps<\"4k\""
+       0.05% "*-glob vs nested steps<\"1k\""
+    reproducers: directory-boundary semantics are unchanged [✔]
+    naive backtracker explodes on *a*a*...*b vs aaaa...; production stays correct [✔]
+      +++ OK, passed 100 tests:
+      16% "k=14"
+      16% "k=16"
+      13% "k=15"
+      12% "k=8"
+      11% "k=11"
+       9% "k=13"
+       9% "k=9"
+       7% "k=10"
+       7% "k=12"
+    headline: k=12 starred glob is False and does not require a budget [✔]
+  PerfFuzz: matchStarGlob (find_files) linear bound
+    agrees with the naive backtracker on inputs that stay in budget [✔]
+      +++ OK, passed 2000 tests:
+      46.10% "literal steps<\"16\""
+      26.75% "star vs slash steps<\"16\""
+       9.75% "star steps<\"16\""
+       5.15% "star vs slash steps<\"64\""
+       4.40% "star vs slash steps<\"256\""
+       3.00% "many-stars steps<\"16\""
+       0.95% "star vs slash steps<\"1k\""
+       0.80% "star steps<\"64\""
+       0.75% "many-stars steps<\"64\""
+       0.60% "star vs slash steps<\"4k\""
+       0.35% "many-stars steps<\"4k+\""
+       0.30% "many-stars steps<\"1k\""
+       0.25% "many-stars steps<\"256\""
+       0.25% "naive-timeout/many-stars"
+       0.25% "star steps<\"256\""
+       0.20% "many-stars steps<\"4k\""
+       0.10% "star vs slash steps<\"4k+\""
+       0.05% "star steps<\"1k\""
+    reproducers: '*' crosses '/', trailing stars match anything [✔]
+    naive backtracker explodes on *a*a*...*b; production stays correct [✔]
+      +++ OK, passed 100 tests:
+      16% "k=14"
+      16% "k=16"
+      13% "k=15"
+      12% "k=8"
+      11% "k=11"
+       9% "k=13"
+       9% "k=9"
+       7% "k=10"
+       7% "k=12"
+    headline: k=12 find_files glob is False and the naive replica times out [✔]
+  PerfFuzz: transcript collapse is linear in total text
+    n adjacent assistant items become one intercalated AssistantMsg [✔]
+      +++ OK, passed 2000 tests:
+      38.80% "medium-run"
+      30.65% "short-run"
+      23.10% "long-run"
+       7.45% "tiny-run"
+    n adjacent user items become one intercalated UserMsg [✔]
+      +++ OK, passed 2000 tests.
+    naive left-fold concat is superlinear; production still agrees [✔]
+      +++ OK, passed 100 tests:
+      56% "long-run"
+      28% "medium-run"
+      16% "short-run"
+    headline: 500 adjacent assistant items collapse correctly [✔]
+    headline: 10000 adjacent assistant items collapse correctly in linear time [✔]
+    headline: 10000 adjacent user items collapse correctly in linear time [✔]
+    mixed transcript items collapse adjacent same-role items across notices [✔]
+    dialogueToMessages strictly maintains role alternation on long mixed transcripts [✔]
+  PerfFuzz: settings allowlist unique is order-preserving
+    later layer wins; first occurrence of each name is kept [✔]
+      +++ OK, passed 2000 tests:
+      78.90% "long-list"
+      15.50% "short-list"
+       5.60% "tiny-list"
+    working directories follow the same first-wins unique [✔]
+      +++ OK, passed 2000 tests.
+    reproducer: duplicates across layers keep the later-layer order [✔]
+Hach.Skills
+  Hach.Skills
+    parseSkillFile
+      parses valid frontmatter and markdown body [✔]
+      strips quotes from frontmatter values [✔]
+      fails when frontmatter is missing name [✔]
+      fails when frontmatter closing delimiter is missing [✔]
+    mergeSkills (Precedence)
+      overrides global skill with workspace skill of the same name [✔]
+      includes distinct skills from both global and workspace [✔]
+    discoverSkillsFromDir
+      discovers skills in subdirectories with valid SKILL.md [✔]
+    discoverSkills
+      discovers user skills below CLAUDE_CONFIG_DIR [✔]
+      falls back to HOME when CLAUDE_CONFIG_DIR is unset [✔]
+    parseSkillInvocations
+      extracts a leading skill invocation and returns cleaned prompt [✔]
+      extracts skill invocation without extra prompt [✔]
+      preserves multiline formatting when extracting skill invocation [✔]
+      preserves leading indentation and whitespace when extracting skill invocation (minimised) [✔]
+      preserves leading indentation and whitespace in code blocks (issue #48) [✔]
+      preserves indentation when skill invocation is on its own line before indented code [✔]
+      preserves interior formatting and tables on lines without skill invocations [✔]
+      extracts skill invocation located anywhere in prompt [✔]
+      deduplicates skill invocations when the same skill is mentioned multiple times [✔]
+      leaves input untouched if slash token is not in catalog [✔]
+    injectSkillsIntoPrompt
+      returns original prompt when skills list is empty [✔]
+      wraps skill instructions into context tags prepended to prompt [✔]
+    slash invocation expansion (issue #63)
+      substitutes leftover prompt text for $ARGUMENTS [✔]
+      expands {{file:path}} in slash-invoked skill content [✔]
+      executes !command lines in slash-invoked skill content [✔]
+      does not expand commands supplied through $ARGUMENTS [✔]
+      does not expand file placeholders supplied through $ARGUMENTS [✔]
+      leaves prompts without slash skills unchanged [✔]
+      expands slash-invoked skills even when disable-model-invocation is true [✔]
+    slash invocation reads the current workspace catalog (issue #273)
+      expands a skill's current content after its file changes [✔]
+      expands a skill added after an earlier invocation [✔]
+      resolves a name the same way as the Skill tool after an edit [✔]
+    skillInvocationCompletion
+      completes a partial slash-command to the matching skill name [✔]
+      completes when the partial uniquely extends to a longer skill [✔]
+      completes to the lexicographically smallest match when ambiguous [✔]
+      extends an exact match to a longer skill when one shares the prefix [✔]
+      offers no completion when the partial exactly matches the only matching skill [✔]
+      offers no completion when the partial matches no skill [✔]
+      offers no completion for input that is not a slash-command [✔]
+      offers no completion when the trailing word is finished (trailing space) [✔]
+      offers no completion for a bare slash with no following text [✔]
+      completes only the trailing word, preserving leading prompt text [✔]
+      offers no completion once the slash-command is followed by arguments [✔]
+    extended frontmatter fields
+      parses all extended frontmatter metadata [✔]
+    substituteArguments
+      replaces $ARGUMENTS with supplied argument text [✔]
+      leaves content unchanged when $ARGUMENTS is absent [✔]
+    injectDynamicContext
+      expands {{file:path}} placeholders with file contents [✔]
+      executes !command lines and replaces with stdout [✔]
+Hach.Permissions
+  Hach.Permissions
+    Default mode
+      allows read-only tools [✔]
+      asks for file write tools [✔]
+      asks for command execution, including skills whose expansion can run commands [✔]
+    AcceptEdits mode
+      auto-approves file writes and edits [✔]
+      still asks for command execution including bash and Bash [✔]
+      denies protected path writes when called via edit tool alias [✔]
+      defaults to ask for unknown or unspecified tools in AcceptEdits mode [✔]
+    Plan mode
+      allows read operations [✔]
+      denies write and command execution [✔]
+      allows ExitPlanMode, AskUserQuestion, EndConversation, and Monitor [✔]
+    DontAsk and BypassPermissions modes
+      auto-approves all actions in DontAsk [✔]
+      auto-approves all actions in BypassPermissions [✔]
+    Protected paths
+      denies writes to .git directory [✔]
+      denies writes to .claude directory [✔]
+      denies writes to .agents directory [✔]
+      allows writes to standard repository files like .gitignore, .gitattributes, and .github (BUG-3) [✔]
+    Glob matching (BUG-4)
+      matches zero or more directories with **/ [✔]
+    Explicit rules
+      allow rule overrides default ask [✔]
+      deny rule blocks tool [✔]
+      deny glob secrets.txt denies ./secrets.txt [✔]
+      deny glob **/secrets.txt denies SECRETS.TXT [✔]
+      deny glob **/secrets.txt still denies sub/../secrets.txt [✔]
+      allow glob secrets.txt matches ./secrets.txt and SECRETS.TXT [✔]
+    registry-backed command and web authorization
+      uses the canonical command name for every command alias [✔]
+      classifies every web alias as read authority [✔]
+    TaskCreate with a command (issue #110)
+      asks for command approval in acceptEdits mode [✔]
+      asks for approval in auto mode [✔]
+      asks for approval in default mode [✔]
+      is denied in plan mode with or without a command [✔]
+      is allowed in dontAsk and bypassPermissions modes [✔]
+      stays a write tool without a non-blank command [✔]
+    Coordination tools (issue #125)
+      allows AskUserQuestion, EndConversation, EnterPlanMode, ExitPlanMode, and Monitor without asking [✔]
+Hach.Settings
+  Hach.Settings
+    JSON deserialization
+      parses complete settings object [✔]
+    Layered merging
+      overrides earlier layers with later layers [✔]
+      unions keybindings preferring later layer [✔]
+    Loading files that fail to decode (Issue #165)
+      reports the file and the reason instead of discarding it [✔]
+      treats a missing file as absent, not as a failure [✔]
+      fails the layered load rather than dropping the layer's rules [✔]
+      does not fall through to the .agents copy when .claude fails to decode [✔]
+      still merges layers that all decode [✔]
+    Hooks block (Issue #166)
+      loads the object form keyed by event name [✔]
+      still loads the older array-of-pairs form [✔]
+      names an unknown event instead of failing as a generic map error [✔]
+      rejects mcp hook handlers as unsupported [✔]
+      encodes hooks as an object and round-trips [✔]
+Hach.Sessions
+  Hach.Sessions
+    uses protected .agents directory instead of .agent for session persistence in ioAlgebra [✔]
+Session save error: dist-newstyle/test-sessions/blocked-workspace/.agents/sessions: createDirectory: inappropriate type (Not a directory)
+    keeps the interpreter alive when session persistence fails [✔]
+    saves and reloads a session transcript faithfully [✔]
+    lists recorded sessions ordered by recency [✔]
+    Compaction
+      replaces history with summary while preserving system prompt [✔]
+    Workspace session management (Issue #151)
+      resolves session target from CLI flags correctly [✔]
+      reports failure when continuing without stored sessions in workspace [✔]
+      reports failure when loading non-existent specific session ID [✔]
+      saves and loads workspace sessions end-to-end [✔]
+      builds session history combining system prompt, prior turns, and new prompt [✔]
+      drops trailing non-assistant messages from prior history when building new turn [✔]
+      resumes a session that ended on unresolved tool_calls without a user following them [✔]
+      keeps matching tool results when saving a run that stopped after tool execution [✔]
+      saves a mid-tool-call stop so resume does not follow tool_calls with a user message [✔]
+      saved session cost (Issue #253)
+        records the run's reported spend for a new session [✔]
+        adds a resumed run's spend to the saved total [✔]
+    Cost estimation (BUG-7)
+      correctly prices gpt-4o-mini without shadowing from gpt-4o [✔]
+      prices generic gpt-4 without shadowing gpt-4o families [✔]
+Hach.Hooks
+  Hach.Hooks
+    Matcher filtering
+      selects matching handlers for a tool [✔]
+      includes wildcard matcher for any tool [✔]
+    Registry aliases
+      matches a canonical matcher against every alias of that tool [✔]
+      matches an alias matcher against the canonical name [✔]
+      matches aliases case-insensitively [✔]
+      still rejects a matcher naming a different tool [✔]
+      leaves unregistered tool names matched by exact spelling only [✔]
+    Exit code protocol parsing
+      exit code 0 returns pass with no modifications [✔]
+      exit code 2 parses structured JSON decision, context, and modified input [✔]
+      non-0/2 exit code returns non-blocking error [✔]
+      captures stdout in hrError when command exits non-zero and stderr is empty [✔]
+    Hook runtime (issue #167)
+      blocks a run_command hook when the model calls the Bash alias [✔]
+      blocks a run_command hook when the model calls run_command [✔]
+      fires a post_tool_use run_command hook for the Bash alias [✔]
+      leaves an unrelated tool alone [✔]
+    HTTP handlers (issue #168)
+      POSTs the hook payload as JSON to the configured URL [✔]
+      applies a decision returned in the response body [✔]
+      reports a non-2xx response as a non-blocking error [✔]
+      reports an unreachable URL as a non-blocking error [✔]
+Hach.Subagents
+  Hach.Subagents
+    Built-in agents
+      provides built-in Explore agent [✔]
+      provides built-in Plan agent [✔]
+    Agent definition frontmatter parsing
+      parses custom agent markdown definition [✔]
+    Nesting and concurrency guards
+      checks nesting depth limit [✔]
+      checks concurrency limit [✔]
+Hach.MCP
+  Hach.MCP
+    Tool naming conventions
+      formats MCP tool name with double underscore prefix [✔]
+      parses qualified MCP tool name back into server and tool [✔]
+      rejects non-MCP tool names [✔]
+      rejects names with extra __ segments so server names cannot swallow the tool [✔]
+    .mcp.json parsing
+      parses stdio server configuration [✔]
+      parses HTTP/SSE server configuration [✔]
+Hach.Memory
+  Hach.Memory
+    resolves @import directives recursively up to depth 4 [✔]
+    stops resolving @import when max depth is exceeded [✔]
+    Hierarchical memory
+      loads AGENTS.md when it is the only memory file [✔]
+      prefers AGENTS.md over AGENT.md and CLAUDE.md when all exist [✔]
+    Global memory
+      loads global memory from ~/.agents/AGENT.md [✔]
+      loads global memory from ~/.agents/AGENTS.md [✔]
+      loads global memory from ~/.claude/CLAUDE.md [✔]
+      prefers ~/.claude/CLAUDE.md over ~/.agents/ memory files [✔]
+    Rule matching
+      matches rules by glob against active file paths [✔]
+Hach.Git
+  Hach.Git
+    Commit attribution
+      appends Co-Authored-By trailer when not present [✔]
+      does not duplicate trailer if already present [✔]
+    Status parsing
+      parses porcelain status output [✔]
+      correctly parses renamed and quoted paths (issue #68) [✔]
+      handles quoted renames, copies, and escape sequences [✔]
+      identifies clean working tree [✔]
+      preserves branch names containing dots and version numbers (BUG-8) [✔]
+    Worktree directory
+      computes worktree directory under .agents/worktrees [✔]
+    createWorktree security
+      does not execute injected shell commands in branch names (BUG-2) [✔]
+      rejects path traversal and flag injection in worktree names [✔]
+      rejects Git-invalid leading/trailing dots and lock suffixes [✔]
+    isWorktreeDirectory
+      returns False for non-worktree directory [✔]
+    getGitDiff (issue #155)
+      returns the working tree's real diff against HEAD [✔]
+      reports git's error when there is no HEAD to diff against [✔]
+    createWorktree branch creation (-b)
+Initialized empty Git repository in /Users/jonathanbaldie/Code-2/github.com/jonbaldie/hach/dist-newstyle/test-git-branch-exists/.git/
+[main (root-commit) bb91430] init
+      reuses an existing worktree instead of force-resetting its branch [✔]
+Initialized empty Git repository in /Users/jonathanbaldie/Code-2/github.com/jonbaldie/hach/dist-newstyle/test-git-existing-branch/.git/
+[main (root-commit) bb91430] init
+      attaches to an existing branch when the branch already exists in the repository [✔]
+Initialized empty Git repository in /Users/jonathanbaldie/Code-2/github.com/jonbaldie/hach/dist-newstyle/test-git-new-branch/.git/
+[main (root-commit) bb91430] init
+      creates a new branch when the branch does not exist in the repository [✔]
+Initialized empty Git repository in /Users/jonathanbaldie/Code-2/github.com/jonbaldie/hach/dist-newstyle/test-git-remove-recreate/.git/
+[main (root-commit) bb91430] init
+      re-creates a worktree after removeWorktree when the branch remains in the repository [✔]
+      rejects an existing non-worktree target directory [✔]
+Initialized empty Git repository in /Users/jonathanbaldie/Code-2/github.com/jonbaldie/hach/dist-newstyle/test-git-case-collision/.git/
+[main (root-commit) bb91430] init
+      rejects worktree creation when a directory case collision exists [✔]
+Initialized empty Git repository in /Users/jonathanbaldie/Code-2/github.com/jonbaldie/hach/dist-newstyle/test-git-branch-case-collision/.git/
+[main (root-commit) bb91430] init
+      rejects worktree creation when a git branch case collision exists [✔]
+Initialized empty Git repository in /Users/jonathanbaldie/Code-2/github.com/jonbaldie/hach/dist-newstyle/test-git-worktree-status-clean/.git/
+[main (root-commit) bb91430] init
+      leaves the primary repository git status clean after creating a worktree (issue #156) [✔]
+Hach.Tasks
+  Hach.Tasks
+    Shared task list management
+      creates, retrieves, updates, and lists tasks [✔]
+      creates tasks with custom task ID using createTaskWithId [✔]
+    Task serialization
+      formats task list into readable summary [✔]
+    Background process lifecycle and reaping (BUG-9)
+      spawns background process, captures output, and reaps upon exit [✔]
+      keeps streaming output after non-UTF-8 bytes (issue #240) [✔]
+      stops running background process cleanly [✔]
+    Stopping kills the whole process tree (issue #220)
+      kills processes the task's shell started [✔]
+      kills a task that ignores SIGTERM after the grace period [✔]
+      stops every running task in the registry [✔]
+    Background tasks release terminal and pipes (issue #260)
+      gives a task an empty stdin instead of Hach's own [✔]
+      closes both output pipes once a task finishes [✔]
+Hach.Notifications
+  Hach.Notifications
+    sendDesktopNotification security & escaping
+      uses direct process execution (RawCommand) rather than shell to prevent injection [✔]
+      safely handles apostrophes in notification message without shell failure or injection [✔]
+      correctly escapes double quotes without doubling backslashes in AppleScript [✔]
+Hach.Interpreter.IO
+  renderEventIO in quiet (--print) mode
+    writes nothing for EvDone, leaving the answer to formatPrintResult [✔]
+    keeps notices off stdout and reports them on stderr [✔]
+    still prints the Final Answer banner when verbose [✔]
+Initialized empty Git repository in /Users/jonathanbaldie/Code-2/github.com/jonbaldie/hach/dist-newstyle/test-ioperms/.git/
+[main (root-commit) 232e9a0] init
+Initialized empty Git repository in /Users/jonathanbaldie/Code-2/github.com/jonbaldie/hach/dist-newstyle/test-ioperms/.git/
+[main (root-commit) 232e9a0] init
+    does not claim goal is still active when goal is blocked (Issue #223) [✔]
+  Hach.Interpreter.IO (permission + hook enforcement)
+    initializeProjectWorkspace
+      creates a non-empty Markdown template in the active workspace [✔]
+      leaves an existing CLAUDE.md untouched [✔]
+      uses the active workspace after a worktree switch [✔]
+      reports an actionable error when the workspace cannot be written [✔]
+    interpCheckPermission
+      denies write_file under plan mode while allowing reads [✔]
+      authorizes Edit aliases as workspace writes [✔]
+      denies writes to protected paths in default mode [✔]
+      honours deny rules from settings [✔]
+      denies write_file path spellings that resolve to a denied glob [✔]
+      allows everything under bypassPermissions [✔]
+      switches enforcement live via setIOPermissionMode [✔]
+      does not auto-deny default-mode write_file when the ask resolver approves (Issue #91) [✔]
+      keeps headless unresolved asks denied [✔]
+      does not consult the ask resolver for explicit policy denies [✔]
+    interpRunHook
+      runs configured PreToolUse command hooks and blocks on exit code 2 [✔]
+      passes through with no effect when no hooks are configured [✔]
+    agentLoop through ioAlgebra
+      blocks a write_file tool call into a protected path end to end [✔]
+      rejects a skill before its dynamic command expands in plan mode [✔]
+      expands a skill command after normal command approval [✔]
+    permission-to-TUI ask path (Issue #91)
+      executes the pending write once when the ask is approved [✔]
+      leaves the write unapplied when the ask is denied [✔]
+      pauses on PermAsk until the TUI gate answers, then approves [✔]
+      denies through the TUI gate without writing the file [✔]
+      releases a waiting worker on cancel and ignores a stale approval [✔]
+    headless default permission asks (Issue #154)
+      explains that --no-tui cannot prompt and names --permission-mode on deny [✔]
+      does not complete successfully when every write was denied without a prompt [✔]
+      still completes writes under acceptEdits [✔]
+      recommends dontAsk and not acceptEdits when a command is denied under acceptEdits (Issue #221) [✔]
+      recommends dontAsk and not acceptEdits when a command is denied under default mode (Issue #221) [✔]
+      recommends dontAsk for TaskCreate with a command under acceptEdits (Issue #221) [✔]
+      recommends dontAsk for mixed write and command denials in default mode (Issue #221) [✔]
+      keeps --max-turns aborts distinct from permission blocks [✔]
+    executeWriteFile (tool layer)
+      refuses to write into protected paths [✔]
+      refuses protected paths through executeCodingTool [✔]
+      refuses protected paths through executeReplaceFileContent [✔]
+    resolvePermissionMode (CLI + settings threading)
+      defaults to ModeDefault when nothing is configured [✔]
+      prefers the --permission-mode flag over settings [✔]
+      falls back to settings' permission_mode [✔]
+      gives --dangerously-skip-permissions the highest precedence [✔]
+    TUI /plan
+      switches the live permission mode instead of only printing a notice [✔]
+      tracks permission mode changes emitted by plan-mode tools [✔]
+      emits live permission mode changes from plan-mode tools [✔]
+      reports the current permission mode in /permissions [✔]
+      switches to acceptEdits on /fewer-permission-prompts [✔]
+    plan mode switching in IO interpreter
+      updates the live permission mode for EnterPlanMode aliases [✔]
+      restores the previous mode for ExitPlanMode aliases [✔]
+      does not overwrite the saved mode when EnterPlanMode is called twice [✔]
+      falls back to default when the session starts in plan mode [✔]
+    worktree switching in IO interpreter
+      fails ExitWorktree when not inside a worktree [✔]
+      switches the workspace used by subsequent tools on EnterWorktree and restores on ExitWorktree [✔]
+      switches and restores the IO workspace for every registered worktree alias [✔]
+      switches workspace via interpEnterWorktree and restores via interpExitWorktree [✔]
+    effort_level propagation to OpenRouter requests
+      emits reasoning.effort from loaded project settings [✔]
+      lets local settings override project effort [✔]
+      omits reasoning when effort is unset [✔]
+      includes effort on goal-evaluator requests [✔]
+      preserves effort when the active model changes [✔]
+      rejects unsupported effort from loaded settings [✔]
+Hach working directories (--add-dir)
+  resolveWorkingDirs
+    accumulates --add-dir flags and the working_directories setting [✔]
+    treats working_directories on its own like a repeated --add-dir [✔]
+    keeps a directory named by both the flag and the setting only once [✔]
+    is empty when neither the flag nor the setting names a directory [✔]
+  --add-dir parsing
+    collects every repetition of the flag [✔]
+  workspace containment
+    reads a file under an added directory [✔]
+    still rejects a file outside every configured root [✔]
+    rejects the same file when no directory was added [✔]
+    resolves relative paths against the primary root, not an added one [✔]
+    keeps protected paths protected inside an added directory [✔]
+    writes to a non-protected path inside an added directory [✔]
+  IO interpreter wiring
+    hands the session's working directories to the tool runtime [✔]
+    executes read_file against an added directory through interpTool [✔]
+    denies a directory that was never added, through interpTool [✔]
+Hach CLI
+  parseCliArgs
+    parses --model with separate argument [✔]
+    parses --model= syntax [✔]
+    parses short flag -m [✔]
+    parses flag positioned between prompt words [✔]
+    parses --no-tui flag [✔]
+    parses arguments when no model flag is provided [✔]
+    parses empty arguments [✔]
+    treats whitespace-only arguments as Nothing for optPrompt [✔]
+    fails when --model has no argument [✔]
+    fails when --model= is empty [✔]
+    rejects flag-like values as --model argument [✔]
+    rejects flag-like values as -m argument [✔]
+    parses --print and -p flags [✔]
+    parses --output-format json and text [✔]
+    parses --continue / -c and --resume / -r [✔]
+    parses --session-id [✔]
+    parses --max-turns and --max-budget-usd [✔]
+    parses --worktree / -w [✔]
+    parses --permission-mode [✔]
+    parses --dangerously-skip-permissions [✔]
+    parses --append-system-prompt flag with separate argument [✔]
+    parses --append-system-prompt= syntax [✔]
+    fails when --append-system-prompt has no argument [✔]
+    parses --exec and implies --no-tui [✔]
+    fails when --exec has no argument [✔]
+    fails on unknown flag [✔]
+  --provider / --base-url (Issue #246)
+    accepts separate and equals forms [✔]
+    keeps the raw value so resolution can validate it after precedence [✔]
+    takes the last value when repeated [✔]
+    rejects missing, blank, and flag-shaped values [✔]
+    leaves the flags as prompt text after -- [✔]
+  --help / -h (Issue #153)
+    parses --help and -h without a prompt [✔]
+    maps --help to the help intent, ahead of --version and --exec [✔]
+    short-circuits so later arguments cannot turn help into an error [✔]
+    short-circuits before a later --no-tui flag [✔]
+    treats --help after -- as prompt text [✔]
+    documents every flag the parser accepts [✔]
+    documents only flags the parser accepts [✔]
+    explains provider selection, credentials, defaults, precedence and the base URL [✔]
+    points the error-path usage line at --help [✔]
+  startupIntent
+    runs --exec instead of the headless agent loop [✔]
+    runs --exec= the same way [✔]
+    prefers --version over --exec [✔]
+    falls through to headless when --no-tui is set without --exec [✔]
+    maps --init to the init intent instead of the TUI (Issue #118) [✔]
+    maps --init to the init intent even alongside --no-tui [✔]
+    prefers --version over --init [✔]
+    prefers --exec over --init [✔]
+    starts the TUI by default [✔]
+  print mode (--print / -p)
+    suppresses banners and verbose events when --print is set [✔]
+    keeps banners and verbose events for --no-tui without --print [✔]
+    prints the agent answer instead of the completion banner [✔]
+    emits JSON containing the answer when --output-format json [✔]
+    escapes quotes in JSON print output [✔]
+    prints failure text without interactive banners [✔]
+    prints a budget exceeded message naming the ceiling [✔]
+    emits JSON containing max_budget when the spending ceiling is hit [✔]
+  headless exit decision (Issue #223)
+    is non-zero for a goal that was not achieved and zero for GoalAchieved [✔]
+    is non-zero when agent itself failed even if goal was marked achieved [✔]
+    exits zero for normal agent completion without goal [✔]
+    exits non-zero for normal agent failure without goal [✔]
+  run outcome classification (Issue #232)
+    succeeds for a completed run without a goal or with an achieved goal [✔]
+    fails with the evaluator's reason for a completed run whose goal was not achieved [✔]
+    stops, rather than succeeds, at the turn and budget limits [✔]
+    renders the same text for --print and the other front-ends [✔]
+  headless goal outcome and print formatting (Issue #223)
+    renders Task completed. for GoalAchieved [✔]
+    renders Goal not met: <reason> instead of Task completed for unachieved goal [✔]
+    formats --print text as Goal not met for unachieved goal [✔]
+    formats --output-format json carrying goal status and error for unachieved goal [✔]
+    formats --output-format json carrying goal status for achieved goal [✔]
+  headless goal validation (Issue #241)
+    rejects bare /goal and whitespace-only arguments [✔]
+    rejects clear aliases in headless mode [✔]
+    rejects oversized goal condition [✔]
+    accepts valid goal condition [✔]
+    returns Nothing for non-goal prompts [✔]
+  headless CLI prompt acquisition
+    turns closed stdin into the intentional empty-prompt exit [✔]
+    creates and enters a requested worktree before headless startup [✔]
+    attaches to an existing branch when requested via -w before startup [✔]
+    reports invalid worktree names before loading configuration [✔]
+    reports Git-invalid dot-pattern worktree names before creating a worktree [✔]
+    reports when a requested worktree is outside a Git repository [✔]
+    worktree startup failure (Issue #266)
+      emits a JSON error for invalid worktree names under --print --output-format json [✔]
+      keeps plain-text errors under --print text output and --no-tui [✔]
+    runs --exec in the requested worktree [✔]
+    rejects worktree case collisions on CLI startup [✔]
+    leaves the primary repository git status clean after -w (issue #156) [✔]
+    --print stdout contract (Issue #116)
+      prints only the JSON result with --output-format json [✔]
+      prints only the formatted result in text mode [✔]
+      returns a failure status for a failed --no-tui agent [✔]
+      returns a failure status for a failed headless goal loop [✔]
+      returns a failure status and does not print Task completed for an unmet headless goal (Issue #223) [✔]
+    invalid headless /goal invocations (Issue #241)
+      exits non-zero for headless bare /goal [✔]
+      exits non-zero for headless /goal clear [✔]
+      exits non-zero for headless oversized /goal [✔]
+      emits valid JSON error and exits non-zero for bare /goal under --print --output-format json [✔]
+      emits valid JSON error and exits non-zero for /goal clear under --print --output-format json [✔]
+      emits valid JSON error and exits non-zero for oversized /goal under --print --output-format json [✔]
+    empty headless task prompt (Issue #258)
+      emits a JSON error for closed stdin under --print --output-format json [✔]
+      emits a JSON error for an empty prompt argument under --print --output-format json [✔]
+      emits a JSON error for a blank piped prompt under --print --output-format json [✔]
+      keeps the plain-text message under --no-tui [✔]
+    session load failure (Issue #259)
+      emits a JSON error for an unknown --session-id under --print --output-format json [✔]
+      emits a JSON error for --continue without a stored session under --print --output-format json [✔]
+      emits a JSON error for --resume without a stored session under --print --output-format json [✔]
+      keeps the plain-text message under --no-tui [✔]
+    configuration failure (Issue #265)
+      emits a JSON error for an unknown provider under --print --output-format json [✔]
+      emits a JSON error for a missing API key under --print --output-format json [✔]
+      emits a JSON error for a /chat/completions base URL under --print --output-format json [✔]
+      emits a JSON error for a malformed settings.json under --print --output-format json [✔]
+      emits a JSON error for an unsupported effort_level under --print --output-format json [✔]
+      keeps the plain-text message under --print text output and --no-tui [✔]
+    --init (Issue #118)
+      creates CLAUDE.md and exits cleanly without credentials [✔]
+      creates CLAUDE.md without --no-tui [✔]
+      leaves an existing CLAUDE.md untouched [✔]
+    --help (Issue #153)
+      prints every option and exits 0 for --help [✔]
+      prints every option and exits 0 for -h [✔]
+      points at --help after an argument error [✔]
+    --max-budget-usd enforcement (Issue #150)
+      stops --print --max-budget-usd 0 before any billable request [✔]
+      reports the budget abort as JSON under --output-format json [✔]
+      honours max_budget_usd from settings.json the same way as the flag [✔]
+      keeps --max-turns aborts distinct when no budget is set [✔]
+    unparseable settings files (Issue #165)
+      refuses to start when settings.json has a trailing comma [✔]
+      refuses to start when settings.json has a stray closing brace [✔]
+      refuses to start when settings.json has a field of the wrong shape [✔]
+      still starts when the settings file parses [✔]
+    session persistence and continuation (Issue #151)
+      fails with an explicit error when --continue is used without stored sessions [✔]
+      fails with an explicit error when --session-id is used with nonexistent id [✔]
+      restores prior history when continuing a session via -c [✔]
+      restores specific prior history when resumed via --session-id [✔]
+    lifecycle hooks (Issue #168)
+      runs session_start, user_prompt_submit and stop hooks in order [✔]
+      does not reach the model when a user_prompt_submit hook blocks the prompt [✔]
+Hach.Types
+  classifyError
+    classifies transient timeout errors as transient [✔]
+    does not treat diagnostic context metadata as unrecoverable [✔]
+    retains unrecoverable classification for context overflow errors [✔]
+    does not treat unrelated overflow messages as unrecoverable [✔]
+    headlessAskDeniedReason
+      recommends acceptEdits for file writes in default mode [✔]
+      recommends dontAsk and not acceptEdits for commands in default mode [✔]
+      recommends dontAsk and not acceptEdits for commands in acceptEdits mode [✔]
+      never recommends acceptEdits when already in acceptEdits mode [✔]
+      recommends dontAsk for interaction authority [✔]
+    headlessAskBlockedMessage
+      recommends acceptEdits when all denials were file writes in default mode [✔]
+      recommends dontAsk when a command was denied in default mode [✔]
+      recommends dontAsk for mixed write and command denials in default mode [✔]
+      never recommends acceptEdits when already running in acceptEdits mode [✔]
+
+Finished in 93.8943 seconds
+1093 examples, 0 failures
+
+[Permission Denied] write_file: No interactive approval available in --no-tui. Re-run with --permission-mode acceptEdits to allow writes and commands.
+
+[Permission Denied] run_command: No interactive approval available in --no-tui. Re-run with --permission-mode dontAsk or add a matching permissions.allow rule.
+
+[Agent Error]: Task blocked: every write and command was denied because --no-tui cannot prompt for approval. Re-run with --permission-mode dontAsk or add a matching permissions.allow rule.
+
+Test suite hach-test: PASS
+Test suite logged to:
+/Users/jonathanbaldie/Code-2/github.com/jonbaldie/hach/./dist-newstyle/build/aarch64-osx/ghc-9.12.1/hach-0.1.15.0/t/hach-test/test/hach-0.1.15.0-hach-test.log
+1 of 1 test suites (1 of 1 test cases) passed.

@@ -15,12 +15,21 @@ brew install jonbaldie/tap/hach
 
 ### Build from source
 
-Clone the repository and build the binary with Cabal (requires GHC 9.8 or later and Cabal 3.10 or later):
+The checked-in release freeze file requires GHC 9.12.1. Install GHC 9.12.1 and Cabal 3.10 or later, then clone and build:
 
 ```bash
 git clone https://github.com/jonbaldie/hach.git
 cd hach
+cabal update
 cabal build exe:hach
+```
+
+To try another GHC version, copy the project file and build with the copy. Cabal resolves dependencies without the release freeze file but retains the project constraints. Other compiler versions are not supported. GHC 9.8.4 fails to compile the current source. GHC 9.12.4 built successfully on Linux with this method. The resulting dependency plan is not reproducible unless you freeze the separate plan.
+
+```bash
+cp cabal.project cabal.source.project
+cabal update
+cabal build exe:hach --project-file=cabal.source.project
 ```
 
 ### Docker
@@ -184,6 +193,8 @@ Compatible APIs often do not report a cost. When the cost is missing, the termin
 - Goal-evaluation requests count toward the total. In a `/goal` run, an evaluation request follows each answer without a limit check, so an answer and its evaluation together can take the total past the limit.
 
 ## Development and testing
+
+Exploratory feedback: [2026-11-06 headless reliability and permissions](docs/exploratory-testing/2026-11-06-headless-reliability.md), [2026-10-24 CLI coding, workspaces, and session reliability](docs/exploratory-testing/2026-10-24-cli-reliability.md) and [2026-10-29 workspaces and session recovery](docs/exploratory-testing/2026-10-29-cli-reliability.md).
 
 Fleet shares an 8-core macOS host with other repositories. Run only one Hach test or fuzz campaign at a time. The standard test command is `cabal test hach:test:hach-test --test-show-details=always`.
 

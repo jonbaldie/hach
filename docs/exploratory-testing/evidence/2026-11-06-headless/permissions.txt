@@ -1,0 +1,7 @@
+default, SendMessage, write=False: exit=0, tool results=['Message sent to agent agent-1: hello']
+acceptEdits, SendMessage, write=False: exit=0, tool results=['Message sent to agent agent-1: hello']
+plan, SendMessage, write=False: exit=0, tool results=['Message sent to agent agent-1: hello']
+default, AskUserQuestion, write=True: exit=1, tool results=['Prompted user: hello', 'No interactive approval available in --no-tui. Re-run with --permission-mode acceptEdits to allow writes and commands.']
+default, SendMessage, write=True: exit=1, tool results=['Message sent to agent agent-1: hello', 'No interactive approval available in --no-tui. Re-run with --permission-mode acceptEdits to allow writes and commands.']
+default, SendMessage, write=False: exit=0, tool results=['No interactive approval available in --no-tui. Re-run with --permission-mode dontAsk or add a matching permissions.allow rule.', 'Prompted user: hello']
+All interaction permission CLI regressions passed.

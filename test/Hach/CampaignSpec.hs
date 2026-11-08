@@ -522,8 +522,8 @@ spec = do
 
   describe "CGPT campaign: token accounting & saturation" $ do
     it "contextSaturationPercent is always in 0..100" $ vigorous $
-      \(tokens :: Int) (NonEmpty model) ->
-        let p = contextSaturationPercent tokens (T.pack model)
+      \(tokens :: Int) (limit :: Int) ->
+        let p = contextSaturationPercent tokens limit
         in p >= 0 && p <= 100
 
     it "addUsageToSession is monotonic in every token counter" $ vigorous $

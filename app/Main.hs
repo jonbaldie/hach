@@ -16,7 +16,7 @@ import Hach.Sessions
   , resolveSessionTarget
   , saveRunSession
   )
-import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
+import Hach.Skills (expandSlashInvokedPrompt)
 import Hach.Settings (Settings (..))
 import Hach.Tools
 import Hach.TUI.App (runTui)
@@ -169,7 +169,6 @@ runHach = do
           else TIO.putStrLn err
         exitFailure
 
-      skills <- discoverSkills currentWorkspace
       mGuidelines <- loadProjectInstructions currentWorkspace
       let sysPrompt = buildSystemPromptWithAppend mGuidelines optAppendSystemPrompt
 
@@ -203,7 +202,7 @@ runHach = do
 
         Nothing -> do
           let trimmedPrompt = T.strip taskPrompt
-          finalPrompt <- expandSlashInvokedPrompt currentWorkspace skills trimmedPrompt
+          finalPrompt <- expandSlashInvokedPrompt currentWorkspace trimmedPrompt
           let agentConfig = AgentConfig
                 { cfgModel        = envModel
                 , cfgSystemPrompt = Just sysPrompt

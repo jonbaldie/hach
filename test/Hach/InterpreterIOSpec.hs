@@ -2,7 +2,7 @@
 
 module Hach.InterpreterIOSpec (spec) where
 
-import Hach.Core (AgentAlgebra (..), agentLoop, foldAgentProgram)
+import Hach.Core (AgentAlgebra (..), agentLoop, goalLoop, foldAgentProgram)
 import Hach.Env (resolveEffortLevel, resolvePermissionMode)
 import Hach.Inference (openRouterConnection)
 import Hach.Interpreter.IO
@@ -105,31 +105,31 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
       it "denies write_file under plan mode while allowing reads" $ do
         env <- newIOEnvWithPermissions planPerms (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
-        interpCheckPermission alg "write_file" "{\"path\":\"out.txt\"}"
+        permissionText alg "write_file" "{\"path\":\"out.txt\"}"
           `shouldReturn` Just "Plan mode is read-only. Tool execution denied."
-        interpCheckPermission alg "read_file" "{\"path\":\"out.txt\"}"
+        permissionText alg "read_file" "{\"path\":\"out.txt\"}"
           `shouldReturn` Nothing
 
       it "authorizes Edit aliases as workspace writes" $ do
         env <- newIOEnvWithPermissions planPerms (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
             args = "{\"path\":\"out.txt\",\"old_content\":\"old\",\"new_content\":\"new\"}"
-        interpCheckPermission alg "Edit" args
+        permissionText alg "Edit" args
           `shouldReturn` Just "Plan mode is read-only. Tool execution denied."
         setIOPermissionMode env ModeAcceptEdits
-        interpCheckPermission alg "edit" args `shouldReturn` Nothing
+        permissionText alg "edit" args `shouldReturn` Nothing
 
       it "denies writes to protected paths in default mode" $ do
         isProtectedPath ".git/config" `shouldBe` True
         env <- newIOEnv "k" "test-model" testDir False
         let alg = ioAlgebra env
-        interpCheckPermission alg "write_file" "{\"path\":\".git/config\"}"
+        permissionText alg "write_file" "{\"path\":\".git/config\"}"
           `shouldReturn` Just "Protected path: access denied to .git/config"
 
       it "honours deny rules from settings" $ do
         env <- newIOEnvWithPermissions denyBashPerms (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
-        interpCheckPermission alg "Bash" "{\"command\":\"ls\"}"
+        permissionText alg "Bash" "{\"command\":\"ls\"}"
           >>= (`shouldSatisfy` isJust)
 
       it "denies write_file path spellings that resolve to a denied glob" $ do
@@ -139,45 +139,45 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
               }
         env <- newIOEnvWithPermissions denySecrets (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
-        interpCheckPermission alg "write_file" "{\"path\":\"./secrets.txt\",\"content\":\"x\"}"
+        permissionText alg "write_file" "{\"path\":\"./secrets.txt\",\"content\":\"x\"}"
           >>= (`shouldSatisfy` isJust)
-        interpCheckPermission alg "write_file" "{\"path\":\"SECRETS.TXT\",\"content\":\"x\"}"
+        permissionText alg "write_file" "{\"path\":\"SECRETS.TXT\",\"content\":\"x\"}"
           >>= (`shouldSatisfy` isJust)
 
       it "allows everything under bypassPermissions" $ do
         env <- newIOEnvWithPermissions bypassPerms (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
-        interpCheckPermission alg "write_file" "{\"path\":\".git/config\"}"
+        permissionText alg "write_file" "{\"path\":\".git/config\"}"
           `shouldReturn` Nothing
 
       it "switches enforcement live via setIOPermissionMode" $ do
         env <- newIOEnvWithPermissions bypassPerms (openRouterConnection "k") "test-model" testDir False
         let alg = ioAlgebra env
-        interpCheckPermission alg "write_file" "{\"path\":\"out.txt\"}"
+        permissionText alg "write_file" "{\"path\":\"out.txt\"}"
           `shouldReturn` Nothing
         setIOPermissionMode env ModePlan
         currentIOPermissionMode env `shouldReturn` ModePlan
-        interpCheckPermission alg "write_file" "{\"path\":\"out.txt\"}"
+        permissionText alg "write_file" "{\"path\":\"out.txt\"}"
           `shouldReturn` Just "Plan mode is read-only. Tool execution denied."
-        interpCheckPermission alg "read_file" "{\"path\":\"out.txt\"}"
+        permissionText alg "read_file" "{\"path\":\"out.txt\"}"
           `shouldReturn` Nothing
 
       it "does not auto-deny default-mode write_file when the ask resolver approves (Issue #91)" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
         let env = env0 { ioResolveAsk = \_ _ _ -> pure Nothing }
             alg = ioAlgebra env
-        interpCheckPermission alg "write_file" "{\"path\":\"hello.txt\",\"content\":\"hello\"}"
+        permissionText alg "write_file" "{\"path\":\"hello.txt\",\"content\":\"hello\"}"
           `shouldReturn` Nothing
 
       it "keeps headless unresolved asks denied" $ do
         env <- newIOEnv "k" "test-model" testDir False
-        interpCheckPermission (ioAlgebra env) "write_file" "{\"path\":\"hello.txt\"}"
+        permissionText (ioAlgebra env) "write_file" "{\"path\":\"hello.txt\"}"
           `shouldReturn` Just (headlessAskDeniedReason ModeDefault AuthorityWorkspaceWrite)
 
       it "does not consult the ask resolver for explicit policy denies" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
         let env = env0 { ioResolveAsk = \_ _ _ -> pure Nothing }
-        interpCheckPermission (ioAlgebra env) "write_file" "{\"path\":\".git/config\"}"
+        permissionText (ioAlgebra env) "write_file" "{\"path\":\".git/config\"}"
           `shouldReturn` Just "Protected path: access denied to .git/config"
 
     describe "interpRunHook" $ do
@@ -271,7 +271,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         env0 <- newIOEnv "k" "test-model" testDir False
         let defaultDeny = headlessAskDeniedReason ModeDefault AuthorityWorkspaceWrite
             env = env0 { ioResolveAsk = \tool _ _ ->
-              if tool == "Skill" then pure Nothing else pure (Just defaultDeny)
+              if tool == "Skill" then pure Nothing else pure (Just (HeadlessAskDenied ModeDefault AuthorityWorkspaceWrite))
             }
         events <- runSkillLoop env
         doesFileExist marker `shouldReturn` True
@@ -317,7 +317,7 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
       it "leaves the write unapplied when the ask is denied" $ do
         env0 <- newIOEnv "k" "test-model" testDir False
         let defaultDeny = headlessAskDeniedReason ModeDefault AuthorityWorkspaceWrite
-            env = env0 { ioResolveAsk = \_ _ _ -> pure (Just defaultDeny) }
+            env = env0 { ioResolveAsk = \_ _ _ -> pure (Just (HeadlessAskDenied ModeDefault AuthorityWorkspaceWrite)) }
         (_result, events) <- runWriteLoop env
         doesFileExist (testDir </> "hello.txt") `shouldReturn` False
         events `shouldContain` [EvPermissionDenied "write_file" defaultDeny]
@@ -430,6 +430,60 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
           runHeadlessWrite env = runHeadlessTool env writeCall "write hello.txt"
           namesHeadlessFlag msg =
             T.isInfixOf "--no-tui" msg && T.isInfixOf "--permission-mode" msg
+
+      it "keeps execution facts across goal-loop turns even when output says blocked" $ do
+        env <- newIOEnvWithPermissions
+          (defaultIOEnvPermissions { iopRules = [PermissionRule RuleAllow (Just "run_command") Nothing] })
+          (openRouterConnection "k") "test-model" testDir False
+        let command = ToolCall "command" "run_command"
+              "{\"command\":\"echo blocked > marker.txt; cat marker.txt\"}"
+        stepsRef <- newIORef
+          [ AssistantResponse Nothing [writeCall] Nothing
+          , AssistantResponse Nothing [command] Nothing
+          , AssistantResponse (Just "done") [] Nothing
+          ]
+        let alg = (ioAlgebra env)
+              { interpPrompt = \_ _ -> do
+                  steps <- readIORef stepsRef
+                  case steps of
+                    step : rest -> writeIORef stepsRef rest >> pure (Right step)
+                    [] -> pure (Left "unexpected extra model request")
+              , interpEvaluate = \_ _ -> pure (GoalEvaluation GoalMet "marker exists" Nothing)
+              }
+            cfg = AgentConfig "test-model" Nothing (Just 4) Nothing
+        (result, hist, state, _) <- foldAgentProgram alg (goalLoop cfg [] "create marker" 1 [UserMsg "work"])
+        result `shouldBe` AgentCompleted "done"
+        gsStatus state `shouldBe` GoalAchieved
+        TIO.readFile (testDir </> "marker.txt") `shouldReturn` "blocked\n"
+        doesFileExist (testDir </> "hello.txt") `shouldReturn` False
+        hist `shouldSatisfy` any (\case
+          ToolMsg "command" "run_command" output -> "blocked" `T.isInfixOf` output
+          _ -> False)
+
+      it "does not invent a new permission denial from legacy Transcript text" $ do
+        env <- newIOEnv "k" "test-model" testDir False
+        let alg = (ioAlgebra env)
+              { interpPrompt = \_ _ -> pure (Right (AssistantResponse (Just "done") [] Nothing)) }
+            cfg = AgentConfig "test-model" Nothing Nothing Nothing
+            oldHistory = [UserMsg "earlier run", ToolMsg "old" "write_file"
+              (headlessAskDeniedReason ModeDefault AuthorityWorkspaceWrite)]
+        (result, _, _) <- foldAgentProgram alg (agentLoop cfg [] oldHistory)
+        result `shouldBe` AgentCompleted "done"
+
+      it "retains mode and authority in a headless refusal without parsing its text" $ do
+        env <- newIOEnvWithPermissions
+          (defaultIOEnvPermissions { iopInitialMode = ModeAcceptEdits })
+          (openRouterConnection "k") "test-model" testDir False
+        interpCheckPermission (ioAlgebra env) "run_command" "{\"command\":\"echo ok\"}"
+          `shouldReturn` Just (HeadlessAskDenied ModeAcceptEdits AuthorityCommand)
+
+      it "does not treat an interactive denial with headless-looking prose as a headless failure" $ do
+        env0 <- newIOEnv "k" "test-model" testDir False
+        let env = env0 { ioResolveAsk = \_ _ _ -> pure
+              (Just (ApprovalDenied (headlessAskDeniedReason ModeDefault AuthorityWorkspaceWrite))) }
+        ((result, _, _), _) <- runHeadlessWrite env
+        result `shouldBe` AgentCompleted "done"
+        doesFileExist (testDir </> "hello.txt") `shouldReturn` False
 
       it "explains that --no-tui cannot prompt and names --permission-mode on deny" $ do
         env <- newIOEnv "k" "test-model" testDir False
@@ -885,3 +939,7 @@ captureStdStreams action = do
   removeFile outPath
   removeFile errPath
   pure (out, err)
+
+-- Existing assertions verify the model-visible rendering of typed refusals.
+permissionText :: AgentAlgebra IO -> Text -> Text -> IO (Maybe Text)
+permissionText alg tool args = fmap (fmap permissionDenialReason) (interpCheckPermission alg tool args)

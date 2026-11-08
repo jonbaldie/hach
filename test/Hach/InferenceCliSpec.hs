@@ -20,9 +20,9 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Encoding.Error as TE
 import Network.Socket
-import System.Directory (doesFileExist, listDirectory, doesDirectoryExist)
+import System.Directory (doesFileExist, listDirectory, doesDirectoryExist, createDirectoryIfMissing, copyFile, renameDirectory)
 import System.Exit (ExitCode (..))
-import System.FilePath ((</>))
+import System.FilePath ((</>), dropExtension)
 import Test.Hspec
 
 import Hach.InferenceFixture
@@ -34,6 +34,7 @@ spec = describe "hach against an inference fixture" $ do
   baseUrlSpec
   requestShapeSpec
   toolCycleSpec
+  checklistSpec
   responseSpec
   failureSpec
   goalSpec
@@ -44,6 +45,74 @@ spec = describe "hach against an inference fixture" $ do
 --------------------------------------------------------------------------------
 -- Helpers
 --------------------------------------------------------------------------------
+
+-- Exercise the public tool-dispatch path in a fresh process on every run.
+checklistSpec :: Spec
+checklistSpec = describe "workspace checklist visibility (#222)" $ do
+  it "lists a freshly saved checklist" $
+    withSandbox $ \ws -> do
+      result <- checklistRun ws
+        [ toolCall "save" "TodoWrite" (object ["tasks" .= (["ship-the-report"] :: [Text])])
+        , toolCall "list" "TaskList" (object [])
+        ]
+      output result `shouldSatisfy` ("Checklist:\n- [ ] ship-the-report" `isInfixOf`)
+
+  it "reads a saved checklist in a new process and keeps it workspace-local" $
+    withSandbox $ \ws -> withSandbox $ \other -> do
+      _ <- checklistRun ws [toolCall "save" "TodoWrite" (object ["tasks" .= (["persisted-item"] :: [Text])])]
+      listed <- checklistRun ws [toolCall "list" "TaskList" (object [])]
+      output listed `shouldSatisfy` ("persisted-item" `isInfixOf`)
+      elsewhere <- checklistRun other [toolCall "list" "TaskList" (object [])]
+      output elsewhere `shouldSatisfy` ("No active tasks." `isInfixOf`)
+      output elsewhere `shouldNotSatisfy` ("persisted-item" `isInfixOf`)
+
+  it "preserves TodoWrite replacement and clearing semantics" $
+    withSandbox $ \ws -> do
+      _ <- checklistRun ws [toolCall "old" "TodoWrite" (object ["tasks" .= (["old-item"] :: [Text])])]
+      _ <- checklistRun ws [toolCall "new" "TodoWrite" (object ["tasks" .= (["new-item"] :: [Text])])]
+      listed <- checklistRun ws [toolCall "list" "TaskList" (object [])]
+      output listed `shouldSatisfy` ("new-item" `isInfixOf`)
+      output listed `shouldNotSatisfy` ("old-item" `isInfixOf`)
+      _ <- checklistRun ws [toolCall "clear" "TodoWrite" (object ["tasks" .= ([] :: [Text])])]
+      empty <- checklistRun ws [toolCall "list" "TaskList" (object [])]
+      output empty `shouldSatisfy` ("No active tasks." `isInfixOf`)
+
+  it "keeps the empty message when the checklist is missing" $
+    withSandbox $ \ws -> do
+      result <- checklistRun ws [toolCall "list" "TaskList" (object [])]
+      output result `shouldSatisfy` ("No active tasks." `isInfixOf`)
+
+  forM_ ["not-json", "{}", "[42]"] $ \bad ->
+    it ("reports an unreadable checklist without hiding background tasks: " <> T.unpack bad) $
+      withSandbox $ \ws -> do
+        writeWorkspaceFile ws ".claude/todos.json" bad
+        result <- checklistRun ws
+          [ toolCall "create" "TaskCreate" (object ["name" .= ("short-worker" :: Text), "command" .= ("true" :: Text)])
+          , toolCall "list" "TaskList" (object [])
+          ]
+        output result `shouldSatisfy` ("Checklist error (.claude/todos.json):" `isInfixOf`)
+        output result `shouldSatisfy` ("Background tasks:\n- [pending] #bg-1: short-worker" `isInfixOf`)
+
+  it "shows distinct checklist and background states and preserves task control" $
+    withSandbox $ \ws -> do
+      result <- checklistRun ws
+        [ toolCall "save" "TodoWrite" (object ["tasks" .= (["ship-the-report"] :: [Text])])
+        , toolCall "create" "TaskCreate" (object ["name" .= ("short-worker" :: Text), "command" .= ("true" :: Text)])
+        , toolCall "stop" "TaskStop" (object ["task_id" .= ("bg-1" :: Text)])
+        , toolCall "list" "TaskList" (object [])
+        ]
+      output result `shouldSatisfy` ("Checklist:\n- [ ] ship-the-report" `isInfixOf`)
+      output result `shouldSatisfy` ("Background tasks:\n- [stopped] #bg-1: short-worker" `isInfixOf`)
+
+checklistRun :: FilePath -> [Value] -> IO HachResult
+checklistRun ws calls =
+  withInferenceFixture (map (\c -> toolCallCompletion [c] Nothing) calls <> [completion "done"]) $ \fx -> do
+    result <- runWith ws []
+      (["--no-tui", "--provider", "openai-compatible", "--base-url", T.unpack (fixtureBaseUrl fx)
+       , "--model", "fixture", "--permission-mode", "dontAsk", "run checklist tools"])
+    (hrExit result, output result) `shouldSatisfy` ((== ExitSuccess) . fst)
+    length <$> fixtureRequests fx `shouldReturn` length calls + 1
+    pure result
 
 compatible :: Fixture -> [String]
 compatible fx =
@@ -690,7 +759,61 @@ goalSpec = describe "goal evaluation" $ do
 --------------------------------------------------------------------------------
 
 sessionSpec :: Spec
-sessionSpec = describe "sessions" $
+sessionSpec = describe "sessions" $ do
+  forM_ ["--continue", "--resume", "--session-id", "tui"] $ \selection ->
+    forM_ ["{CORRUPTED private message", "{\"role\":\"unknown-private-role\"}"] $ \bad ->
+      it ("rejects a corrupt transcript without effects (#285): " <> selection <> " " <> BC.unpack bad) $
+        withSandbox $ \ws -> do
+          (sid, transcript) <- createSession ws
+          -- A valid same-ID legacy copy must not mask canonical corruption.
+          let canonical = ws </> ".agents/sessions"
+              legacy = ws </> ".agent/sessions"
+          createDirectoryIfMissing True legacy
+          names <- listDirectory canonical
+          forM_ names $ \name -> copyFile (canonical </> name) (legacy </> name)
+          original <- BS.readFile transcript
+          let lines' = "" : BC.lines original -- blank lines still count in diagnostics
+              isTarget = BS.isInfixOf "remember private requirement"
+              damaged = BC.unlines $ map (\line -> if isTarget line then bad else line) lines'
+              lineNumbers = [n | (n, line) <- zip [1 :: Int ..] lines', isTarget line]
+          BS.writeFile transcript damaged
+          files <- (++) <$> filesUnder (ws </> ".agents") <*> filesUnder (ws </> ".agent")
+          before <- mapM BS.readFile files
+          withInferenceFixture [completion "must not run"] $ \fx -> do
+            let selector = if selection == "--session-id" then [selection, sid]
+                           else if selection == "tui" then ["--continue"] else [selection]
+                args = if selection == "tui"
+                       then filter (/= "--print") (compatible fx)
+                       else compatible fx <> ["--output-format", "json"]
+            result <- runWith ws [] (args <> selector <> ["continue"])
+            hrExit result `shouldNotBe` ExitSuccess
+            shouldHaveNoRequests fx
+            mapM BS.readFile files `shouldReturn` before
+            output result `shouldSatisfy` (transcript `isInfixOf`)
+            forM_ lineNumbers $ \n -> output result `shouldSatisfy` (("line " <> show n <> ":") `isInfixOf`)
+            output result `shouldNotSatisfy` (BC.unpack bad `isInfixOf`)
+            if selection == "tui" then pure () else do
+              let json = Aeson.decodeStrict (BC.pack (hrStdout result)) :: Maybe Value
+              (json >>= jsonAt ["error"]) `shouldSatisfy` isJust
+              (json >>= jsonAt ["answer"]) `shouldBe` Nothing
+
+  forM_ [False, True] $ \legacyOnly ->
+    it ("resumes valid tool history and empty lines (#285), legacy-only=" <> show legacyOnly) $
+      withSandbox $ \ws -> do
+        (_, transcript) <- createSession ws
+        original <- BS.readFile transcript
+        BS.writeFile transcript ("\n" <> original <> "\n")
+        if legacyOnly then do
+          createDirectoryIfMissing True (ws </> ".agent")
+          renameDirectory (ws </> ".agents/sessions") (ws </> ".agent/sessions")
+        else pure ()
+        withInferenceFixture [completion "resumed"] $ \fx -> do
+          result <- runWith ws [] (compatible fx <> ["--continue", "continue"])
+          hrExit result `shouldBe` ExitSuccess
+          req <- singleRequest fx
+          bodyText req `shouldSatisfy` T.isInfixOf "remember private requirement"
+          toolResults req `shouldSatisfy` (not . null)
+          bodyText req `shouldSatisfy` T.isInfixOf "call_saved"
   it "continues a saved session at a newly configured endpoint and key" $
     withSandbox $ \ws ->
       withInferenceFixture [completion "noted the zebra"] $ \old ->
@@ -709,6 +832,22 @@ sessionSpec = describe "sessions" $
           savedArtifactsShouldNotContain ws "sk-old-key"
           savedArtifactsShouldNotContain ws "sk-new-key"
           savedArtifactsShouldNotContain ws (show (fixturePort old))
+
+-- Generate saved data through the executable, including a real tool round trip.
+createSession :: FilePath -> IO (String, FilePath)
+createSession ws = do
+  withInferenceFixture
+    [ toolCallCompletion [toolCall "call_saved" "list_dir" (object ["path" .= ("." :: Text)])] Nothing
+    , completion "noted"
+    ] $ \fx -> do
+      result <- runWith ws [] (compatible fx <> ["--permission-mode", "dontAsk", "remember private requirement"])
+      hrExit result `shouldBe` ExitSuccess
+      length <$> fixtureRequests fx `shouldReturn` 2
+  let dir = ws </> ".agents/sessions"
+  names <- filter (isInfixOf ".jsonl") <$> listDirectory dir
+  case names of
+    [name] -> pure (dropExtension name, dir </> name)
+    _ -> expectationFailure ("expected one transcript, got " <> show names) >> fail "unreachable"
 
 --------------------------------------------------------------------------------
 -- Budgets

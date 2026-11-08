@@ -290,9 +290,11 @@ injectSkillsIntoPrompt skills prompt =
 
 -- | Slash-invocation counterpart to 'executeSkill': bind leftover prompt text
 -- to $ARGUMENTS and expand trusted !command / {{file:}} content before
--- splicing skills in.
-expandSlashInvokedPrompt :: FilePath -> SkillCatalog -> Text -> IO Text
-expandSlashInvokedPrompt root catalog rawInput = do
+-- splicing skills in.  Like 'executeSkill', it reads the catalog from @root@
+-- at invocation time, so both resolve a name against the same skills.
+expandSlashInvokedPrompt :: FilePath -> Text -> IO Text
+expandSlashInvokedPrompt root rawInput = do
+  catalog <- discoverSkills root
   let (cleaned, invoked) = parseSkillInvocations catalog rawInput
   expandedSkills <- mapM (expandOne cleaned) invoked
   pure (injectSkillsIntoPrompt expandedSkills cleaned)

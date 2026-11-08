@@ -223,13 +223,7 @@ spec = do
           optPrompt opts `shouldBe` Just "--no-tui"
         Left err -> expectationFailure err
 
-  describe "CGPT wave-2: cost, hooks, and subagent bounds" $ do
-    it "estimateCostUsd is non-negative for non-negative token counts" $ vigorous $
-      forAll (T.pack <$> listOf1 (elements ['a'..'z'])) $ \model ->
-      forAll (choose (0, 1000000) :: Gen Int) $ \p ->
-      forAll (choose (0, 1000000) :: Gen Int) $ \c ->
-        estimateCostUsd model p c >= 0
-
+  describe "CGPT wave-2: hooks and subagent bounds" $ do
     it "canSpawnSubagent is false at or above either bound" $ vigorous $
       forAll (choose (0, 8) :: Gen Int) $ \depth ->
       forAll (choose (1, 8) :: Gen Int) $ \maxD ->

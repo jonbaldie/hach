@@ -28,6 +28,7 @@ module Hach.TUI.Types
   , tsHistory
   , tsTools
   , tsHistoryScroll
+  , tuiModelContextLimit
   , UsageStatus(..)
 
     -- * Events and Actions
@@ -44,7 +45,8 @@ module Hach.TUI.Types
 
 import Hach.Inference (CostPolicy(..))
 import Hach.Skills (SkillCatalog)
-import Hach.Types (AgentEvent, GoalState, Message, PermissionMode (..), SessionTokenUsage, TokenUsage, ToolResult, initialSessionTokenUsage)
+import Hach.Types (AgentEvent, GoalState, Message, PermissionMode (..), SessionTokenUsage, TokenUsage, ToolResult, initialSessionTokenUsage, modelContextLimit)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 
@@ -152,8 +154,10 @@ data TuiState = TuiState
   , tsTranscript         :: ![TranscriptItem]
   , tsConversation       :: ![Message]
     -- ^ Canonical Core history for model calls and session persistence.
-  , tsRunSpendUsd        :: !Double
-    -- ^ Reported spend of every run finished in this TUI, for the saved session.
+  , tsIncurredSpendUsd   :: !Double
+    -- ^ Reported cost of every billed request observed in this TUI, including
+    -- requests of interrupted runs. Saved as the session's spend; @/cost reset@
+    -- does not clear it.
   , tsTranscriptScroll   :: !Int
   , tsTranscriptManualScroll :: !Bool
   , tsSelectedToolIndex  :: !Int
@@ -165,7 +169,8 @@ data TuiState = TuiState
   , tsPromptDraft        :: !Text
   , tsContextTokens      :: !Int
   , tsTokenUsage         :: !(Maybe TokenUsage)
-  , tsSessionTokens      :: !SessionTokenUsage
+  , tsDisplayedSessionTokens :: !SessionTokenUsage
+    -- ^ Session usage shown by @/cost@. @/cost reset@ clears it.
   , tsUsageStatus        :: !UsageStatus
   , tsSkills             :: !SkillCatalog
   , tsGoalState          :: !(Maybe GoalState)
@@ -178,7 +183,14 @@ data TuiState = TuiState
   , tsCostPolicy         :: !CostPolicy
     -- ^ How @/cost@ treats cost the endpoint did not report. Non-secret; set
     -- from the connection at launch, not guessed from the model name.
+  , tsModelLimits        :: !(Map Text Int)
+    -- ^ Model metadata context limits.
   } deriving (Show, Eq)
+
+-- | Resolve the active model's context limit in the TUI, if known.
+tuiModelContextLimit :: TuiState -> Maybe Int
+tuiModelContextLimit state =
+  modelContextLimit (tsModelLimits state) (tsModelName state)
 
 -- | Project tool cards from the transcript for the Tool Activity pane.
 tsTools :: TuiState -> [ToolCard]
@@ -203,7 +215,7 @@ initialTuiState model maxTurns = TuiState
   , tsInputBuffer        = ""
   , tsTranscript         = []
   , tsConversation       = []
-  , tsRunSpendUsd        = 0
+  , tsIncurredSpendUsd   = 0
   , tsTranscriptScroll   = 0
   , tsTranscriptManualScroll = False
   , tsSelectedToolIndex  = 0
@@ -215,7 +227,7 @@ initialTuiState model maxTurns = TuiState
   , tsPromptDraft        = ""
   , tsContextTokens      = 0
   , tsTokenUsage         = Nothing
-  , tsSessionTokens      = initialSessionTokenUsage
+  , tsDisplayedSessionTokens = initialSessionTokenUsage
   , tsUsageStatus        = UsageVerified
   , tsSkills             = Map.empty
   , tsGoalState          = Nothing
@@ -223,7 +235,8 @@ initialTuiState model maxTurns = TuiState
   , tsPendingAsk         = Nothing
   , tsTheme              = Nothing
   , tsProjectInstructions = Nothing
-  , tsCostPolicy         = CostEstimateFromModel
+  , tsCostPolicy         = CostReportedOnly
+  , tsModelLimits        = Map.empty
   }
 
 -- | Simplified user keystroke events abstracted from Vty.
@@ -250,7 +263,6 @@ data TuiEvent
   = EvUserKey !UserKey
   | EvHarness !AgentEvent
   | EvConversation ![Message]
-  | EvRunSpend !Double
   | EvSubmit !Text
   deriving (Show, Eq)
 
@@ -269,6 +281,8 @@ data SlashCommandResult
     -- ^ The task list exactly as the @task_list@ tool reports it.
   | ClipboardResult !(Either Text Int)
     -- ^ Characters copied to the clipboard, or why the copy failed.
+  | SkillsReloaded !SkillCatalog
+    -- ^ The skill catalog just read from the current workspace.
   deriving (Show, Eq)
 
 -- | Actions requested by the reducer for the external environment to perform.
@@ -277,6 +291,7 @@ data TuiAction
   | ActionShowDiff
   | ActionListTasks
   | ActionCopyToClipboard !Text
+  | ActionReloadSkills
   | ActionRunAgent !Text
   | ActionRunGoal !Text
   | ActionCancelAgent
@@ -320,5 +335,5 @@ builtinCommands =
 pattern ActionScrollHistory :: Int -> TuiAction
 pattern ActionScrollHistory delta = ActionScrollTranscript delta
 
-{-# COMPLETE ActionInitializeProject, ActionShowDiff, ActionListTasks, ActionCopyToClipboard, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}
-{-# COMPLETE ActionInitializeProject, ActionShowDiff, ActionListTasks, ActionCopyToClipboard, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}
+{-# COMPLETE ActionInitializeProject, ActionShowDiff, ActionListTasks, ActionCopyToClipboard, ActionReloadSkills, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollTranscript, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}
+{-# COMPLETE ActionInitializeProject, ActionShowDiff, ActionListTasks, ActionCopyToClipboard, ActionReloadSkills, ActionRunAgent, ActionRunGoal, ActionCancelAgent, ActionQuit, ActionScrollHistory, ActionScrollPermission, ActionSetPermissionMode, ActionRespondPermission #-}

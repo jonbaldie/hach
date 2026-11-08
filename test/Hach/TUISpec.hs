@@ -1,25 +1,39 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Hach.TUISpec (spec) where
 
 import Hach.Core (AgentAlgebra(..))
-import Hach.Interpreter.IO (ioAlgebra, ioModel, newIOEnv)
+import Hach.Inference
+  ( InferenceInterface(..)
+  , mkInferenceConnection
+  , openRouterConnection
+  , openRouterModelsEndpoint
+  , parseOpenRouterModels
+  , saveOpenRouterModelsCache
+  , loadOpenRouterModelsCache
+  )
+import qualified Hach.InferenceFixture as Fixture
+import Hach.Interpreter.IO (IOEnv(..), defaultIOEnvPermissions, ioAlgebra, newIOEnv, newIOEnvWithPermissions)
 import Hach.Sessions (buildSessionHistory)
 import Hach.Skills (SkillSource(..), mkSkill)
 import Hach.TUI.App
   ( buildTuiSystemPrompt
   , brickToUserKey
   , cancelledToolCallPlaceholder
+  , emitRunEnd
   , dialogueToMessages
   , goalAgentConfig
   , runEnvForModel
   , initialTuiLaunch
   , messagesToTranscriptItems
+  , reloadSkills
   , runAgentWorker
   , runGoalWorker
   , runGoalWorkerWithHistory
   , transcriptToMessages
+  , tuiAlgebra
   , vtyToUserKey
   )
 import Test.QuickCheck
@@ -47,10 +61,12 @@ import Hach.Types
   , modelContextLimit
   , toolResultToText
   )
+import Brick.BChan (newBChan, readBChan)
 import qualified Brick.Main as M
 import Brick.Types (BrickEvent(..), Location(..))
 import Control.Monad (forM_, unless)
 import Data.Char (isSpace)
+import Control.Exception (finally)
 import Data.IORef
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -62,6 +78,7 @@ import qualified Graphics.Vty.Span as Span
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 import System.FilePath ((</>))
 import qualified Data.Text.IO as TIO
+import System.Timeout (timeout)
 import Test.Hspec
 
 renderTestRows :: TuiState -> (Int, Int) -> [T.Text]
@@ -102,6 +119,27 @@ instance Arbitrary TranscriptItem where
     , TiNotice <$> (T.pack <$> listOf (elements ['a'..'z']))
     , TiToolCard <$> arbitrary
     ]
+
+-- | Run a TUI worker against a scripted inference endpoint through the real
+-- IO interpreter and TUI event channel, then apply every event the TUI would
+-- receive to a busy state.
+runThroughTui
+  :: Fixture.Fixture
+  -> (AgentAlgebra IO -> AgentConfig -> ([Message] -> AgentEvent -> IO ()) -> IO ())
+  -> IO TuiState
+runThroughTui fx run = do
+  conn <- either fail pure
+    (mkInferenceConnection InterfaceOpenAICompatible (Fixture.fixtureBaseUrl fx) Nothing)
+  env <- newIOEnvWithPermissions defaultIOEnvPermissions conn "test-model" "/tmp" False
+  chan <- newBChan 64
+  run (tuiAlgebra chan env) (goalAgentConfig env "system" Nothing Nothing) (emitRunEnd chan)
+  events <- drain chan
+  let busy = (initialTuiState "test-model" Nothing) { tsStatus = StatusThinking }
+  pure (foldl (\st ev -> fst (updateTui ev st)) busy events)
+  where
+    drain chan = timeout 100000 (readBChan chan) >>= \case
+      Just ev -> (ev :) <$> drain chan
+      Nothing -> pure []
 
 spec :: Spec
 spec = do
@@ -853,7 +891,7 @@ spec = do
       it "initializes context tokens to 0, token usage to Nothing, and session tokens to 0" $ do
         tsContextTokens baseState `shouldBe` 0
         tsTokenUsage baseState `shouldBe` Nothing
-        tsSessionTokens baseState `shouldBe` initialSessionTokenUsage
+        tsDisplayedSessionTokens baseState `shouldBe` initialSessionTokenUsage
         tsUsageStatus baseState `shouldBe` UsageVerified
 
       it "updates context tokens and session tokens on EvLLMResponse" $ do
@@ -861,9 +899,9 @@ spec = do
             (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
         tsContextTokens s1 `shouldBe` 150
         tsTokenUsage s1 `shouldBe` Just usage
-        stuTotalTokens (tsSessionTokens s1) `shouldBe` 150
-        stuPromptTokens (tsSessionTokens s1) `shouldBe` 120
-        stuCompletionTokens (tsSessionTokens s1) `shouldBe` 30
+        stuTotalTokens (tsDisplayedSessionTokens s1) `shouldBe` 150
+        stuPromptTokens (tsDisplayedSessionTokens s1) `shouldBe` 120
+        stuCompletionTokens (tsDisplayedSessionTokens s1) `shouldBe` 30
         tsUsageStatus s1 `shouldBe` UsageVerified
 
       it "accumulates session tokens while context tokens tracks latest turn" $ do
@@ -873,17 +911,17 @@ spec = do
             (s2, _) = updateTui (EvHarness (EvLLMResponse (Just "Done") [] (Just usage2))) s1
         tsContextTokens s2 `shouldBe` 245
         tsTokenUsage s2 `shouldBe` Just usage2
-        stuTotalTokens (tsSessionTokens s2) `shouldBe` 395
-        stuPromptTokens (tsSessionTokens s2) `shouldBe` 320
-        stuCompletionTokens (tsSessionTokens s2) `shouldBe` 75
+        stuTotalTokens (tsDisplayedSessionTokens s2) `shouldBe` 395
+        stuPromptTokens (tsDisplayedSessionTokens s2) `shouldBe` 320
+        stuCompletionTokens (tsDisplayedSessionTokens s2) `shouldBe` 75
 
       it "accumulates prompt cache metrics and monetary cost across turns" $ do
         let usage1 = TokenUsage 100 20 120 80 (Just 0.0015)
             usage2 = TokenUsage 200 30 230 150 (Just 0.0025)
             (s1, _) = updateTui (EvHarness (EvLLMResponse Nothing [] (Just usage1))) baseState
             (s2, _) = updateTui (EvHarness (EvLLMResponse (Just "Done") [] (Just usage2))) s1
-        stuCachedTokens (tsSessionTokens s2) `shouldBe` 230
-        case stuTotalCost (tsSessionTokens s2) of
+        stuCachedTokens (tsDisplayedSessionTokens s2) `shouldBe` 230
+        case stuTotalCost (tsDisplayedSessionTokens s2) of
           Just c  -> c `shouldSatisfy` (\v -> abs (v - 0.0040) < 0.00001)
           Nothing -> expectationFailure "Expected cumulative total cost to be present"
 
@@ -900,8 +938,8 @@ spec = do
             (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Task done") [] (Just usage1))) baseState
             (s2, _) = updateTui (EvHarness (EvGoalEvaluationUsage evalUsage)) s1
         tsContextTokens s2 `shouldBe` 150
-        stuTotalTokens (tsSessionTokens s2) `shouldBe` 700
-        stuEvaluationTokens (tsSessionTokens s2) `shouldBe` 550
+        stuTotalTokens (tsDisplayedSessionTokens s2) `shouldBe` 700
+        stuEvaluationTokens (tsDisplayedSessionTokens s2) `shouldBe` 550
 
       it "resets context tokens to 0 when history is cleared with 'c' while preserving session totals" $ do
         let usage = mkTokenUsage 120 30 150
@@ -910,7 +948,7 @@ spec = do
             (s3, _) = updateTui (EvUserKey (KeyChar 'c')) s2
         tsContextTokens s3 `shouldBe` 0
         tsTokenUsage s3 `shouldBe` Nothing
-        stuTotalTokens (tsSessionTokens s3) `shouldBe` 150
+        stuTotalTokens (tsDisplayedSessionTokens s3) `shouldBe` 150
 
       it "resets context tokens to 0 on /clear while preserving session totals" $ do
         let usage = mkTokenUsage 120 30 150
@@ -918,13 +956,13 @@ spec = do
             (s2, _) = updateTui (EvSubmit "/clear") s1
         tsContextTokens s2 `shouldBe` 0
         tsTokenUsage s2 `shouldBe` Nothing
-        stuTotalTokens (tsSessionTokens s2) `shouldBe` 150
+        stuTotalTokens (tsDisplayedSessionTokens s2) `shouldBe` 150
 
       it "resets session tokens to 0 on /cost reset" $ do
         let usage = mkTokenUsage 120 30 150
             (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
             (s2, _) = updateTui (EvSubmit "/cost reset") s1
-        stuTotalTokens (tsSessionTokens s2) `shouldBe` 0
+        stuTotalTokens (tsDisplayedSessionTokens s2) `shouldBe` 0
 
       it "generates an informative breakdown with context, session, and capacity on /cost" $ do
         let usage = TokenUsage 120 30 150 50 (Just 0.0012)
@@ -935,6 +973,14 @@ spec = do
         notices `shouldSatisfy` (\l -> any (", $0.0012) —" `T.isInfixOf`) l)
         notices `shouldSatisfy` (\l -> any ("Session Cumulative: 150 tokens" `T.isInfixOf`) l)
         notices `shouldSatisfy` (\l -> any ("Reported API Cost: $0.0012" `T.isInfixOf`) l)
+
+      it "reports cost as not reported when endpoint omits cost, without estimating" $ do
+        let usage = TokenUsage 120 30 150 50 Nothing
+            (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "Hello") [] (Just usage))) baseState
+            (s2, _) = updateTui (EvSubmit "/cost") s1
+        let notices = [ m | DiNotice m <- tsHistory s2 ]
+        notices `shouldSatisfy` (\l -> any ("API Cost: not reported by the endpoint (no estimate is made)" `T.isInfixOf`) l)
+        notices `shouldNotSatisfy` (\l -> any ("Estimated Cost" `T.isInfixOf`) l)
 
     describe "formatCompactLimit" $ do
       it "formats zero and small numbers directly" $ do
@@ -951,19 +997,76 @@ spec = do
         formatCompactLimit 1500000 `shouldBe` "1.5M"
 
     describe "modelContextLimit and contextSaturationPercent" $ do
-      it "maps known model families to context limits" $ do
-        modelContextLimit "~anthropic/claude-sonnet-latest" `shouldBe` 200000
-        modelContextLimit "openai/gpt-4o" `shouldBe` 128000
-        modelContextLimit "~google/gemini-flash-latest" `shouldBe` 1000000
-        modelContextLimit "unknown-custom-model" `shouldBe` 128000
+      let sampleLimits = Map.fromList
+            [ ("openai/gpt-5.6-luna", 1050000)
+            , ("~anthropic/claude-sonnet-latest", 1000000)
+            , ("openai/gpt-4o", 128000)
+            , ("~google/gemini-flash-latest", 1000000)
+            ]
 
-      it "calculates context saturation percentage accurately" $ do
-        contextSaturationPercent 160000 "~anthropic/claude-sonnet-latest" `shouldBe` 80
-        contextSaturationPercent 115200 "openai/gpt-4o" `shouldBe` 90
+      it "resolves context limits for known models and aliases from metadata" $ do
+        modelContextLimit sampleLimits "openai/gpt-5.6-luna" `shouldBe` Just 1050000
+        modelContextLimit sampleLimits "~anthropic/claude-sonnet-latest" `shouldBe` Just 1000000
+        -- alias resolution: without tilde finds tilde alias and vice versa
+        modelContextLimit sampleLimits "anthropic/claude-sonnet-latest" `shouldBe` Just 1000000
+        modelContextLimit sampleLimits "~openai/gpt-5.6-luna" `shouldBe` Just 1050000
+        -- case-insensitivity
+        modelContextLimit sampleLimits "OPENAI/GPT-5.6-LUNA" `shouldBe` Just 1050000
+
+      it "returns Nothing for unknown models or empty metadata" $ do
+        modelContextLimit sampleLimits "unknown-custom-model" `shouldBe` Nothing
+        modelContextLimit Map.empty "openai/gpt-5.6-luna" `shouldBe` Nothing
+
+      it "calculates context saturation percentage accurately with known limit" $ do
+        contextSaturationPercent 160000 200000 `shouldBe` 80
+        contextSaturationPercent 115200 128000 `shouldBe` 90
 
       it "clamps context saturation percentage strictly between 0 and 100" $ do
-        contextSaturationPercent 300000 "~anthropic/claude-sonnet-latest" `shouldBe` 100
-        contextSaturationPercent (-50) "openai/gpt-4o" `shouldBe` 0
+        contextSaturationPercent 300000 200000 `shouldBe` 100
+        contextSaturationPercent (-50) 128000 `shouldBe` 0
+        contextSaturationPercent 50 0 `shouldBe` 0
+
+      it "displays unknown context limit and no fabricated saturation percentage when metadata is absent" $ do
+        let s0 = baseState { tsContextTokens = 150, tsModelLimits = Map.empty }
+            (s1, _) = updateTui (EvSubmit "/cost") s0
+        let notices = [ m | DiNotice m <- tsHistory s1 ]
+        notices `shouldSatisfy` (\l -> any ("150/? capacity" `T.isInfixOf`) l)
+        notices `shouldNotSatisfy` (\l -> any ("(0%)" `T.isInfixOf`) l)
+
+      it "displays authoritative context limit when model metadata is present" $ do
+        let s0 = baseState
+              { tsModelName = "openai/gpt-5.6-luna"
+              , tsContextTokens = 210000
+              , tsModelLimits = sampleLimits
+              }
+            (s1, _) = updateTui (EvSubmit "/cost") s0
+        let notices = [ m | DiNotice m <- tsHistory s1 ]
+        notices `shouldSatisfy` (\l -> any ("210,000/1,050,000 capacity (20%)" `T.isInfixOf`) l)
+
+    describe "OpenRouter /models metadata and caching" $ do
+      it "extracts /models endpoint for OpenRouter connections" $ do
+        let conn = openRouterConnection "test-key"
+        openRouterModelsEndpoint conn `shouldBe` Just "https://openrouter.ai/api/v1/models"
+
+      it "returns Nothing for openai-compatible connections" $ do
+        case mkInferenceConnection InterfaceOpenAICompatible "http://localhost:8080/v1" Nothing of
+          Right compatConn -> openRouterModelsEndpoint compatConn `shouldBe` Nothing
+          Left err -> expectationFailure err
+
+      it "parses OpenRouter /models response carrying context_length and aliases" $ do
+        let jsonPayload = "{\"data\":[{\"id\":\"openai/gpt-5.6-luna\",\"context_length\":1050000},{\"id\":\"~anthropic/claude-sonnet-latest\",\"context_length\":1000000}]}"
+        case parseOpenRouterModels jsonPayload of
+          Right limits -> do
+            Map.lookup "openai/gpt-5.6-luna" limits `shouldBe` Just 1050000
+            Map.lookup "~anthropic/claude-sonnet-latest" limits `shouldBe` Just 1000000
+          Left err -> expectationFailure err
+
+      it "persists and restores model limits cache on disk" $ do
+        let tmpCache = "dist-newstyle/test-models-cache/cache.json"
+        let limits = Map.fromList [("test/model", 500000)]
+        saveOpenRouterModelsCache tmpCache limits
+        loaded <- loadOpenRouterModelsCache tmpCache
+        loaded `shouldBe` Just limits
 
 
     describe "formatTokens" $ do
@@ -1367,7 +1470,7 @@ spec = do
               , AssistantMsg Nothing [ToolCall "call_1" "list_dir" "{\"path\":\".\"}"]
               , ToolMsg "call_1" "list_dir" "MARKER.txt"
               ]
-            captureResult _ history event = writeIORef resultRef (Just (history, event))
+            captureResult history event = writeIORef resultRef (Just (history, event))
         runAgentWorker mockAlgebra config "next task" priorHistory captureResult
         historySeen <- readIORef historySeenRef
         historySeen `shouldBe`
@@ -1393,41 +1496,64 @@ spec = do
           , EvDone "answer"
           )
 
-      it "reports a normal run's spend with its final history (Issue #253)" $ do
-        spendRef <- newIORef Nothing
-        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
-        let usage = (mkTokenUsage 10 5 15) { tuCost = Just 0.25 }
-            mockAlgebra = (ioAlgebra mockIOEnv)
-              { interpPrompt = \_ _ -> pure (Right (AssistantResponse (Just "answer") [] (Just usage)))
-              , interpLog = \_ -> pure ()
-              }
-            config = goalAgentConfig mockIOEnv "system" Nothing Nothing
-        runAgentWorker mockAlgebra config "task" [] (\spent _ _ -> writeIORef spendRef (Just spent))
-        readIORef spendRef `shouldReturn` Just 0.25
+      it "saves a completed run's billed cost once (Issues #253, #275)" $
+        Fixture.withInferenceFixture [Fixture.completionWith "answer" (Just (Fixture.usage 10 5 (Just 0.25)))] $ \fx -> do
+          final <- runThroughTui fx $ \algebra config emit ->
+            runAgentWorker algebra config "task" [] emit
+          tsIncurredSpendUsd final `shouldBe` 0.25
+          stuTotalCost (tsDisplayedSessionTokens final) `shouldBe` Just 0.25
 
-      it "reports a goal run's spend, including the evaluator, with its final history (Issue #253)" $ do
-        spendRef <- newIORef Nothing
-        mockIOEnv <- newIOEnv "test" "test-model" "/tmp" False
-        let usage c = (mkTokenUsage 10 5 15) { tuCost = Just c }
-            mockAlgebra = (ioAlgebra mockIOEnv)
-              { interpPrompt = \_ _ -> pure (Right (AssistantResponse (Just "done") [] (Just (usage 0.25))))
-              , interpLog = \_ -> pure ()
-              , interpEvaluate = \_ _ -> pure (GoalEvaluation GoalMet "met" (Just (usage 0.5)))
-              }
-            config = goalAgentConfig mockIOEnv "system" Nothing Nothing
-        runGoalWorkerWithHistory mockAlgebra config "goal" [] (\spent _ _ -> writeIORef spendRef (Just spent))
-        readIORef spendRef `shouldReturn` Just 0.75
+      it "saves a completed goal run's response and evaluator cost once (Issues #253, #275)" $
+        Fixture.withInferenceFixture
+          [ Fixture.completionWith "done" (Just (Fixture.usage 10 5 (Just 0.25)))
+          , Fixture.completionWith "{\"verdict\":\"met\",\"reason\":\"ok\"}" (Just (Fixture.usage 10 5 (Just 0.5)))
+          ] $ \fx -> do
+            final <- runThroughTui fx $ \algebra config emit ->
+              runGoalWorkerWithHistory algebra config "goal" [] emit
+            tsIncurredSpendUsd final `shouldBe` 0.75
+            stuTotalCost (tsDisplayedSessionTokens final) `shouldBe` Just 0.75
 
-      it "accumulates run spend for the saved session, even after /clear while busy (Issue #253)" $ do
-        let s0 = baseState
+      it "keeps incurred spend when /clear interrupts a busy run (Issue #253)" $ do
+        let usage' c = (mkTokenUsage 10 5 15) { tuCost = Just c }
+            s0 = baseState
               { tsStatus = StatusThinking
               , tsTranscript = [DiUser "Hello"]
               , tsInputBuffer = "/clear"
               }
-            (s1, _) = updateTui (EvRunSpend 0.25) s0
+            (s1, _) = updateTui (EvHarness (EvLLMResponse Nothing [ToolCall "c1" "bash" "{}"] (Just (usage' 0.25)))) s0
             (s2, _) = updateTui (EvUserKey KeyEnter) s1
-            (s3, _) = updateTui (EvRunSpend 0.5) s2
-        tsRunSpendUsd s3 `shouldBe` 0.75
+        tsCancelRequested s2 `shouldBe` True
+        tsIncurredSpendUsd s2 `shouldBe` 0.25
+
+      it "saves the spend of an interrupted run's billed responses (Issue #275)" $ do
+        let usage c = (mkTokenUsage 10 5 15) { tuCost = Just c }
+            s0 = baseState { tsStatus = StatusThinking }
+            (s1, _) = updateTui (EvHarness (EvLLMResponse Nothing [ToolCall "c1" "bash" "{}"] (Just (usage 0.25)))) s0
+            (s2, _) = updateTui (EvHarness (EvLLMResponse Nothing [ToolCall "c2" "bash" "{}"] (Just (usage 0.5)))) s1
+            (s3, _) = updateTui (EvUserKey KeyEsc) s2
+        tsIncurredSpendUsd s3 `shouldBe` 0.75
+
+      it "saves the cost of a billed response that arrives after Esc (Issue #275)" $ do
+        let usage c = (mkTokenUsage 10 5 15) { tuCost = Just c }
+            s0 = baseState { tsStatus = StatusThinking }
+            (s1, _) = updateTui (EvUserKey KeyEsc) s0
+            (s2, _) = updateTui (EvHarness (EvLLMResponse (Just "late") [] (Just (usage 0.25)))) s1
+            (s3, _) = updateTui (EvHarness (EvGoalEvaluationUsage (usage 0.5))) s2
+        tsCancelRequested s1 `shouldBe` True
+        tsTranscript s3 `shouldBe` tsTranscript s1
+        tsIncurredSpendUsd s3 `shouldBe` 0.75
+
+      it "adds nothing to incurred spend for usage without a reported cost (Issue #275)" $ do
+        let (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "hi") [] (Just (mkTokenUsage 10 5 15)))) baseState
+        tsIncurredSpendUsd s1 `shouldBe` 0
+        stuTotalCost (tsDisplayedSessionTokens s1) `shouldBe` Nothing
+
+      it "keeps incurred spend when /cost reset clears the displayed usage (Issue #275)" $ do
+        let usage = (mkTokenUsage 10 5 15) { tuCost = Just 0.25 }
+            (s1, _) = updateTui (EvHarness (EvLLMResponse (Just "hi") [] (Just usage))) baseState
+            (s2, _) = updateTui (EvSubmit "/cost reset") s1
+        tsDisplayedSessionTokens s2 `shouldBe` initialSessionTokenUsage
+        tsIncurredSpendUsd s2 `shouldBe` 0.25
 
     describe "Transcript Auto-Scroll Policy and Thinking Indicator (Issue #25)" $ do
       describe "Auto-Scroll Policy (shouldAutoScroll)" $ do
@@ -1929,7 +2055,7 @@ spec = do
         tsHistory s `shouldBe` []
 
         _ <- executeTaskCreate "/tmp" (TaskCreateArgs "issue-155-task" Nothing)
-        listed <- executeTaskList
+        listed <- executeTaskList "."
         let shown = applySlashCommandResult (TaskListResult (toolResultToText listed)) s
         toolResultToText listed `shouldSatisfy` T.isInfixOf "issue-155-task"
         tsHistory shown `shouldBe` [DiNotice ("Tasks:\n" <> T.stripEnd (toolResultToText listed))]
@@ -1987,14 +2113,45 @@ spec = do
         copyActions `shouldBe` []
         tsHistory sCopy `shouldContain` [DiNotice "Nothing to copy: there is no assistant response yet."]
 
-        let (sReload, _) = updateTui (EvSubmit "/reload-skills") baseState
-        tsHistory sReload `shouldSatisfy` \h -> any (\case DiNotice n -> "Skills reloaded:" `T.isInfixOf` n; _ -> False) h
-
         let (sMcp, _) = updateTui (EvSubmit "/mcp") baseState
         tsHistory sMcp `shouldContain` [DiNotice "/mcp is not implemented: Hach does not connect to MCP servers yet."]
 
         let (sPlug, _) = updateTui (EvSubmit "/plugin") baseState
         tsHistory sPlug `shouldContain` [DiNotice "/plugin is not implemented: Hach has no plugin system yet."]
+
+      it "re-reads the current workspace's skills for /reload-skills (Issue #273)" $ do
+        let sandbox = "dist-newstyle/test-sandbox-reload-skills"
+            startup = sandbox </> "startup"
+            worktree = sandbox </> "worktree"
+            writeSkill workspace name = do
+              let dir = workspace </> ".claude" </> "skills" </> name
+              createDirectoryIfMissing True dir
+              TIO.writeFile (dir </> "SKILL.md")
+                ("---\nname: " <> T.pack name <> "\ndescription: d\n---\nbody")
+        createDirectoryIfMissing True startup
+        createDirectoryIfMissing True worktree
+        flip finally (removeDirectoryRecursive sandbox) $ do
+          ioEnv <- newIOEnv "test" "test-model" startup False
+          initial <- reloadSkills ioEnv
+          let st0 = applySlashCommandResult initial baseState
+          Map.member "added-mid-session" (tsSkills st0) `shouldBe` False
+
+          writeSkill startup "added-mid-session"
+          let (sSubmitted, actions) = updateTui (EvSubmit "/reload-skills") st0
+          actions `shouldBe` [ActionReloadSkills]
+          reloaded <- reloadSkills ioEnv
+          let sReloaded = applySlashCommandResult reloaded sSubmitted
+          Map.member "added-mid-session" (tsSkills sReloaded) `shouldBe` True
+          tsHistory sReloaded `shouldContain`
+            [DiNotice ("Skills reloaded: " <> T.pack (show (Map.size (tsSkills sReloaded))) <> " available")]
+          Map.size (tsSkills sReloaded) `shouldBe` Map.size (tsSkills st0) + 1
+
+          writeSkill worktree "worktree-only"
+          writeIORef (ioCurrentWorkspace ioEnv) worktree
+          inWorktree <- reloadSkills ioEnv
+          let sWorktree = applySlashCommandResult inWorktree sReloaded
+          Map.member "worktree-only" (tsSkills sWorktree) `shouldBe` True
+          Map.member "added-mid-session" (tsSkills sWorktree) `shouldBe` False
 
       it "copies the last assistant response with /copy (Issue #155)" $ do
         let withReply = baseState

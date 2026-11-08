@@ -13,7 +13,6 @@ module Hach.TUI.State
   ) where
 
 import Hach.Inference (CostPolicy(..))
-import Hach.Sessions (estimateCostUsd)
 import Hach.Skills (inputSlashCompletion, parseSkillInvocations, skillName)
 import Hach.TUI.Conversation (compactTranscriptHistory)
 import Hach.TUI.Types
@@ -38,7 +37,7 @@ import Hach.Types
   , modelContextLimit
   )
 import qualified Data.Map.Strict as Map
-import Data.Maybe (listToMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import qualified Data.Text as T
 import Text.Printf (printf)
 
@@ -60,21 +59,23 @@ applyProjectInitializationResult result state =
 
 -- | Report the outcome of an IO-backed slash command in the transcript.
 applySlashCommandResult :: SlashCommandResult -> TuiState -> TuiState
-applySlashCommandResult result state =
-  state { tsTranscript = tsTranscript state ++ [DiNotice notice] }
+applySlashCommandResult result state = case result of
+  DiffResult (Right diff)
+    | T.null (T.strip diff) -> appendNotice "Diff: no changes to tracked files against HEAD."
+    | otherwise             -> appendNotice ("Diff against HEAD:\n" <> T.stripEnd diff)
+  DiffResult (Left err) ->
+    appendNotice ("Diff unavailable: " <> err)
+  TaskListResult tasks ->
+    appendNotice ("Tasks:\n" <> T.stripEnd tasks)
+  ClipboardResult (Right chars) ->
+    appendNotice ("Copied last response to clipboard (" <> T.pack (show chars) <> " characters).")
+  ClipboardResult (Left err) ->
+    appendNotice ("Copy failed: " <> err)
+  SkillsReloaded catalog ->
+    (appendNotice ("Skills reloaded: " <> T.pack (show (Map.size catalog)) <> " available"))
+      { tsSkills = catalog }
   where
-    notice = case result of
-      DiffResult (Right diff)
-        | T.null (T.strip diff) -> "Diff: no changes to tracked files against HEAD."
-        | otherwise             -> "Diff against HEAD:\n" <> T.stripEnd diff
-      DiffResult (Left err) ->
-        "Diff unavailable: " <> err
-      TaskListResult tasks ->
-        "Tasks:\n" <> T.stripEnd tasks
-      ClipboardResult (Right chars) ->
-        "Copied last response to clipboard (" <> T.pack (show chars) <> " characters)."
-      ClipboardResult (Left err) ->
-        "Copy failed: " <> err
+    appendNotice notice = state { tsTranscript = tsTranscript state ++ [DiNotice notice] }
 
 -- | Text of the most recent non-empty assistant reply, if any.
 lastAssistantText :: TuiState -> Maybe T.Text
@@ -105,15 +106,26 @@ updateTui event state = case event of
     handleUserKey key state
 
   EvHarness agentEv ->
-    (handleAgentEvent agentEv state, [])
+    (handleAgentEvent agentEv (recordBilledUsage agentEv state), [])
 
   EvConversation messages
     | tsCancelRequested state -> (state, [])
     | otherwise -> (state { tsConversation = messages }, [])
 
-  -- Spend is real even when the run's history is discarded.
-  EvRunSpend spent ->
-    (state { tsRunSpendUsd = tsRunSpendUsd state + spent }, [])
+-- | Add a billed request's usage to the session the moment the TUI observes
+-- it. This is the only adder of session usage and spend. It runs before the
+-- cancel guard because a request is billed even when its run is interrupted
+-- or its output is discarded.
+recordBilledUsage :: AgentEvent -> TuiState -> TuiState
+recordBilledUsage event state = case event of
+  EvLLMResponse _ _ (Just u) -> addUsage u False
+  EvGoalEvaluationUsage u    -> addUsage u True
+  _                          -> state
+  where
+    addUsage u isEval = state
+      { tsDisplayedSessionTokens = addUsageToSession u isEval (tsDisplayedSessionTokens state)
+      , tsIncurredSpendUsd       = tsIncurredSpendUsd state + fromMaybe 0 (tuCost u)
+      }
 
 -- | Whether the agent harness is currently busy running an inference turn or tool.
 isBusy :: TuiStatus -> Bool
@@ -125,9 +137,14 @@ isBusy = \case
 
 -- | Format a comprehensive cost and token breakdown report.
 formatCostReport :: TuiState -> T.Text
-formatCostReport TuiState{..} =
-  let limit = modelContextLimit tsModelName
-      pct = contextSaturationPercent tsContextTokens tsModelName
+formatCostReport state@TuiState{..} =
+  let mLimit = tuiModelContextLimit state
+      capacityPart = case mLimit of
+        Just limit | limit > 0 ->
+          let pct = contextSaturationPercent tsContextTokens limit
+          in " — " <> formatTokens tsContextTokens <> "/" <> formatTokens limit <> " capacity (" <> T.pack (show pct) <> "%)"
+        _ ->
+          " — " <> formatTokens tsContextTokens <> "/? capacity"
       contextLine = case tsTokenUsage of
         Just TokenUsage{..} ->
           let cachePart = if tuCachedTokens > 0 then ", " <> formatTokens tuCachedTokens <> " cached" else ""
@@ -136,13 +153,11 @@ formatCostReport TuiState{..} =
                 Nothing -> ""
           in "Tokens: " <> formatTokens tsContextTokens <> " in context window (" <>
              formatTokens tuPromptTokens <> " prompt" <> cachePart <> ", " <>
-             formatTokens tuCompletionTokens <> " completion" <> costPart <> ") — " <>
-             formatTokens tsContextTokens <> "/" <> formatTokens limit <> " capacity (" <> T.pack (show pct) <> "%)"
+             formatTokens tuCompletionTokens <> " completion" <> costPart <> ")" <> capacityPart
         Nothing ->
-          "Tokens: " <> formatTokens tsContextTokens <> " in context window — " <>
-          formatTokens tsContextTokens <> "/" <> formatTokens limit <> " capacity (" <> T.pack (show pct) <> "%)"
+          "Tokens: " <> formatTokens tsContextTokens <> " in context window" <> capacityPart
 
-      stu = tsSessionTokens
+      stu = tsDisplayedSessionTokens
       cacheSessionPart = if stuCachedTokens stu > 0 then ", " <> formatTokens (stuCachedTokens stu) <> " cached" else ""
       evalSessionPart = if stuEvaluationTokens stu > 0 then ", " <> formatTokens (stuEvaluationTokens stu) <> " goal-eval" else ""
       sessionLine =
@@ -154,10 +169,6 @@ formatCostReport TuiState{..} =
         (Just c, _) -> "\nReported API Cost: $" <> T.pack (printf "%.4f" c)
         (Nothing, CostReportedOnly) ->
           "\nAPI Cost: not reported by the endpoint (no estimate is made)"
-        (Nothing, _) | stuTotalTokens stu == 0 -> ""
-        (Nothing, CostEstimateFromModel) ->
-          let est = estimateCostUsd tsModelName (stuPromptTokens stu) (stuCompletionTokens stu)
-          in "\nEstimated Cost: ~$" <> T.pack (printf "%.4f" est)
   in contextLine <> "\n" <> sessionLine <> costLine
 
 -- | Handle submitting a user task prompt.
@@ -206,7 +217,7 @@ handleSubmitPrompt rawPrompt state
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
-                 , tsSessionTokens      = initialSessionTokenUsage
+                 , tsDisplayedSessionTokens = initialSessionTokenUsage
                  }
          , []
          )
@@ -438,14 +449,12 @@ handleSubmitPrompt rawPrompt state
              )
   | trimmed == "/reload-skills" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
-          newTranscript = tsTranscript state ++ [DiNotice ("Skills reloaded: " <> T.pack (show (Map.size (tsSkills state))) <> " available")]
-      in ( state { tsTranscript         = newTranscript
-                 , tsInputBuffer        = ""
+      in ( state { tsInputBuffer        = ""
                  , tsPromptHistory      = newPromptHistory
                  , tsPromptHistoryIndex = Nothing
                  , tsPromptDraft        = ""
                  }
-         , []
+         , [ActionReloadSkills]
          )
   | trimmed == "/mcp" =
       let newPromptHistory = tsPromptHistory state ++ [trimmed]
@@ -839,15 +848,14 @@ handleAgentEvent event state@TuiState{..}
                     ]
         newTranscript = tsTranscript ++ textItems ++ cardItems
         newStatus = if null calls then StatusFinished else tsStatus
-        (newContextTokens, newUsage, newSessionTokens, newUsageStatus) = case mUsage of
-          Just u  -> (tuTotalTokens u, Just u, addUsageToSession u False tsSessionTokens, UsageVerified)
-          Nothing -> (tsContextTokens, tsTokenUsage, tsSessionTokens, UsageMissing)
+        (newContextTokens, newUsage, newUsageStatus) = case mUsage of
+          Just u  -> (tuTotalTokens u, Just u, UsageVerified)
+          Nothing -> (tsContextTokens, tsTokenUsage, UsageMissing)
     in state
          { tsTranscript    = newTranscript
          , tsStatus        = newStatus
          , tsContextTokens = newContextTokens
          , tsTokenUsage    = newUsage
-         , tsSessionTokens = newSessionTokens
          , tsUsageStatus   = newUsageStatus
          }
 
@@ -899,8 +907,9 @@ handleAgentEvent event state@TuiState{..}
         }
       Nothing -> state
 
-  EvGoalEvaluationUsage u ->
-    state { tsSessionTokens = addUsageToSession u True tsSessionTokens }
+  -- Recorded by 'recordBilledUsage'.
+  EvGoalEvaluationUsage _ ->
+    state
 
   EvGoalAchieved cond ->
     case tsGoalState of

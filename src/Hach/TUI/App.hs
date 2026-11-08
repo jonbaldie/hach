@@ -12,6 +12,8 @@ module Hach.TUI.App
   , messagesToTranscriptItems
   , cancelledToolCallPlaceholder
   , runAgentWorker
+  , tuiAlgebra
+  , emitRunEnd
   , shouldAutoScroll
   , isTranscriptAppendingEvent
   , runGoalWorker
@@ -19,6 +21,7 @@ module Hach.TUI.App
   , goalAgentConfig
   , runEnvForModel
   , initialTuiLaunch
+  , reloadSkills
   , PermissionGate
   , newPermissionGate
   , resolveAskWithGate
@@ -32,8 +35,9 @@ import Hach.Core
 import Hach.CLI (renderRunOutcome)
 import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions, loadProjectInstructionsFile)
 import Hach.Git (getGitDiff)
-import Hach.Inference (connectionCostPolicy)
+import Hach.Inference (connectionCostPolicy, fetchOpenRouterModels)
 import Hach.Interpreter.IO
+import qualified Data.Map.Strict as Map
 import Hach.Skills (discoverSkills, expandSlashInvokedPrompt)
 import Hach.Sessions (buildSessionHistory, saveRunSession)
 import Hach.TUI.Conversation
@@ -124,7 +128,7 @@ newPermissionGate = do
   reply <- newEmptyTMVarIO
   pure (PermissionGate nextId pending reply)
 
-resolveAskWithGate :: PermissionGate -> (AgentEvent -> IO ()) -> Text -> Text -> Text -> IO (Maybe Text)
+resolveAskWithGate :: PermissionGate -> (AgentEvent -> IO ()) -> Text -> Text -> Text -> IO (Maybe PermissionDenial)
 resolveAskWithGate gate emit tool args reason = do
   askId <- atomically $ do
     i <- readTVar (pgNextId gate)
@@ -137,7 +141,7 @@ resolveAskWithGate gate emit tool args reason = do
   atomically $ writeTVar (pgPending gate) Nothing
   pure $ if replyId == askId && approved
     then Nothing
-    else Just interactiveAskDeniedReason
+    else Just (ApprovalDenied interactiveAskDeniedReason)
 
 respondPermission :: PermissionGate -> Int -> Bool -> IO Bool
 respondPermission gate expectedId approved = atomically $ do
@@ -194,6 +198,11 @@ initialTuiLaunch (Just p) st
   | T.null (T.strip p) = (st, [])
   | otherwise          = updateTui (EvSubmit p) st
 
+-- | Re-read the skill catalog from the current workspace, which follows
+-- worktree entry and exit, for @/reload-skills@.
+reloadSkills :: IOEnv -> IO SlashCommandResult
+reloadSkills ioEnv = SkillsReloaded <$> (currentIOWorkspace ioEnv >>= discoverSkills)
+
 -- | Execute one side-effecting action requested by the pure reducer.
 runTuiAction
   :: BChan TuiEvent
@@ -212,11 +221,14 @@ runTuiAction eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd = \case
     diff <- liftIO (currentIOWorkspace ioEnv >>= getGitDiff)
     modify (applySlashCommandResult (DiffResult diff))
   ActionListTasks -> do
-    tasks <- liftIO executeTaskList
+    tasks <- liftIO (currentIOWorkspace ioEnv >>= executeTaskList)
     modify (applySlashCommandResult (TaskListResult (toolResultToText tasks)))
   ActionCopyToClipboard text -> do
     copied <- liftIO (copyToClipboard text)
     modify (applySlashCommandResult (ClipboardResult (T.length text <$ copied)))
+  ActionReloadSkills -> do
+    reloaded <- liftIO (reloadSkills ioEnv)
+    modify (applySlashCommandResult reloaded)
   ActionQuit -> do
     liftIO $ do
       cancelPermissionAsk gate
@@ -278,6 +290,8 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
       loadedTurns = case mLoadedSession of
         Just (info, _) -> siTurns info
         Nothing        -> 0
+  mModelLimits <- fetchOpenRouterModels (ioManager ioEnv) (ioConnection ioEnv)
+  let modelLimits = fromMaybe Map.empty mModelLimits
       baseState = (initialTuiState (ioModel ioEnv) mMaxTurns)
         { tsSkills = skills
         , tsPermissionMode = initialMode
@@ -287,6 +301,7 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
         , tsTheme = mTheme
         , tsProjectInstructions = listToMaybe loadedInstructions
         , tsCostPolicy = connectionCostPolicy (ioConnection ioEnv)
+        , tsModelLimits = modelLimits
         }
       (startingState, initialActions) = initialTuiLaunch initialPrompt baseState
 
@@ -317,7 +332,7 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
   mapM_ cancel mWorker
 
   saveRunSession activeWorkspace activeSid (ioModel ioEnv) (fmap fst mLoadedSession)
-    (tsRunSpendUsd finalState) (tsConversation finalState)
+    (tsIncurredSpendUsd finalState) (tsConversation finalState)
 
 -- | Collapse a run of same-role text items with one intercalate so the
 -- copy is linear in the total text rather than quadratic in the run length.
@@ -385,8 +400,7 @@ triggerAgentRun
   -> Text
   -> [Message]
   -> EventM Name TuiState ()
-triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd currentPrompt priorHistory = do
-  st <- get
+triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns mMaxBudgetUsd currentPrompt priorHistory =
   liftIO $ do
     cancelPermissionAsk gate
     mOldWorker <- atomically $ do
@@ -396,7 +410,7 @@ triggerAgentRun eventChan workerVar gate ioEnv selectedModel sysPrompt mMaxTurns
     interruptWorker mOldWorker
 
     activeWorkspace <- currentIOWorkspace ioEnv
-    finalPrompt <- expandSlashInvokedPrompt activeWorkspace (tsSkills st) currentPrompt
+    finalPrompt <- expandSlashInvokedPrompt activeWorkspace currentPrompt
 
     newWorker <- async $ do
       let runEnv = runEnvForModel selectedModel ioEnv
@@ -417,22 +431,22 @@ goalAgentConfig ioEnv sysPrompt mMaxTurns mMaxBudgetUsd = AgentConfig
   , cfgMaxBudgetUsd = mMaxBudgetUsd
   }
 
--- | Post a finished run to the TUI: its spend, its final history, then its
--- terminal event.
-emitRunEnd :: BChan TuiEvent -> Double -> [Message] -> AgentEvent -> IO ()
-emitRunEnd eventChan spent history event = do
-  writeBChan eventChan (EvRunSpend spent)
+-- | Post a finished run to the TUI: its final history, then its terminal
+-- event. The run's spend is not posted here: the TUI records each billed
+-- request's cost from its usage event, so an interrupted run's spend is kept.
+emitRunEnd :: BChan TuiEvent -> [Message] -> AgentEvent -> IO ()
+emitRunEnd eventChan history event = do
   writeBChan eventChan (EvConversation history)
   writeBChan eventChan (EvHarness event)
 
 -- | Run a normal agent turn from the canonical conversation and return the
--- run's spend and final history before emitting its terminal event.
+-- run's final history before emitting its terminal event.
 runAgentWorker
   :: AgentAlgebra IO
   -> AgentConfig
   -> Text
   -> [Message]
-  -> (Double -> [Message] -> AgentEvent -> IO ())
+  -> ([Message] -> AgentEvent -> IO ())
   -> IO ()
 runAgentWorker algebra agentConfig prompt priorHistory emit = do
   let sysPrompt = fromMaybe "" (cfgSystemPrompt agentConfig)
@@ -440,9 +454,9 @@ runAgentWorker algebra agentConfig prompt priorHistory emit = do
   res <- trySync (foldAgentProgram algebra (agentLoop agentConfig allToolDefs initHistory))
   case res of
     Left (ex :: SomeException) ->
-      emit 0 initHistory (EvError (T.pack (show ex)))
-    Right (result, finalHistory, spent) ->
-      emit spent finalHistory (runOutcomeEvent (runOutcome result Nothing))
+      emit initHistory (EvError (T.pack (show ex)))
+    Right (result, finalHistory, _spent) ->
+      emit finalHistory (runOutcomeEvent (runOutcome result Nothing))
 
 -- | Execute a goal-directed agent run using the given algebra and emit events.
 runGoalWorker
@@ -453,17 +467,16 @@ runGoalWorker
   -> (AgentEvent -> IO ())
   -> IO ()
 runGoalWorker algebra agentConfig condition priorHistory emitEvent =
-  runGoalWorkerWithHistory algebra agentConfig condition priorHistory (\_ _ event -> emitEvent event)
+  runGoalWorkerWithHistory algebra agentConfig condition priorHistory (\_ event -> emitEvent event)
 
--- | Goal worker variant that returns the run's spend and canonical history
--- before its terminal event so the TUI can save and resume the exact model
--- conversation.
+-- | Goal worker variant that returns the run's canonical history before its
+-- terminal event so the TUI can save and resume the exact model conversation.
 runGoalWorkerWithHistory
   :: AgentAlgebra IO
   -> AgentConfig
   -> Text
   -> [Message]
-  -> (Double -> [Message] -> AgentEvent -> IO ())
+  -> ([Message] -> AgentEvent -> IO ())
   -> IO ()
 runGoalWorkerWithHistory algebra agentConfig condition priorHistory emit = do
   let sysPrompt = fromMaybe "" (cfgSystemPrompt agentConfig)
@@ -472,9 +485,9 @@ runGoalWorkerWithHistory algebra agentConfig condition priorHistory emit = do
               (goalLoop agentConfig allToolDefs condition defaultBlockCap initHistory))
   case res of
     Left (ex :: SomeException) ->
-      emit 0 initHistory (EvError (T.pack (show ex)))
-    Right (result, finalHistory, goalState, spent) ->
-      emit spent finalHistory (runOutcomeEvent (runOutcome result (Just goalState)))
+      emit initHistory (EvError (T.pack (show ex)))
+    Right (result, finalHistory, goalState, _spent) ->
+      emit finalHistory (runOutcomeEvent (runOutcome result (Just goalState)))
 
 -- | The terminal TUI event for a finished run: only success ends the run as
 -- done; a stopped or failed run, including an unmet goal, ends in error.

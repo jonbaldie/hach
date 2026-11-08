@@ -29,6 +29,35 @@ import Hach.InferenceFixture
 
 spec :: Spec
 spec = describe "TUI on a pseudo-terminal" $ do
+  it "shows a persisted TodoWrite checklist after restart through /tasks (#222)" $
+    withSandbox $ \ws -> do
+      withInferenceFixture
+        [ toolCallCompletion [toolCall "save" "TodoWrite" (object ["tasks" .= (["ship-the-report"] :: [Text])])] Nothing
+        , completion "done"
+        ] $ \fx -> do
+          result <- runHach (hachRun ws
+            [ "--no-tui", "--provider", "openai-compatible", "--base-url", T.unpack (fixtureBaseUrl fx)
+            , "--model", "fixture", "--permission-mode", "acceptEdits", "save checklist" ])
+          hrStdout result `shouldSatisfy` ("Saved 1 todo items" `isInfixOf`)
+      withInferenceFixture [] $ \fx ->
+        withTui ws []
+          ["--provider", "openai-compatible", "--base-url", T.unpack (fixtureBaseUrl fx), "--model", "tui-model"] $ \tui -> do
+            submit tui "/tasks"
+            awaitText tui "Checklist:"
+            awaitText tui "[ ] ship-the-report"
+            fixtureRequests fx `shouldReturn` []
+
+  it "shows empty and malformed checklist results through /tasks (#222)" $
+    withSandbox $ \ws -> withInferenceFixture [] $ \fx ->
+      withTui ws []
+        ["--provider", "openai-compatible", "--base-url", T.unpack (fixtureBaseUrl fx), "--model", "tui-model"] $ \tui -> do
+          submit tui "/tasks"
+          awaitText tui "No active tasks."
+          writeWorkspaceFile ws ".claude/todos.json" "not-json"
+          submit tui "/tasks"
+          awaitText tui "Checklist error (.claude/todos.json):"
+          fixtureRequests fx `shouldReturn` []
+
   it "runs a turn with a Tool Card, switches model, reports unknown cost, and recovers from cancellation" $
     withSandbox $ \ws -> do
       writeWorkspaceFile ws (".claude/settings.json") "{\"effort_level\": \"low\"}"
