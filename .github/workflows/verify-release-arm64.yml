@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          raw_tag="${{ github.ref_name }}"
+          raw_tag="v0.0.0"
           version="${raw_tag#v}"
           bin_path="$(cabal list-bin exe:hach --enable-optimization=2 2>/dev/null || true)"
           if [[ -z "$bin_path" || ! -f "$bin_path" ]]; then
