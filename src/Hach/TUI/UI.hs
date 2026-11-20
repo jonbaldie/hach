@@ -163,11 +163,18 @@ drawUI state@TuiState{..} =
     Nothing -> [baseLayout state]
 
 -- | The core dashboard layout with Claude Code / AGY CLI proportions.
+--
+-- The transcript panel is the only greedy widget: Brick's 'vBox'
+-- allocates 'Fixed' widgets first (header, input, footer) and gives
+-- the remainder to greedy ones, so the input line keeps its height
+-- even on short terminals. (A 'vLimitPercent' here would be fixed
+-- height computed from the rows left after the header, crowding the
+-- input and footer out on terminals under ~15 rows.)
 baseLayout :: TuiState -> Widget Name
 baseLayout state =
   vBox
     [ renderHeader state
-    , vLimitPercent 78 (renderTranscriptPanel state)
+    , renderTranscriptPanel state
     , renderInputPanel state
     , renderFooter
     ]
@@ -622,7 +629,9 @@ permissionOverlay PermissionPrompt{..} = Widget Greedy Greedy $ do
       -- before sizing the command viewport so approval controls stay visible.
       commandHeight = max 1 (ctx ^. availHeightL - 11 - length reasonRows)
       needsScroll = length commandRows > commandHeight
-  render $ center $
+  -- 'centerLayer', not 'center': 'center' fills the surrounding area
+  -- with spaces, blanking the base layout underneath this overlay.
+  render $ centerLayer $
     withBorderStyle unicodeBold $
     withAttr activeBorderAttr $
     borderWithLabel (withAttr brandAttr (txt " Approval required ")) $
@@ -645,39 +654,93 @@ permissionOverlay PermissionPrompt{..} = Widget Greedy Greedy $ do
           ]
       ]
 
--- | Help dialog overlay.
+-- | Help guide content: a section title and its (key, description) pairs.
+helpSections :: [(Text, [(Text, Text)])]
+helpSections =
+  [ ( "Navigation & Global:"
+    , [ ("Tab / Shift+Tab", "Switch focus (Input ⇄ Transcript)")
+      , ("Mouse wheel", "Scroll transcript without changing focus")
+      , ("Tab (in input)", "Accept a /skill autocomplete suggestion, else switch focus")
+      , ("Ctrl+Q", "Quit the application immediately")
+      , ("Esc / Ctrl+C", "Cancel running agent turn or dismiss help")
+      , ("? / F1", "Toggle this help overlay")
+      ]
+    )
+  , ( "Task Input:"
+    , [ ("Enter", "Submit prompt to the autonomous agent")
+      , ("Up / Down", "Recall previous / next prompt history")
+      , ("PgUp / PgDn", "Scroll transcript 5 lines")
+      , ("Ctrl+U", "Clear current input line")
+      ]
+    )
+  , ( "Transcript:"
+    , [ ("Up / Down", "Select tool card (when present) or scroll 1 line")
+      , ("PgUp / PgDn", "Scroll transcript 5 lines")
+      , ("Enter / Space", "Expand / collapse selected tool card")
+      , ("c", "Clear transcript and reset context")
+      , ("q", "Quit application (when idle)")
+      ]
+    )
+  ]
+
+-- | Column the help descriptions start at, counting the key column.
+helpKeyWidth :: Int
+helpKeyWidth = maximum (18 : map (displayWidth . fst) (concatMap snd helpSections))
+
+-- | Greedy word wrap at display-column width. A single word longer
+-- than the width falls back to 'wrapToDisplayWidth' so it is kept
+-- whole-piece by piece instead of dropped.
+wrapWords :: Int -> Text -> [Text]
+wrapWords width text
+  | width < 1 = [text]
+  | T.null text = [""]
+  | otherwise = go "" (T.words text)
+  where
+    go line [] = [line]
+    go line (w : ws)
+      | displayWidth w > width =
+          let chunks = wrapToDisplayWidth width w
+          in (if T.null line then [] else [line]) ++ init chunks ++ go (last chunks) ws
+      | T.null line = go w ws
+      | displayWidth line + 1 + displayWidth w <= width = go (line <> " " <> w) ws
+      | otherwise = line : go w ws
+
+-- | One help entry: the key in a fixed column, the description
+-- wrapped to the remaining width with continuation lines aligned
+-- under the first description line.
+helpEntry :: Int -> Text -> Text -> Widget Name
+helpEntry width key desc =
+  let descW = max 1 (width - helpKeyWidth)
+      chunks = wrapWords descW desc
+      keyWidget = withAttr shortcutKeyAttr (txt (key <> T.replicate (helpKeyWidth - displayWidth key) " "))
+      rows (c : cs) =
+        hBox [keyWidget, withAttr dimAttr (txt c)]
+          : map (\ch -> padLeft (Pad helpKeyWidth) (withAttr dimAttr (txt ch))) cs
+      rows [] = [hBox [keyWidget, withAttr dimAttr (txt " ")]]
+  in vBox (rows chunks)
+
+-- | Help dialog overlay. 'centerLayer', not 'center': 'center' fills
+-- the surrounding area with spaces, blanking the base layout
+-- underneath. Descriptions wrap to the available width so narrow
+-- terminals see the whole guide instead of clipped lines.
 helpOverlay :: Widget Name
-helpOverlay =
-  center $
-  withBorderStyle unicodeBold $
-  withAttr activeBorderAttr $
-  borderWithLabel (withAttr brandAttr (txt " ✻ Agent Keyboard Guide ")) $
-  padAll 2 $
-  vBox
-    [ withAttr brandAttr (txt "Navigation & Global:")
-    , padLeft (Pad 2) $ vBox
-        [ hBox [withAttr shortcutKeyAttr (txt "Tab / Shift+Tab   "), withAttr dimAttr (txt "Switch focus (Input ⇄ Transcript)")]
-        , hBox [withAttr shortcutKeyAttr (txt "Mouse wheel       "), withAttr dimAttr (txt "Scroll transcript without changing focus")]
-        , hBox [withAttr shortcutKeyAttr (txt "Tab (in input)    "), withAttr dimAttr (txt "Accept a /skill autocomplete suggestion, else switch focus")]
-        , hBox [withAttr shortcutKeyAttr (txt "Ctrl+Q            "), withAttr dimAttr (txt "Quit the application immediately")]
-        , hBox [withAttr shortcutKeyAttr (txt "Esc / Ctrl+C      "), withAttr dimAttr (txt "Cancel running agent turn or dismiss help")]
-        , hBox [withAttr shortcutKeyAttr (txt "? / F1            "), withAttr dimAttr (txt "Toggle this help overlay")]
-        ]
-    , txt " "
-    , withAttr brandAttr (txt "Task Input:")
-    , padLeft (Pad 2) $ vBox
-        [ hBox [withAttr shortcutKeyAttr (txt "Enter             "), withAttr dimAttr (txt "Submit prompt to the autonomous agent")]
-        , hBox [withAttr shortcutKeyAttr (txt "Up / Down         "), withAttr dimAttr (txt "Recall previous / next prompt history")]
-        , hBox [withAttr shortcutKeyAttr (txt "PgUp / PgDn       "), withAttr dimAttr (txt "Scroll transcript 5 lines")]
-        , hBox [withAttr shortcutKeyAttr (txt "Ctrl+U            "), withAttr dimAttr (txt "Clear current input line")]
-        ]
-    , txt " "
-    , withAttr brandAttr (txt "Transcript:")
-    , padLeft (Pad 2) $ vBox
-        [ hBox [withAttr shortcutKeyAttr (txt "Up / Down         "), withAttr dimAttr (txt "Select tool card (when present) or scroll 1 line")]
-        , hBox [withAttr shortcutKeyAttr (txt "PgUp / PgDn       "), withAttr dimAttr (txt "Scroll transcript 5 lines")]
-        , hBox [withAttr shortcutKeyAttr (txt "Enter / Space     "), withAttr dimAttr (txt "Expand / collapse selected tool card")]
-        , hBox [withAttr shortcutKeyAttr (txt "c                 "), withAttr dimAttr (txt "Clear transcript and reset context")]
-        , hBox [withAttr shortcutKeyAttr (txt "q                 "), withAttr dimAttr (txt "Quit application (when idle)")]
-        ]
-    ]
+helpOverlay = Widget Greedy Greedy $ do
+  ctx <- getContext
+  let contentW = max 20 (ctx ^. availWidthL - 6)
+      entryW = max 1 (contentW - 2)
+      section (title, entries) =
+        vBox
+          [ withAttr brandAttr (txt title)
+          , padLeft (Pad 2) $ vBox (map (uncurry (helpEntry entryW)) entries)
+          ]
+      body = vBox $ go (map section helpSections)
+        where
+          go [] = []
+          go [s] = [s]
+          go (s : ss) = s : txt " " : go ss
+  render $ centerLayer $
+    withBorderStyle unicodeBold $
+    withAttr activeBorderAttr $
+    borderWithLabel (withAttr brandAttr (txt " ✻ Agent Keyboard Guide ")) $
+    padAll 2 $
+    body

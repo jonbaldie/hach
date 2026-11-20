@@ -145,6 +145,38 @@ spec = do
         (cols, nub band) `shouldBe` (cols, [[0, cols - 1]]))
         [80, 120, 259]
 
+  describe "help overlay" $ do
+    it "leaves the base layout visible around the box" $ do
+      let state = (initialTuiState "test/model" Nothing) { tsShowHelp = True }
+          rows = renderStateRows state (100, 40)
+      mapM_ (\label -> rows `shouldSatisfy` any (T.isInfixOf label))
+        ["Agent Keyboard Guide", "model:", "Transcript", "Prompt"]
+
+    it "wraps long lines instead of clipping them at narrow widths" $ do
+      let state = (initialTuiState "test/model" Nothing) { tsShowHelp = True }
+          rows = renderStateRows state (55, 40)
+      rows `shouldSatisfy` any (T.isInfixOf "Quit the application")
+      rows `shouldSatisfy` any (T.isInfixOf "immediately")
+      rows `shouldSatisfy` any (T.isInfixOf "Accept a /skill")
+      rows `shouldSatisfy` any (T.isInfixOf "else switch focus")
+
+  describe "approval overlay" $ do
+    it "leaves the base layout visible around the box" $ do
+      let state = (initialTuiState "test/model" Nothing)
+            { tsPendingAsk = Just (PermissionPrompt 1 "run_command" "{\"command\":\"ls\"}" "Shell command requires approval") }
+          rows = renderStateRows state (100, 40)
+      mapM_ (\label -> rows `shouldSatisfy` any (T.isInfixOf label))
+        ["Approval required", "model:", "Prompt"]
+
+  describe "small terminals" $ do
+    it "keeps the prompt input visible at 14 rows" $ do
+      let rows = renderStateRows (sampleState (Just 10)) (80, 14)
+      rows `shouldSatisfy` any (T.isInfixOf "Type a task prompt")
+
+    it "keeps the prompt input visible at 10 rows" $ do
+      let rows = renderStateRows (sampleState (Just 10)) (30, 10)
+      rows `shouldSatisfy` any (T.isInfixOf "Type a task prompt")
+
   describe "glyph inventory" $ do
     it "renders no unclassified double-width glyph" $ do
       let chars = nub (concatMap T.unpack

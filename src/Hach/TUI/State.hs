@@ -611,7 +611,16 @@ handleUserKey key state@TuiState{..} =
     other ->
       case tsPendingAsk of
         Just prompt -> handlePermissionKey other prompt state
-        Nothing -> handleUnaskedKey other state
+        Nothing
+          -- The help guide is modal, like the permission prompt:
+          -- only its dismiss keys act while it is open, so typing
+          -- and submitting behind it cannot happen unseen. Ctrl+Q,
+          -- Ctrl+C and Esc are handled above and still work.
+          | tsShowHelp -> case other of
+              KeyF1 -> (state { tsShowHelp = False }, [])
+              KeyChar '?' -> (state { tsShowHelp = False }, [])
+              _ -> (state, [])
+          | otherwise -> handleUnaskedKey other state
 
 handlePermissionKey :: UserKey -> PermissionPrompt -> TuiState -> (TuiState, [TuiAction])
 handlePermissionKey key prompt state = case key of

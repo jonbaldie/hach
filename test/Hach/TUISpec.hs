@@ -383,6 +383,31 @@ spec = do
         let s2 = fst $ updateTui (EvUserKey (KeyChar '?')) s1
         tsShowHelp s2 `shouldBe` False
 
+      it "dismisses help on Esc, F1, and '?' (even from input focus)" $ do
+        let helpOpen = baseState { tsShowHelp = True }
+            esc = fst $ updateTui (EvUserKey KeyEsc) helpOpen
+            f1 = fst $ updateTui (EvUserKey KeyF1) helpOpen
+            qmark = fst $ updateTui (EvUserKey (KeyChar '?')) helpOpen
+        tsShowHelp esc `shouldBe` False
+        tsShowHelp f1 `shouldBe` False
+        tsShowHelp qmark `shouldBe` False
+
+      it "ignores typing and submit while help is open" $ do
+        let helpOpen = baseState { tsShowHelp = True, tsInputBuffer = "draft" }
+            (typed, typedActions) = updateTui (EvUserKey (KeyChar 'x')) helpOpen
+            (submitted, submitActions) = updateTui (EvUserKey KeyEnter) helpOpen
+        tsInputBuffer typed `shouldBe` "draft"
+        typedActions `shouldBe` []
+        tsInputBuffer submitted `shouldBe` "draft"
+        tsStatus submitted `shouldBe` tsStatus helpOpen
+        submitActions `shouldBe` []
+
+      it "ignores focus switching while help is open" $ do
+        let helpOpen = baseState { tsShowHelp = True, tsFocus = FocusInput }
+            (s1, actions) = updateTui (EvUserKey KeyTab) helpOpen
+        tsFocus s1 `shouldBe` FocusInput
+        actions `shouldBe` []
+
     describe "Agent Event Processing" $ do
       it "updates status and turn counter on EvTurnStart" $ do
         let s1 = fst $ updateTui (EvHarness (EvTurnStart 3)) baseState
