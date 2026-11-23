@@ -34,7 +34,6 @@ module Hach.TUI.Types
     -- * Events and Actions
   , UserKey(..)
   , TuiEvent(..)
-  , ProjectInitializationResult(..)
   , SlashCommandResult(..)
   , TuiAction(..)
   , pattern ActionScrollHistory
@@ -264,13 +263,6 @@ data TuiEvent
   | EvHarness !AgentEvent
   | EvConversation ![Message]
   | EvSubmit !Text
-  deriving (Show, Eq)
-
--- | Result of attempting to create the project-level Claude instructions file.
-data ProjectInitializationResult
-  = ProjectInitialized
-  | ProjectAlreadyPresent
-  | ProjectInitializationFailed !Text
   deriving (Show, Eq)
 
 -- | Outcome of an IO-backed slash command, reported back into the transcript.

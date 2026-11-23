@@ -3,6 +3,7 @@
 module Hach.InterpreterIOSpec (spec) where
 
 import Hach.Core (AgentAlgebra (..), agentLoop, goalLoop, foldAgentProgram)
+import Hach.Memory (ProjectInitializationResult(..))
 import Hach.Env (resolveEffortLevel, resolvePermissionMode)
 import Hach.Inference (openRouterConnection)
 import Hach.Interpreter.IO

@@ -5,6 +5,7 @@
 module Hach.TUISpec (spec) where
 
 import Hach.Core (AgentAlgebra(..))
+import Hach.Memory (ProjectInitializationResult(..))
 import Hach.Inference
   ( InferenceInterface(..)
   , mkInferenceConnection

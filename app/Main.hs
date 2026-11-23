@@ -6,6 +6,7 @@ module Main (main) where
 import Hach.Core
 import Hach.CLI
 import Hach.Env
+import Hach.Memory (ProjectInitializationResult(..), initializeWorkspaceInstructionsFile)
 import Hach.Inference (InferenceConnection(..), interfaceName)
 import qualified Hach.Git as Git
 import Hach.Interpreter.IO
@@ -20,7 +21,6 @@ import Hach.Skills (expandSlashInvokedPrompt)
 import Hach.Settings (Settings (..))
 import Hach.Tools
 import Hach.TUI.App (runTui)
-import Hach.TUI.Types (ProjectInitializationResult(..))
 import Hach.Types
 import Control.Exception (finally, tryJust)
 import Control.Monad (when)
