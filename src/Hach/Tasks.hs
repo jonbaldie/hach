@@ -29,6 +29,9 @@ import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.ByteString.Char8 as BS8
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Sequence (Seq, (|>))
+import qualified Data.Sequence as Seq
+import Data.Foldable (toList)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -110,7 +113,7 @@ data BgProcess = BgProcess
     -- ^ The group the task's shell leads, captured at spawn: once the shell
     -- is reaped its handle forgets the pid, but its children remain. Cleared
     -- once the group is gone, so a reused id is never signalled.
-  , bpOutput  :: !(TVar Text)
+  , bpOutput  :: !(TVar (Seq Text))
   , bpRunning :: !(TVar Bool)
   }
 
@@ -133,7 +136,7 @@ spawnBackgroundProcess reg root cmd = do
         }
   (_, mOut, mErr, pHandle) <- createProcess procSpec
   groupVar <- newTVarIO =<< getPid pHandle
-  outVar <- newTVarIO ""
+  outVar <- newTVarIO Seq.empty
   runVar <- newTVarIO True
 
   case (mOut, mErr) of
@@ -156,7 +159,7 @@ spawnBackgroundProcess reg root cmd = do
     pure tid
   pure tId
   where
-    readStream :: Handle -> TVar Text -> IO ()
+    readStream :: Handle -> TVar (Seq Text) -> IO ()
     readStream h var = go `finally` hClose h
       where
         go = do
@@ -169,7 +172,7 @@ spawnBackgroundProcess reg root cmd = do
               case lineRes of
                 Left _ -> pure ()
                 Right line -> do
-                  atomically $ modifyTVar' var (\cur -> cur <> line <> "\n")
+                  atomically $ modifyTVar' var (|> (line <> "\n"))
                   go
 
 -- | Wait for a process to exit by polling. 'waitForProcess' is a blocking
@@ -203,7 +206,8 @@ getBackgroundOutput reg tid = do
   case mBp of
     Nothing -> pure (ToolError ("No running background task with ID " <> unTaskId tid))
     Just bp -> do
-      txt <- readTVarIO (bpOutput bp)
+      chunks <- readTVarIO (bpOutput bp)
+      let txt = T.concat (toList chunks)
       pure (ToolSuccess (if T.null txt then "(no output yet)" else txt))
 
 -- | Stop a background task and everything it started. Succeeds only once its

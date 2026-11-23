@@ -770,25 +770,92 @@ spec = do
             ToolSuccess _ -> False
           ) `finally` setPermissions todoDir originalPermissions
 
+      it "collects public TaskCreate stdout/stderr in observed order and keeps final output for Monitor" $ do
+        let command = "printf 'stdout-1\\n'; printf 'stderr-1\\n' >&2; sleep 0.2; printf 'stdout-final\\n'; printf 'stderr-final\\n' >&2"
+            call name args = ToolCall name "TaskCreate" args
+        created <- executeCodingTool (workspaceAt testSandbox)
+          (call "tc-public-streams" ("{\"name\":\"public-streams\",\"command\":" <> T.pack (show command) <> "}"))
+        taskId <- case created of
+          ToolSuccess out -> do
+            let prefix = "Created background task "
+            out `shouldSatisfy` (prefix `T.isInfixOf`)
+            pure (TaskId (T.takeWhile (/= ' ') (T.drop (T.length prefix) out)))
+          ToolError err -> expectationFailure (T.unpack err) >> pure (TaskId "")
+        before <- executeMonitor (MonitorArgs taskId)
+        before `shouldSatisfy` (\case ToolSuccess _ -> True; ToolError _ -> False)
+        let waitForOutput tid = do
+              output <- executeMonitor (MonitorArgs tid)
+              case output of
+                ToolSuccess out | "stdout-final" `T.isInfixOf` out && "stderr-final" `T.isInfixOf` out -> pure output
+                _ -> threadDelay 20000 >> waitForOutput tid
+            indexOf needle haystack = T.length (fst (T.breakOn needle haystack))
+        result <- timeout 5000000 (waitForOutput taskId)
+        result `shouldSatisfy` (/= Nothing)
+        case result of
+          Just (ToolSuccess out) -> do
+            mapM_ (\needle -> out `shouldSatisfy` T.isInfixOf needle)
+              ["stdout-1", "stderr-1", "stdout-final", "stderr-final"]
+            indexOf "stdout-1" out `shouldSatisfy` (< indexOf "stdout-final" out)
+            indexOf "stderr-1" out `shouldSatisfy` (< indexOf "stderr-final" out)
+          Just (ToolError err) -> expectationFailure (T.unpack err)
+          Nothing -> expectationFailure "Timed out waiting for final background output"
+      it "cancels a large-output public TaskCreate without truncating collected output" $ do
+        let marker = testSandbox </> "large-output-emitted"
+            command = "python3 -c 'import sys,time; [sys.stdout.write(\"x\"*100+\"\\n\") for _ in range(1000)]; sys.stdout.flush(); open(\"large-output-emitted\",\"w\").write(\"ok\"); time.sleep(30)'"
+            args = "{\"name\":\"large-output\",\"command\":" <> T.pack (show command) <> "}"
+            waitForMarker = do
+              exists <- doesFileExist marker
+              if exists then pure True else threadDelay 20000 >> waitForMarker
+            cleanupMarker = do
+              exists <- doesFileExist marker
+              if exists then removeFile marker else pure ()
+        cleanupMarker
+        doesFileExist marker `shouldReturn` False
+        let run = do
+              created <- executeCodingTool (workspaceAt testSandbox) (ToolCall "tc-large" "TaskCreate" args)
+              taskIdText <- case created of
+                ToolSuccess out -> do
+                  out `shouldSatisfy` T.isInfixOf "Created background task"
+                  pure (T.takeWhile (/= ' ') (T.drop (T.length "Created background task ") out))
+                ToolError err -> expectationFailure (T.unpack err) >> pure ""
+              let taskId = TaskId taskIdText
+              emitted <- timeout 10000000 waitForMarker
+              emitted `shouldBe` Just True
+              stopped <- timeout 10000000 (executeTaskStop (TaskStopArgs taskId))
+              case stopped of
+                Just (ToolSuccess out) -> out `shouldBe` ("Stopped task " <> taskIdText)
+                Just (ToolError err) -> expectationFailure (T.unpack err)
+                Nothing -> expectationFailure "Timed out stopping large-output task"
+              output <- executeMonitor (MonitorArgs taskId)
+              case output of
+                ToolSuccess out -> do
+                  let completeLines = filter (== T.replicate 100 "x") (T.lines out)
+                  length completeLines `shouldBe` 1000
+                  out `shouldNotSatisfy` T.isInfixOf "[Output truncated"
+                ToolError err -> expectationFailure (T.unpack err)
+        run `finally` cleanupMarker
+
       it "manages background tasks with consistent IDs and error handling (BUG-6)" $ do
         r1 <- executeCodingTool (workspaceAt ".") (ToolCall "t1" "TaskCreate" "{\"name\":\"compile-bg\",\"command\":\"sleep 0.1\"}")
-        case r1 of
-          ToolSuccess out -> out `shouldSatisfy` ("Created background task bg-" `T.isInfixOf`)
-          ToolError err   -> expectationFailure ("TaskCreate failed: " ++ T.unpack err)
+        taskId <- case r1 of
+          ToolSuccess out -> do
+            out `shouldSatisfy` ("Created background task bg-" `T.isInfixOf`)
+            pure (T.takeWhile (/= ' ') (T.drop (T.length "Created background task ") out))
+          ToolError err -> expectationFailure ("TaskCreate failed: " ++ T.unpack err) >> pure ""
 
         rList <- executeCodingTool (workspaceAt ".") (ToolCall "tl" "TaskList" "{}")
         case rList of
           ToolSuccess out -> out `shouldSatisfy` ("compile-bg" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("TaskList failed: " ++ T.unpack err)
 
-        rGet <- executeCodingTool (workspaceAt ".") (ToolCall "tg" "TaskGet" "{\"task_id\":\"bg-1\"}")
+        rGet <- executeCodingTool (workspaceAt ".") (ToolCall "tg" "TaskGet" ("{\"task_id\":\"" <> taskId <> "\"}"))
         case rGet of
           ToolSuccess out -> out `shouldSatisfy` ("compile-bg" `T.isInfixOf`)
           ToolError err   -> expectationFailure ("TaskGet failed: " ++ T.unpack err)
 
-        rUpdate <- executeCodingTool (workspaceAt ".") (ToolCall "tu" "TaskUpdate" "{\"task_id\":\"bg-1\",\"status\":\"completed\"}")
+        rUpdate <- executeCodingTool (workspaceAt ".") (ToolCall "tu" "TaskUpdate" ("{\"task_id\":\"" <> taskId <> "\",\"status\":\"completed\"}"))
         case rUpdate of
-          ToolSuccess out -> out `shouldSatisfy` ("Updated task bg-1 status to completed" `T.isInfixOf`)
+          ToolSuccess out -> out `shouldSatisfy` (("Updated task " <> taskId <> " status to completed") `T.isInfixOf`)
           ToolError err   -> expectationFailure ("TaskUpdate failed: " ++ T.unpack err)
 
         rUpdateMissing <- executeCodingTool (workspaceAt ".") (ToolCall "tu2" "TaskUpdate" "{\"task_id\":\"nonexistent-id\",\"status\":\"completed\"}")
@@ -796,7 +863,7 @@ spec = do
           ToolError err   -> err `shouldSatisfy` ("Task not found: nonexistent-id" `T.isInfixOf`)
           ToolSuccess out -> expectationFailure ("Expected error on nonexistent task update, got: " ++ T.unpack out)
 
-        rStop <- executeCodingTool (workspaceAt ".") (ToolCall "ts" "TaskStop" "{\"task_id\":\"bg-1\"}")
+        rStop <- executeCodingTool (workspaceAt ".") (ToolCall "ts" "TaskStop" ("{\"task_id\":\"" <> taskId <> "\"}"))
         case rStop of
-          ToolSuccess out -> out `shouldSatisfy` ("Stopped task bg-1" `T.isInfixOf`)
+          ToolSuccess out -> out `shouldSatisfy` (("Stopped task " <> taskId) `T.isInfixOf`)
           ToolError err   -> expectationFailure ("TaskStop failed: " ++ T.unpack err)
