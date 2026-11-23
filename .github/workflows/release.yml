@@ -204,5 +204,6 @@ jobs:
               git push origin main
             fi
           else
-            echo "HOMEBREW_TAP_TOKEN not set; skipping automated tap push. Formula printed above."
+            echo "::error::HOMEBREW_TAP_TOKEN is not set. Configure the repository secret to publish to jonbaldie/homebrew-tap; the formula is printed above for manual publication."
+            exit 1
           fi
