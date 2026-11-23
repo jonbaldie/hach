@@ -34,6 +34,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+        run: |
+          if [ "$RELEASE_REF_TYPE" != tag ]; then
+            echo "::error::Release must run from a tag" >&2
+            exit 1
+          fi
+          python3 scripts/check-release-version.py "$RELEASE_TAG"
+
       - name: Set up Haskell
         uses: haskell-actions/setup@v2
         with:

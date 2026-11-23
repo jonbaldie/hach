@@ -41,6 +41,7 @@ module Hach.Inference
   ) where
 
 import Hach.Types
+import Hach.Version (userAgent)
 import Control.Applicative ((<|>))
 import Control.Exception
   ( SomeAsyncException, SomeException, displayException, fromException
@@ -337,7 +338,7 @@ fetchOpenRouterModels mgr conn = do
       req0 <- parseRequest (T.unpack endpoint)
       let req = req0
             { requestHeaders =
-                [ ("User-Agent", "hach/0.1.17.0")
+                [ ("User-Agent", userAgent)
                 , ("Accept", "application/json")
                 ] ++ maybe [] (\k -> [("Authorization", "Bearer " <> TE.encodeUtf8 k)]) (icApiKey conn)
             , responseTimeout = responseTimeoutMicro 3000000
