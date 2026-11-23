@@ -26,6 +26,7 @@ import Brick.Widgets.Border.Style
 import Brick.Widgets.Center
 import Control.Exception (handle)
 import Data.Char (ord)
+import qualified Data.List as L
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Graphics.Vty as Vty
@@ -309,7 +310,7 @@ renderTranscriptItems TuiState{..} =
               card = renderToolCard selected tc
               reveal = selected && not tsTranscriptManualScroll
           in (toolIdx + 1, (if reveal then visible card else card) : acc)
-      (_, revWidgets) = foldl' step (0, []) tsTranscript
+      (_, revWidgets) = L.foldl' step (0, []) tsTranscript
       thinkingWidget = [renderThinkingLine | tsStatus == StatusThinking]
   in reverse revWidgets ++ thinkingWidget
 
