@@ -535,6 +535,27 @@ spec = do
           executeCodingTool ws (ToolCall "grep" tool "{\"query\":\"needle\"}") `shouldReturn`
             ToolSuccess (T.unlines [T.pack entry <> ":1: needle" | entry <- take 100 entries])
 
+      it "preserves binary, case-insensitive, no-match and direct-file search behavior" $ do
+        let root = testSandbox </> "search-streaming"
+            ws = workspaceAt root
+        createDirectoryIfMissing True root
+        writeFile (root </> "binary.txt") ("needle\NUL" ++ replicate 2000 'x')
+        writeFile (root </> "text.txt") (unlines (replicate 105 "Needle"))
+        executeCodingTool ws (ToolCall "grep" "grep_search" "{\"query\":\"absent\"}") `shouldReturn`
+          ToolSuccess "No matches found."
+        executeCodingTool ws (ToolCall "grep" "grep_search" "{\"query\":\"needle\",\"case_sensitive\":false}") `shouldReturn`
+          ToolSuccess (T.unlines [T.pack ("text.txt:" ++ show n ++ ": Needle") | n <- [1 :: Int .. 100]])
+        executeCodingTool ws (ToolCall "grep" "grep_search" "{\"query\":\"needle\",\"path\":\"text.txt\",\"case_sensitive\":false}") `shouldReturn`
+          ToolSuccess (T.unlines [T.pack ("text.txt:" ++ show n ++ ": Needle") | n <- [1 :: Int .. 105]])
+
+      it "preserves a large unmatched line and the final unterminated match" $ do
+        let root = testSandbox </> "search-long-line"
+            ws = workspaceAt root
+        createDirectoryIfMissing True root
+        writeFile (root </> "long.txt") (replicate 200000 'x' ++ "\nneedle")
+        executeCodingTool ws (ToolCall "grep" "grep_search" "{\"query\":\"needle\"}") `shouldReturn`
+          ToolSuccess "long.txt:2: needle\n"
+
       it "preserves missing-path diagnostics and direct-file grep behavior" $ do
         let ws = workspaceAt testSandbox
         forM_ ["find_files", "Glob"] $ \tool ->

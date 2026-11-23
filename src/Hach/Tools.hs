@@ -167,13 +167,13 @@ import Control.Applicative ((<|>))
 import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, writeTVar)
 import Control.Concurrent.Async (wait, withAsync)
 import Control.Exception (IOException, SomeAsyncException(..), SomeException, fromException, onException, try, tryJust)
-import Control.Monad (forM)
 import Data.Aeson
   ( FromJSON(..), (.:), (.:?), (.!=), object, (.=)
   )
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonTypes
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Map.Strict as Map
 import Data.List (find)
@@ -198,7 +198,7 @@ import System.FilePath
   , takeDirectory
   , takeFileName
   )
-import System.IO (hClose)
+import System.IO (IOMode(ReadMode), SeekMode(AbsoluteSeek), hClose, hIsEOF, hSeek, withBinaryFile)
 import System.IO.Error (isDoesNotExistError)
 import System.Posix.Signals (sigKILL)
 import System.Process (CreateProcess(..), StdStream(CreatePipe), cleanupProcess, createProcess, getPid, shell, waitForProcess)
@@ -1333,43 +1333,50 @@ executeFindFiles ws (FindFilesArgs pat searchPath) = do
       if not dirExists
         then pure $ ToolError ("Directory not found: " <> T.pack searchPath)
         else do
-          files <- workspaceFiles ws startDir
-          let matches = filter (matchPattern pat) (map fst files)
-              limited = take 100 matches
+          matches <- workspaceFiles ws startDir collect (lengthAtLeast 100) []
+          let limited = reverse matches
               resText = if null limited
                 then "No matching files found."
                 else T.unlines (map T.pack limited)
           pure $ ToolSuccess resText
+  where
+    collect matches (rel, _)
+      | matchPattern pat rel = pure (rel : matches)
+      | otherwise = pure matches
 
--- | Enumerate descendants of a resolved workspace directory, in filesystem
--- order, as (workspace-relative display name, full path) pairs. Callers resolve
--- and validate the starting path so their tool-specific diagnostics stay intact.
--- Ignored names and symlinks are skipped; directory enumeration errors yield
--- no files, as they did in both search tools before this shared traversal.
-workspaceFiles :: Workspace -> FilePath -> IO [(FilePath, FilePath)]
-workspaceFiles ws = walk
+-- Walk in filesystem order, stopping as soon as the consumer has enough.
+-- Ignored names, symlinks and unreadable directories retain their old behavior.
+workspaceFiles :: Workspace -> FilePath -> (a -> (FilePath, FilePath) -> IO a) -> (a -> Bool) -> a -> IO a
+workspaceFiles ws start consume done initial = walk start initial
   where
     ignoredDirs = [".git", "dist-newstyle", ".env", ".cabal-sandbox", "node_modules"]
 
-    walk current = do
+    walk current acc = do
       entriesRes <- try (listDirectory current) :: IO (Either SomeException [FilePath])
       case entriesRes of
-        Left _ -> pure []
-        Right entries -> do
-          let validEntries = filter (`notElem` ignoredDirs) entries
-          subResults <- forM validEntries $ \entry -> do
-            let full = current </> entry
-            isSymlink <- pathIsSymbolicLink full
-            if isSymlink
-              then pure []
-              else do
-                isDir <- doesDirectoryExist full
-                if isDir
-                  then walk full
-                  else do
-                    rel <- relativeToWorkspace ws full
-                    pure [(rel, full)]
-          pure (concat subResults)
+        Left _ -> pure acc
+        Right entries -> visit current entries acc
+
+    visit _ [] acc = pure acc
+    visit _ _ acc | done acc = pure acc
+    visit current (entry : entries) acc
+      | entry `elem` ignoredDirs = visit current entries acc
+      | otherwise = do
+          let full = current </> entry
+          isSymlink <- pathIsSymbolicLink full
+          next <- if isSymlink
+            then pure acc
+            else do
+              isDir <- doesDirectoryExist full
+              if isDir
+                then walk full acc
+                else do
+                  rel <- relativeToWorkspace ws full
+                  consume acc (rel, full)
+          visit current entries next
+
+lengthAtLeast :: Int -> [a] -> Bool
+lengthAtLeast n = (>= n) . length
 
 -- | Pattern matcher for find_files: '*' wildcards match across path separators
 -- in linear time via 'matchStarGlob', while non-wildcard patterns match as
@@ -1397,14 +1404,44 @@ executeGrepSearch ws (GrepSearchArgs query searchPath caseSensitive) = do
           pure $ ToolSuccess (if null matches then "No matches found." else T.unlines matches)
         else if isDir
           then do
-            files <- workspaceFiles ws startPath
-            matches <- forM files $ \(rel, full) -> grepInFile rel full
-            let allMatches = concat matches
-                limited = take 100 allMatches
+            matches <- workspaceFiles ws startPath collect (lengthAtLeast 100) []
+            let limited = reverse matches
             pure $ ToolSuccess (if null limited then "No matches found." else T.unlines limited)
           else
             pure $ ToolError ("Path does not exist: " <> T.pack searchPath)
   where
+    collect matches (rel, full) = do
+      found <- grepInFileLimited (100 - length matches) rel full
+      pure (reverse found ++ matches)
+
+    -- Check the same binary prefix as the direct-file path before reading
+    -- lines. The handle is bracketed even when the limit ends a search early.
+    grepInFileLimited limit rel full = do
+      result <- try (withBinaryFile full ReadMode $ \handle -> do
+        prefix <- BS.hGet handle 1024
+        if BS.any (== 0) prefix
+          then pure []
+          else do
+            hSeek handle AbsoluteSeek 0
+            let loop lineNum remaining acc
+                  | remaining == 0 = pure (reverse acc)
+                  | otherwise = do
+                      eof <- hIsEOF handle
+                      if eof
+                        then pure (reverse acc)
+                        else do
+                          bytes <- BSC.hGetLine handle
+                          let line = TE.decodeUtf8With (\_ _ -> Just ' ') bytes
+                              matches = if caseSensitive
+                                then query `T.isInfixOf` line
+                                else T.toLower query `T.isInfixOf` T.toLower line
+                              formatted = T.pack rel <> ":" <> T.pack (show lineNum) <> ": " <> line
+                          if matches
+                            then loop (lineNum + 1) (remaining - 1) (formatted : acc)
+                            else loop (lineNum + 1) remaining acc
+            loop (1 :: Int) limit []) :: IO (Either SomeException [Text])
+      pure (either (const []) id result)
+
     grepInFile rel full = do
       res <- try (BS.readFile full) :: IO (Either SomeException BS.ByteString)
       case res of
