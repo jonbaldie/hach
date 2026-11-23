@@ -125,6 +125,14 @@ spec = describe "Hach.Memory" $ do
         result `shouldBe` ProjectInitializationFailed
           ("Could not create " <> T.pack (testDir </> "CLAUDE.md") <> ": path is a directory.")
 
+      it "reports an invalid workspace path" $ do
+        let blockedWorkspace = testDir </> "not-a-directory"
+        writeFile blockedWorkspace "blocked"
+        result <- initializeWorkspaceInstructionsFile blockedWorkspace
+        case result of
+          ProjectInitializationFailed err -> shouldBe (T.isInfixOf "CLAUDE.md" err) True
+          _ -> expectationFailure "expected an initialization failure"
+
       it "discovers AGENTS.md before AGENT.md and CLAUDE.md" $ do
         TIO.writeFile (testDir </> "AGENTS.md") "agents"
         TIO.writeFile (testDir </> "AGENT.md") "agent"
