@@ -33,7 +33,8 @@ module Hach.TUI.App
 import Hach.Clipboard (copyToClipboard)
 import Hach.Core
 import Hach.CLI (renderRunOutcome)
-import Hach.Env (buildSystemPromptWithAppend, loadProjectInstructions, loadProjectInstructionsFile)
+import Hach.Env (buildSystemPromptWithAppend)
+import Hach.Memory (loadProjectInstructions, loadProjectInstructionsFile)
 import Hach.Git (getGitDiff)
 import Hach.Inference (connectionCostPolicy, fetchOpenRouterModels)
 import Hach.Interpreter.IO

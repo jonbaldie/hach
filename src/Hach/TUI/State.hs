@@ -13,6 +13,7 @@ module Hach.TUI.State
   ) where
 
 import Hach.Inference (CostPolicy(..))
+import Hach.Memory (ProjectInitializationResult(..))
 import Hach.Skills (inputSlashCompletion, parseSkillInvocations, skillName)
 import Hach.TUI.Conversation (compactTranscriptHistory)
 import Hach.TUI.Types

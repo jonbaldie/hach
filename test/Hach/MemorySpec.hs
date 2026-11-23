@@ -93,6 +93,57 @@ spec = describe "Hach.Memory" $ do
         T.unpack mem `shouldContain` "Global claude memory"
         T.unpack mem `shouldNotContain` "Global agent memory"
 
+  describe "Guidelines domain" $ do
+    around_ (\action -> do
+      createDirectoryIfMissing True testDir
+      action
+      removeDirectoryRecursive testDir) $ do
+      it "initializes the exact CLAUDE.md template without an IOEnv" $ do
+        result <- initializeWorkspaceInstructionsFile testDir
+        result `shouldBe` ProjectInitialized
+        content <- TIO.readFile (testDir </> "CLAUDE.md")
+        content `shouldBe` T.unlines
+          [ "# Project Guidelines"
+          , ""
+          , "Add project-specific instructions for the coding agent here."
+          , ""
+          , "## Development"
+          , ""
+          , "- Describe how to build and test the project."
+          , "- Note conventions or constraints the agent should follow."
+          ]
+
+      it "does not overwrite an existing CLAUDE.md" $ do
+        let existing = "keep this file\n"
+        TIO.writeFile (testDir </> "CLAUDE.md") existing
+        initializeWorkspaceInstructionsFile testDir `shouldReturn` ProjectAlreadyPresent
+        TIO.readFile (testDir </> "CLAUDE.md") `shouldReturn` existing
+
+      it "reports an invalid target when CLAUDE.md is a directory" $ do
+        createDirectoryIfMissing True (testDir </> "CLAUDE.md")
+        result <- initializeWorkspaceInstructionsFile testDir
+        result `shouldBe` ProjectInitializationFailed
+          ("Could not create " <> T.pack (testDir </> "CLAUDE.md") <> ": path is a directory.")
+
+      it "reports an invalid workspace path" $ do
+        let blockedWorkspace = testDir </> "not-a-directory"
+        writeFile blockedWorkspace "blocked"
+        result <- initializeWorkspaceInstructionsFile blockedWorkspace
+        case result of
+          ProjectInitializationFailed err -> shouldBe (T.isInfixOf "CLAUDE.md" err) True
+          _ -> expectationFailure "expected an initialization failure"
+
+      it "discovers AGENTS.md before AGENT.md and CLAUDE.md" $ do
+        TIO.writeFile (testDir </> "AGENTS.md") "agents"
+        TIO.writeFile (testDir </> "AGENT.md") "agent"
+        TIO.writeFile (testDir </> "CLAUDE.md") "claude"
+        loadProjectInstructionsFile testDir `shouldReturn` Just ("AGENTS.md", "agents")
+
+      it "discovers AGENT.md before CLAUDE.md when AGENTS.md is absent" $ do
+        TIO.writeFile (testDir </> "AGENT.md") "agent"
+        TIO.writeFile (testDir </> "CLAUDE.md") "claude"
+        loadProjectInstructionsFile testDir `shouldReturn` Just ("AGENT.md", "agent")
+
   describe "Rule matching" $ do
     it "matches rules by glob against active file paths" $ do
       let ruleContent = "---\npaths: src/**/*.hs, test/**/*.hs\n---\nUse GHC 2021\n"
