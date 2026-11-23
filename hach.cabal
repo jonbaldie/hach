@@ -54,6 +54,9 @@ library
         Hach.Clipboard
     other-modules:
         Hach.TUI.Conversation
+        Hach.Version
+        Paths_hach
+    autogen-modules:  Paths_hach
     build-depends:
         base >= 4.18 && < 5,
         text,

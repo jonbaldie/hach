@@ -25,6 +25,9 @@ jobs:
       - name: Release Homebrew publication regression
         run: python3 scripts/test-release-homebrew.py
 
+      - name: Release tag validation regression
+        run: python3 scripts/test-release-version.py
+
       - name: Set up Haskell
         uses: haskell-actions/setup@v2
         with:
@@ -48,6 +51,9 @@ jobs:
 
       - name: Run Tests
         run: cabal test hach:test:hach-test --test-show-details=always
+
+      - name: Public CLI User-Agent regression
+        run: python3 scripts/repro-305.py "$(cabal list-bin exe:hach)"
 
       - name: Public CLI permission-outcome regression
         run: python3 scripts/repro-288.py "$(cabal list-bin exe:hach)"
