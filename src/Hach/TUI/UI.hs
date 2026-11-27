@@ -26,7 +26,6 @@ import Brick.Widgets.Border.Style
 import Brick.Widgets.Center
 import Control.Exception (handle)
 import Data.Char (ord)
-import qualified Data.List as L
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Graphics.Vty as Vty
@@ -37,6 +36,7 @@ import Graphics.Vty.UnicodeWidthTable.Types (UnicodeWidthTable(..), WidthTableRa
 
 data Name
   = VpTranscript
+  | VpTranscriptCache
   | VpInput
   | VpApproval !Int
   deriving (Show, Eq, Ord)
@@ -284,35 +284,54 @@ renderTranscriptPanel state@TuiState{..} =
       headerText = if isFocused
                      then " [ 💬 Transcript (Active) ] "
                      else " 💬 Transcript "
-      items = if null tsTranscript && tsStatus /= StatusThinking
+      items = if transcriptNull tsTranscript && tsStatus /= StatusThinking
                 then [padAll 1 (withAttr dimAttr (txtWrap "No dialogue yet. Type a prompt below and press Enter to start."))]
                 else renderTranscriptItems state
   in borderMod $
      withBorderStyle borderGlyph $
      borderWithLabel (txt headerText) $
-     viewport VpTranscript Vertical (vBox items)
+     viewport VpTranscript Vertical (cached VpTranscriptCache (vBox items))
 
--- | Render all items in the transcript in chronological emission order.
+-- | Maximum number of transcript items rendered in the active window when
+-- auto-following or tracking a selected tool card.
+transcriptRenderWindow :: Int
+transcriptRenderWindow = 100
+
+-- | Render the visible window of transcript items in chronological order.
 renderTranscriptItems :: TuiState -> [Widget Name]
 renderTranscriptItems TuiState{..} =
   let isFocused = tsFocus == FocusTranscript
-      step (toolIdx, acc) item = case item of
-        TiUser u ->
-          (toolIdx, renderUser u : acc)
-        TiAssistant a ->
-          (toolIdx, renderAssistant a : acc)
-        TiSystem s ->
-          (toolIdx, renderSystem s : acc)
-        TiNotice n ->
-          (toolIdx, renderNotice n : acc)
+      totalItems = transcriptLength tsTranscript
+      mSelectedItemIdx =
+        if isFocused
+          then transcriptToolItemIndex tsSelectedToolIndex tsTranscript
+          else Nothing
+      visibleSlice
+        | tsTranscriptManualScroll =
+            transcriptSlice 0 totalItems tsTranscript
+        | otherwise =
+            let win = transcriptRenderWindow
+                (startIdx, endIdx) = case mSelectedItemIdx of
+                  Just selIdx ->
+                    let half = win `div` 2
+                        s = max 0 (min (max 0 (totalItems - win)) (selIdx - half))
+                    in (s, min totalItems (s + win))
+                  Nothing ->
+                    (max 0 (totalItems - win), totalItems)
+            in transcriptSlice startIdx endIdx tsTranscript
+      renderIndexed (itemIdx, item) = case item of
+        TiUser u      -> renderUser u
+        TiAssistant a -> renderAssistant a
+        TiSystem s    -> renderSystem s
+        TiNotice n    -> renderNotice n
         TiToolCard tc ->
-          let selected = isFocused && tsSelectedToolIndex == toolIdx
+          let selected = mSelectedItemIdx == Just itemIdx
               card = renderToolCard selected tc
               reveal = selected && not tsTranscriptManualScroll
-          in (toolIdx + 1, (if reveal then visible card else card) : acc)
-      (_, revWidgets) = L.foldl' step (0, []) tsTranscript
+          in if reveal then visible card else card
+      widgets = map renderIndexed visibleSlice
       thinkingWidget = [renderThinkingLine | tsStatus == StatusThinking]
-  in reverse revWidgets ++ thinkingWidget
+  in widgets ++ thinkingWidget
 
 -- | Ephemeral thinking indicator drawn under the last transcript item
 -- while the Harness is waiting on the model.

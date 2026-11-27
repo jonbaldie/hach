@@ -296,7 +296,7 @@ runTui ioEnv0 initialPrompt mMaxTurns mMaxBudgetUsd mAppendPrompt mTheme activeS
       baseState = (initialTuiState (ioModel ioEnv) mMaxTurns)
         { tsSkills = skills
         , tsPermissionMode = initialMode
-        , tsTranscript = loadedTranscript
+        , tsTranscript = transcriptFromList loadedTranscript
         , tsConversation = loadedConversation
         , tsCurrentTurn = loadedTurns
         , tsTheme = mTheme
@@ -539,11 +539,16 @@ handleBrickEvent
 handleBrickEvent eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd = \case
   AppEvent tuiEvent -> do
     currentState <- get
-    modify (fst . updateTui tuiEvent)
+    let (nextState, _) = updateTui tuiEvent currentState
+    put nextState
+    invalidateIfTranscriptChanged currentState nextState
     case tuiEvent of
       EvHarness agentEv | shouldAutoScroll currentState agentEv ->
         vScrollToEnd (viewportScroll VpTranscript)
       _ -> pure ()
+
+  VtyEvent (Vty.EvResize _ _) ->
+    invalidateCacheEntry VpTranscriptCache
 
   event -> do
     case brickToUserKey event of
@@ -551,6 +556,18 @@ handleBrickEvent eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd = \case
         currentState <- get
         let (nextState, actions) = updateTui (EvUserKey key) currentState
         put nextState
+        invalidateIfTranscriptChanged currentState nextState
         forM_ actions (runTuiAction eventChan workerVar gate ioEnv sysPrompt mMaxBudgetUsd)
+        afterActions <- get
+        invalidateIfTranscriptChanged nextState afterActions
       Nothing ->
         pure ()
+  where
+    invalidateIfTranscriptChanged prev next =
+      let changed =
+               trVersion (tsTranscript next) /= trVersion (tsTranscript prev)
+            || tsFocus next /= tsFocus prev
+            || tsSelectedToolIndex next /= tsSelectedToolIndex prev
+            || tsTranscriptManualScroll next /= tsTranscriptManualScroll prev
+            || tsStatus next /= tsStatus prev
+      in if changed then invalidateCacheEntry VpTranscriptCache else pure ()

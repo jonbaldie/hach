@@ -14,6 +14,24 @@ module Hach.TUI.Types
   , ToolCard(..)
   , PermissionPrompt(..)
   , TranscriptItem(..)
+  , Transcript(..)
+  , emptyTranscript
+  , transcriptNull
+  , transcriptLength
+  , transcriptToolCount
+  , transcriptToolItemIndex
+  , transcriptItems
+  , transcriptFromList
+  , transcriptLast
+  , transcriptLastAssistant
+  , appendTranscript
+  , transcriptSlice
+  , transcriptRetainLast
+  , transcriptToggleTool
+  , transcriptUpdateFirstPending
+  , transcriptUpdateFirstRunning
+  , transcriptDenyFirstMatching
+  , transcriptCancelUnresolved
   , pattern DiUser
   , pattern DiAssistant
   , pattern DiSystem
@@ -45,9 +63,13 @@ module Hach.TUI.Types
 import Hach.Inference (CostPolicy(..))
 import Hach.Skills (SkillCatalog)
 import Hach.Types (AgentEvent, GoalState, Message, PermissionMode (..), SessionTokenUsage, TokenUsage, ToolResult, initialSessionTokenUsage, modelContextLimit)
+import Data.Foldable (toList)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Sequence (Seq, ViewL(..), ViewR(..), (|>))
+import qualified Data.Sequence as Seq
 import Data.Text (Text)
+import qualified Data.Text as T
 
 -- | Status of token usage reporting for the latest turn.
 data UsageStatus
@@ -142,6 +164,222 @@ pattern DiToolCard tc = TiToolCard tc
 
 {-# COMPLETE DiUser, DiAssistant, DiSystem, DiNotice, DiToolCard #-}
 
+-- | Append-efficient, indexed transcript storing chronological items along
+-- with tool-card positions and active unresolved tool queues so appends are
+-- O(1) amortized and lifecycle updates are O(log N) without scanning history.
+data Transcript = Transcript
+  { trItems         :: !(Seq TranscriptItem)
+  , trToolPositions :: !(Seq Int)
+  , trPendingTools  :: !(Seq (Int, Int))
+  , trRunningTools  :: !(Seq (Int, Int))
+  , trVersion       :: !Int
+  } deriving (Show)
+
+instance Eq Transcript where
+  a == b = trItems a == trItems b
+
+-- | An empty transcript.
+emptyTranscript :: Transcript
+emptyTranscript = Transcript Seq.empty Seq.empty Seq.empty Seq.empty 0
+
+-- | O(1) check whether the transcript has no items.
+transcriptNull :: Transcript -> Bool
+transcriptNull = Seq.null . trItems
+
+-- | O(1) total number of items in the transcript.
+transcriptLength :: Transcript -> Int
+transcriptLength = Seq.length . trItems
+
+-- | O(1) total number of tool cards in the transcript.
+transcriptToolCount :: Transcript -> Int
+transcriptToolCount = Seq.length . trToolPositions
+
+-- | O(log N) lookup of the transcript-item index for the k-th tool card.
+transcriptToolItemIndex :: Int -> Transcript -> Maybe Int
+transcriptToolItemIndex cardIdx Transcript{..}
+  | cardIdx >= 0 && cardIdx < Seq.length trToolPositions =
+      Just (Seq.index trToolPositions cardIdx)
+  | otherwise = Nothing
+
+-- | Materialize the transcript items as a chronological list.
+transcriptItems :: Transcript -> [TranscriptItem]
+transcriptItems = toList . trItems
+
+-- | Build an indexed transcript from a chronological list of items.
+transcriptFromList :: [TranscriptItem] -> Transcript
+transcriptFromList items = appendTranscript items emptyTranscript
+
+-- | O(1) access to the last item in the transcript, if non-empty.
+transcriptLast :: Transcript -> Maybe TranscriptItem
+transcriptLast Transcript{..} = case Seq.viewr trItems of
+  _ :> x -> Just x
+  EmptyR -> Nothing
+
+-- | Walk backward from the end of the transcript to find the latest non-blank
+-- assistant response without reversing the entire transcript.
+transcriptLastAssistant :: Transcript -> Maybe Text
+transcriptLastAssistant Transcript{..} = go (Seq.viewr trItems)
+  where
+    go EmptyR = Nothing
+    go (rest :> item) = case item of
+      TiAssistant t | not (T.null (T.strip t)) -> Just t
+      _                                        -> go (Seq.viewr rest)
+
+-- | Append chronological items in O(k) time, indexing any tool cards.
+appendTranscript :: [TranscriptItem] -> Transcript -> Transcript
+appendTranscript [] tr = tr
+appendTranscript items tr0 =
+  let step tr item =
+        let itemIdx = Seq.length (trItems tr)
+            items'  = trItems tr |> item
+        in case item of
+          TiToolCard tc ->
+            let cardIdx = Seq.length (trToolPositions tr)
+                pos'    = trToolPositions tr |> itemIdx
+                (pend', run') = case tcLifecycle tc of
+                  Pending -> (trPendingTools tr |> (itemIdx, cardIdx), trRunningTools tr)
+                  Running -> (trPendingTools tr, trRunningTools tr |> (itemIdx, cardIdx))
+                  _       -> (trPendingTools tr, trRunningTools tr)
+            in tr
+                 { trItems         = items'
+                 , trToolPositions = pos'
+                 , trPendingTools  = pend'
+                 , trRunningTools  = run'
+                 }
+          _ -> tr { trItems = items' }
+      updated = foldl' step tr0 items
+  in updated { trVersion = trVersion tr0 + 1 }
+
+-- | O(log N + (end - start)) slice of @(itemIndex, item)@ for @[start .. end)@.
+transcriptSlice :: Int -> Int -> Transcript -> [(Int, TranscriptItem)]
+transcriptSlice start end Transcript{..}
+  | start >= end || start >= Seq.length trItems = []
+  | otherwise =
+      let s = max 0 start
+          e = min (Seq.length trItems) end
+          slice = Seq.take (e - s) (Seq.drop s trItems)
+      in zip [s ..] (toList slice)
+
+-- | Retain only the last @k@ items, rebuilding the tool-card indices over them.
+transcriptRetainLast :: Int -> Transcript -> Transcript
+transcriptRetainLast k tr@Transcript{..}
+  | k <= 0 = emptyTranscript { trVersion = trVersion + 1 }
+  | Seq.length trItems <= k = tr
+  | otherwise =
+      let kept = Seq.drop (Seq.length trItems - k) trItems
+      in (transcriptFromList (toList kept)) { trVersion = trVersion + 1 }
+
+-- | Update a tool card at a known transcript-item index in O(log N).
+adjustToolCardAt :: Int -> (ToolCard -> ToolCard) -> Seq TranscriptItem -> Seq TranscriptItem
+adjustToolCardAt itemIdx f = Seq.adjust' update itemIdx
+  where
+    update (TiToolCard tc) = TiToolCard (f tc)
+    update other           = other
+
+-- | O(log N) toggle of the @tcExpanded@ flag for the k-th tool card.
+transcriptToggleTool :: Int -> Transcript -> Transcript
+transcriptToggleTool cardIdx tr@Transcript{..} =
+  case transcriptToolItemIndex cardIdx tr of
+    Nothing -> tr
+    Just itemIdx ->
+      tr { trItems   = adjustToolCardAt itemIdx (\tc -> tc { tcExpanded = not (tcExpanded tc) }) trItems
+         , trVersion = trVersion + 1
+         }
+
+-- | O(log N) transition of the first 'Pending' tool card to 'Running'.
+transcriptUpdateFirstPending :: Text -> Text -> Transcript -> (Transcript, Maybe Int)
+transcriptUpdateFirstPending name args tr = go (trPendingTools tr)
+  where
+    go q = case Seq.viewl q of
+      EmptyL -> (tr { trPendingTools = Seq.empty }, Nothing)
+      (itemIdx, cardIdx) :< rest ->
+        case Seq.lookup itemIdx (trItems tr) of
+          Just (TiToolCard tc) | tcLifecycle tc == Pending ->
+            let items' = adjustToolCardAt itemIdx
+                  (\c -> c { tcName = name, tcArgs = args, tcLifecycle = Running })
+                  (trItems tr)
+                tr' = tr
+                  { trItems        = items'
+                  , trPendingTools = rest
+                  , trRunningTools = trRunningTools tr |> (itemIdx, cardIdx)
+                  , trVersion      = trVersion tr + 1
+                  }
+            in (tr', Just cardIdx)
+          _ -> go rest
+
+-- | O(log N) transition of the first 'Running' tool card to 'Finished'.
+transcriptUpdateFirstRunning :: ToolResult -> Transcript -> Transcript
+transcriptUpdateFirstRunning res tr = go (trRunningTools tr)
+  where
+    go q = case Seq.viewl q of
+      EmptyL -> tr { trRunningTools = Seq.empty }
+      (itemIdx, _) :< rest ->
+        case Seq.lookup itemIdx (trItems tr) of
+          Just (TiToolCard tc) | tcLifecycle tc == Running ->
+            let items' = adjustToolCardAt itemIdx
+                  (\c -> c { tcLifecycle = Finished res })
+                  (trItems tr)
+            in tr
+                 { trItems        = items'
+                 , trRunningTools = rest
+                 , trVersion      = trVersion tr + 1
+                 }
+          _ -> go rest
+
+-- | Transition the earliest unresolved ('Pending' or 'Running') tool card
+-- matching @tool@ to 'Denied', scanning only unresolved queues.
+transcriptDenyFirstMatching :: Text -> Text -> Transcript -> Transcript
+transcriptDenyFirstMatching tool reason tr =
+  let matchesUnresolved (itemIdx, _) = case Seq.lookup itemIdx (trItems tr) of
+        Just (TiToolCard tc) ->
+          (tcLifecycle tc == Pending || tcLifecycle tc == Running) && tcName tc == tool
+        _ -> False
+      findFirst q = case Seq.viewl q of
+        EmptyL -> Nothing
+        x :< rest
+          | matchesUnresolved x -> Just (fst x, rest)
+          | otherwise -> fmap (fmap (x Seq.<|)) (findFirst rest)
+      firstPend = findFirst (trPendingTools tr)
+      firstRun  = findFirst (trRunningTools tr)
+      chosen = case (firstRun, firstPend) of
+        (Just (ri, rRest), Just (pi', pRest))
+          | ri <= pi' -> Just (ri, True, rRest)
+          | otherwise -> Just (pi', False, pRest)
+        (Just (ri, rRest), Nothing)  -> Just (ri, True, rRest)
+        (Nothing, Just (pi', pRest)) -> Just (pi', False, pRest)
+        (Nothing, Nothing)           -> Nothing
+  in case chosen of
+       Nothing -> tr
+       Just (itemIdx, fromRun, restQueue) ->
+         let items' = adjustToolCardAt itemIdx
+               (\c -> c { tcLifecycle = Denied reason })
+               (trItems tr)
+         in tr
+              { trItems        = items'
+              , trPendingTools = if fromRun then trPendingTools tr else restQueue
+              , trRunningTools = if fromRun then restQueue else trRunningTools tr
+              , trVersion      = trVersion tr + 1
+              }
+
+-- | Mark every unresolved ('Pending' or 'Running') tool card as 'Cancelled'
+-- in O(U log N) time where U is the number of unresolved cards.
+transcriptCancelUnresolved :: Transcript -> Transcript
+transcriptCancelUnresolved tr@Transcript{..}
+  | Seq.null trPendingTools && Seq.null trRunningTools = tr
+  | otherwise =
+      let cancelAt items (itemIdx, _) = case Seq.lookup itemIdx items of
+            Just (TiToolCard tc) | tcLifecycle tc `elem` [Pending, Running] ->
+              adjustToolCardAt itemIdx (\c -> c { tcLifecycle = Cancelled }) items
+            _ -> items
+          items1 = foldl' cancelAt trItems trPendingTools
+          items2 = foldl' cancelAt items1 trRunningTools
+      in tr
+           { trItems        = items2
+           , trPendingTools = Seq.empty
+           , trRunningTools = Seq.empty
+           , trVersion      = trVersion + 1
+           }
+
 -- | Full screen state for the TUI.
 data TuiState = TuiState
   { tsModelName          :: !Text
@@ -150,7 +388,7 @@ data TuiState = TuiState
   , tsStatus             :: !TuiStatus
   , tsFocus              :: !FocusArea
   , tsInputBuffer        :: !Text
-  , tsTranscript         :: ![TranscriptItem]
+  , tsTranscript         :: !Transcript
   , tsConversation       :: ![Message]
     -- ^ Canonical Core history for model calls and session persistence.
   , tsIncurredSpendUsd   :: !Double
@@ -193,11 +431,11 @@ tuiModelContextLimit state =
 
 -- | Project tool cards from the transcript for the Tool Activity pane.
 tsTools :: TuiState -> [ToolCard]
-tsTools state = [tc | TiToolCard tc <- tsTranscript state]
+tsTools state = [tc | TiToolCard tc <- transcriptItems (tsTranscript state)]
 
 -- | Compatibility accessor for reading the transcript.
 tsHistory :: TuiState -> [TranscriptItem]
-tsHistory = tsTranscript
+tsHistory = transcriptItems . tsTranscript
 
 -- | Compatibility accessor for transcript scroll.
 tsHistoryScroll :: TuiState -> Int
@@ -212,7 +450,7 @@ initialTuiState model maxTurns = TuiState
   , tsStatus             = StatusIdle
   , tsFocus              = FocusInput
   , tsInputBuffer        = ""
-  , tsTranscript         = []
+  , tsTranscript         = emptyTranscript
   , tsConversation       = []
   , tsIncurredSpendUsd   = 0
   , tsTranscriptScroll   = 0
