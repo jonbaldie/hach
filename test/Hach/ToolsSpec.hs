@@ -610,17 +610,17 @@ spec = do
           ToolError err -> expectationFailure ("Edit execution failed: " ++ T.unpack err)
 
       it "runExecCommand runs the command in the workspace and returns its status" $ do
-        (code, out, err) <- runExecCommand testSandbox "echo hello-from-exec"
+        (code, out, err) <- runExecCommand testSandbox Nothing "echo hello-from-exec"
         code `shouldBe` ExitSuccess
         out `shouldSatisfy` ("hello-from-exec" `T.isInfixOf`)
         err `shouldBe` ""
 
       it "runExecCommand propagates a non-zero exit status" $ do
-        (code, _, _) <- runExecCommand testSandbox "sh -c 'exit 7'"
+        (code, _, _) <- runExecCommand testSandbox Nothing "sh -c 'exit 7'"
         code `shouldBe` ExitFailure 7
 
       it "runExecCommand leniently decodes non-UTF-8 output and keeps the exit status (issue #240)" $ do
-        (code, out, err) <- runExecCommand testSandbox "printf 'hello \\377\\376 world\\n'; printf 'e\\377\\n' >&2; exit 3"
+        (code, out, err) <- runExecCommand testSandbox Nothing "printf 'hello \\377\\376 world\\n'; printf 'e\\377\\n' >&2; exit 3"
         code `shouldBe` ExitFailure 3
         out `shouldBe` "hello \xFFFD\xFFFD world\n"
         err `shouldBe` "e\xFFFD\n"
