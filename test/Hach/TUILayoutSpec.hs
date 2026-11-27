@@ -33,7 +33,7 @@ sampleState maxTurns = (initialTuiState "test/model" maxTurns)
   { tsCurrentTurn = 3
   , tsStatus      = StatusThinking
   , tsFocus       = FocusTranscript
-  , tsTranscript  =
+  , tsTranscript  = transcriptFromList
       [ TiUser "hello"
       , TiAssistant "hi"
       , TiToolCard (ToolCard "call-1" "list_dir" "{\"path\":\".\"}" (Finished (ToolSuccess "ok")) False)

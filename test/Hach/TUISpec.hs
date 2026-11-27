@@ -69,6 +69,7 @@ import Control.Monad (forM_, unless)
 import Data.Char (isSpace)
 import Control.Exception (finally)
 import Data.IORef
+import GHC.Conc (getAllocationCounter, setAllocationCounter)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
@@ -427,7 +428,7 @@ spec = do
               ]
             resp = EvHarness (EvLLMResponse (Just "Investigating the repo") calls Nothing)
             (s1, _) = updateTui resp baseState
-        tsTranscript s1 `shouldBe`
+        transcriptItems (tsTranscript s1) `shouldBe`
           [ TiAssistant "Investigating the repo"
           , TiToolCard (ToolCard "call-1" "read_file" "{\"path\":\"foo.hs\"}" Pending False)
           , TiToolCard (ToolCard "call-2" "list_dir" "{\"path\":\".\"}" Pending False)
@@ -438,7 +439,7 @@ spec = do
             s0 = fst $ updateTui (EvHarness (EvLLMResponse (Just "Starting") calls Nothing)) baseState
             (s1, _) = updateTui (EvHarness (EvToolCall "read_file" "{\"path\":\"foo_rewritten.hs\"}")) s0
         tsStatus s1 `shouldBe` StatusRunningTool "read_file"
-        tsTranscript s1 `shouldBe`
+        transcriptItems (tsTranscript s1) `shouldBe`
           [ TiAssistant "Starting"
           , TiToolCard (ToolCard "call-1" "read_file" "{\"path\":\"foo_rewritten.hs\"}" Running False)
           ]
@@ -450,7 +451,7 @@ spec = do
             s1 = fst $ updateTui (EvHarness (EvToolCall "read_file" "{\"path\":\"foo.hs\"}")) s0
             (s2, _) = updateTui (EvHarness (EvToolResult "read_file" (ToolSuccess "file contents"))) s1
         tsStatus s2 `shouldBe` StatusThinking
-        tsTranscript s2 `shouldBe`
+        transcriptItems (tsTranscript s2) `shouldBe`
           [ TiAssistant "Starting"
           , TiToolCard (ToolCard "call-1" "read_file" "{\"path\":\"foo.hs\"}" (Finished (ToolSuccess "file contents")) False)
           ]
@@ -462,7 +463,7 @@ spec = do
               ]
             s0 = fst $ updateTui (EvHarness (EvLLMResponse (Just "Checking") calls Nothing)) baseState
             (s1, _) = updateTui (EvHarness (EvPermissionDenied "read_file" "Protected path")) s0
-        tsTranscript s1 `shouldBe`
+        transcriptItems (tsTranscript s1) `shouldBe`
           [ TiAssistant "Checking"
           , TiToolCard (ToolCard "call-1" "read_file" "{\"path\":\"secret.txt\"}" (Denied "Protected path") False)
           , TiToolCard (ToolCard "call-2" "run_command" "rm -rf /" Pending False)
@@ -551,7 +552,7 @@ spec = do
             (s4, actions) = updateTui (EvUserKey KeyEsc) s3
         actions `shouldBe` [ActionCancelAgent]
         tsCancelRequested s4 `shouldBe` True
-        tsTranscript s4 `shouldBe`
+        transcriptItems (tsTranscript s4) `shouldBe`
           [ TiAssistant "Running tools"
           , TiToolCard (ToolCard "call-1" "tool1" "arg1" (Finished (ToolSuccess "done1")) False)
           , TiToolCard (ToolCard "call-2" "tool2" "arg2" Cancelled False)
@@ -567,7 +568,7 @@ spec = do
             (s6, _) = updateTui (EvHarness (EvToolCall "run_command" "serve")) s5
             (s7, _) = updateTui (EvHarness (EvToolResult "run_command" (ToolSuccess "Server started"))) s6
             (s8, _) = updateTui (EvHarness (EvDone "All operations complete.")) s7
-        tsTranscript s8 `shouldBe`
+        transcriptItems (tsTranscript s8) `shouldBe`
           [ TiUser "Read config"
           , TiAssistant "Reading config file"
           , TiToolCard (ToolCard "c1" "read_file" "config.json" (Finished (ToolSuccess "{\"port\":8080}")) False)
@@ -581,11 +582,11 @@ spec = do
             s0 = fst $ updateTui (EvHarness (EvLLMResponse (Just "reply") calls Nothing)) baseState
             transcriptFocus = s0 { tsFocus = FocusTranscript }
             (s1, _) = updateTui (EvUserKey KeyEnter) transcriptFocus
-        case [tc | TiToolCard tc <- tsTranscript s1] of
+        case [tc | TiToolCard tc <- transcriptItems (tsTranscript s1)] of
           [card] -> tcExpanded card `shouldBe` True
           _      -> expectationFailure "Expected tool card"
         let (s2, _) = updateTui (EvUserKey (KeyChar ' ')) s1
-        case [tc | TiToolCard tc <- tsTranscript s2] of
+        case [tc | TiToolCard tc <- transcriptItems (tsTranscript s2)] of
           [card] -> tcExpanded card `shouldBe` False
           _      -> expectationFailure "Expected tool card"
 
@@ -593,7 +594,7 @@ spec = do
         let tool1 = TiToolCard (ToolCard "c1" "read_file" "{}" Pending False)
             tool2 = TiToolCard (ToolCard "c2" "write_file" "{}" Pending False)
             tool3 = TiToolCard (ToolCard "c3" "run_command" "{}" Pending False)
-            s0 = baseState { tsFocus = FocusTranscript, tsTranscript = [tool1, tool2, tool3], tsSelectedToolIndex = 1 }
+            s0 = baseState { tsFocus = FocusTranscript, tsTranscript = transcriptFromList [tool1, tool2, tool3], tsSelectedToolIndex = 1 }
             (sUp, aUp) = updateTui (EvUserKey KeyUp) s0
         tsSelectedToolIndex sUp `shouldBe` 0
         aUp `shouldBe` [ActionScrollTranscript (-1)]
@@ -608,7 +609,7 @@ spec = do
         aDown2 `shouldBe` [ActionScrollTranscript 1]
 
       it "scrolls transcript one line on Up and Down in FocusTranscript when no tool cards exist" $ do
-        let s0 = baseState { tsFocus = FocusTranscript, tsTranscript = [TiUser "hi", TiAssistant "hello"] }
+        let s0 = baseState { tsFocus = FocusTranscript, tsTranscript = transcriptFromList [TiUser "hi", TiAssistant "hello"] }
             (sDown, aDown) = updateTui (EvUserKey KeyDown) s0
         aDown `shouldBe` [ActionScrollTranscript 1]
         let (_sUp, aUp) = updateTui (EvUserKey KeyUp) sDown
@@ -618,7 +619,7 @@ spec = do
         let card = ToolCard "1" "bash" "ls" (Finished (ToolSuccess "ok")) False
             st = baseState
               { tsFocus = FocusTranscript
-              , tsTranscript = [TiUser "Prompt 1", TiToolCard card, TiAssistant "Response 1"]
+              , tsTranscript = transcriptFromList [TiUser "Prompt 1", TiToolCard card, TiAssistant "Response 1"]
               , tsTranscriptScroll = 10
               }
             (stUp, actionsUp) = updateTui (EvUserKey KeyUp) st
@@ -639,14 +640,14 @@ spec = do
         let tool1 = TiToolCard (ToolCard "c1" "read_file" "{}" Pending False)
             s0 = baseState
               { tsFocus = FocusTranscript
-              , tsTranscript = [TiUser "hello", tool1]
+              , tsTranscript = transcriptFromList [TiUser "hello", tool1]
               , tsSelectedToolIndex = 1
               , tsTranscriptScroll = 10
               , tsContextTokens = 1500
               , tsTokenUsage = Just (mkTokenUsage 100 200 300)
               }
             (s1, a1) = updateTui (EvUserKey (KeyChar 'c')) s0
-        tsTranscript s1 `shouldBe` []
+        transcriptItems (tsTranscript s1) `shouldBe` []
         tsSelectedToolIndex s1 `shouldBe` 0
         tsTranscriptScroll s1 `shouldBe` 0
         tsContextTokens s1 `shouldBe` 0
@@ -659,7 +660,7 @@ spec = do
             s0 = baseState
               { tsFocus = FocusTranscript
               , tsStatus = StatusRunningTool "run_command"
-              , tsTranscript = [TiUser "hello", tool1]
+              , tsTranscript = transcriptFromList [TiUser "hello", tool1]
               , tsSelectedToolIndex = 1
               , tsTranscriptScroll = 10
               , tsContextTokens = 1500
@@ -750,8 +751,7 @@ spec = do
         let card = ToolCard "c1" "read_file" "{}" Pending False
             initial = baseState
               { tsFocus = FocusTranscript
-              , tsTranscript =
-                  [ TiAssistant (T.unlines ("START_OF_TRANSCRIPT" : replicate 80 "older output"))
+              , tsTranscript = transcriptFromList [ TiAssistant (T.unlines ("START_OF_TRANSCRIPT" : replicate 80 "older output"))
                   , TiToolCard card
                   ]
               }
@@ -773,7 +773,7 @@ spec = do
         let card = ToolCard "c1" "read_file" "{}" Pending False
             initial = baseState
               { tsFocus = FocusTranscript
-              , tsTranscript = [TiAssistant (T.unlines (replicate 80 "older output")), TiToolCard card]
+              , tsTranscript = transcriptFromList [TiAssistant (T.unlines (replicate 80 "older output")), TiToolCard card]
               }
             (scrolled, _) = updateTui (EvUserKey KeyScrollUp) initial
         forM_ [KeyUp, KeyDown, KeyEnter, KeyChar ' '] $ \key -> do
@@ -784,8 +784,7 @@ spec = do
       it "renders user text, assistant text and tool cards with strictly increasing row indices in transcript order" $ do
         let card = ToolCard "call-1" "read_file" "{\"path\":\"foo.txt\"}" (Finished (ToolSuccess "file contents")) False
             st = baseState
-              { tsTranscript =
-                  [ TiUser "Show me foo.txt"
+              { tsTranscript = transcriptFromList [ TiUser "Show me foo.txt"
                   , TiAssistant "Here is the file"
                   , TiToolCard card
                   ]
@@ -806,8 +805,8 @@ spec = do
       it "shows output when tool card is expanded and only summary when collapsed" $ do
         let cardCollapsed = ToolCard "c1" "read_file" "{\"path\":\"a\"}" (Finished (ToolSuccess "SECRET_PAYLOAD_12345")) False
             cardExpanded  = ToolCard "c1" "read_file" "{\"path\":\"a\"}" (Finished (ToolSuccess "SECRET_PAYLOAD_12345")) True
-            stCollapsed = baseState { tsTranscript = [TiToolCard cardCollapsed] }
-            stExpanded  = baseState { tsTranscript = [TiToolCard cardExpanded] }
+            stCollapsed = baseState { tsTranscript = transcriptFromList [TiToolCard cardCollapsed] }
+            stExpanded  = baseState { tsTranscript = transcriptFromList [TiToolCard cardExpanded] }
             rowsCollapsed = renderTestRows stCollapsed (100, 30)
             rowsExpanded  = renderTestRows stExpanded (100, 30)
         any ("✓ success" `T.isInfixOf`) rowsCollapsed `shouldBe` True
@@ -1163,46 +1162,46 @@ spec = do
     describe "Local Slash Commands and Skill Invocations" $ do
       it "handles /clear locally by emptying dialogue history without running agent" $ do
         let s0 = baseState
-              { tsTranscript = [DiUser "Hello"]
+              { tsTranscript = transcriptFromList [DiUser "Hello"]
               , tsConversation = [SystemMsg "system", UserMsg "Hello"]
               , tsInputBuffer = "/clear"
               }
             (s1, actions) = updateTui (EvUserKey KeyEnter) s0
-        tsTranscript s1 `shouldBe` []
+        transcriptItems (tsTranscript s1) `shouldBe` []
         tsConversation s1 `shouldBe` []
         tsInputBuffer s1 `shouldBe` ""
         actions `shouldBe` []
 
       it "cancels running agent turn when /clear is submitted while busy" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
+        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = transcriptFromList [DiUser "Hello"], tsInputBuffer = "/clear" }
             (s1, actions) = updateTui (EvUserKey KeyEnter) s0
-        tsTranscript s1 `shouldBe` []
+        transcriptItems (tsTranscript s1) `shouldBe` []
         tsInputBuffer s1 `shouldBe` ""
         tsStatus s1 `shouldBe` StatusIdle
         actions `shouldBe` [ActionCancelAgent]
 
       it "drops stale EvDone after /clear while busy" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
+        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = transcriptFromList [DiUser "Hello"], tsInputBuffer = "/clear" }
             (s1, _) = updateTui (EvUserKey KeyEnter) s0
             (s2, _) = updateTui (EvHarness (EvDone "stale answer")) s1
-        tsTranscript s2 `shouldBe` []
+        transcriptItems (tsTranscript s2) `shouldBe` []
 
       it "drops stale EvToolCall after /clear while busy" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
+        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = transcriptFromList [DiUser "Hello"], tsInputBuffer = "/clear" }
             (s1, _) = updateTui (EvUserKey KeyEnter) s0
             (s2, _) = updateTui (EvHarness (EvToolCall "read_file" "{}")) s1
         tsTools s2 `shouldBe` []
 
       it "drops stale EvError after /clear while busy" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
+        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = transcriptFromList [DiUser "Hello"], tsInputBuffer = "/clear" }
             (s1, _) = updateTui (EvUserKey KeyEnter) s0
             (s2, _) = updateTui (EvHarness (EvError "stale error")) s1
-        tsTranscript s2 `shouldBe` []
+        transcriptItems (tsTranscript s2) `shouldBe` []
 
       it "drops stale canonical conversation updates after /clear while busy" $ do
         let s0 = baseState
               { tsStatus = StatusThinking
-              , tsTranscript = [DiUser "Hello"]
+              , tsTranscript = transcriptFromList [DiUser "Hello"]
               , tsConversation = [SystemMsg "system", UserMsg "Hello"]
               , tsInputBuffer = "/clear"
               }
@@ -1211,12 +1210,12 @@ spec = do
         tsConversation s2 `shouldBe` []
 
       it "resets tsCancelRequested when user submits a new prompt" $ do
-        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = [DiUser "Hello"], tsInputBuffer = "/clear" }
+        let s0 = baseState { tsStatus = StatusThinking, tsTranscript = transcriptFromList [DiUser "Hello"], tsInputBuffer = "/clear" }
             (s1, _) = updateTui (EvUserKey KeyEnter) s0
             s2 = s1 { tsInputBuffer = "new question" }
             (s3, _) = updateTui (EvUserKey KeyEnter) s2
         tsCancelRequested s3 `shouldBe` False
-        tsTranscript s3 `shouldBe` [DiUser "new question"]
+        transcriptItems (tsTranscript s3) `shouldBe` [DiUser "new question"]
 
       it "handles /help locally by toggling help dialog without running agent" $ do
         let s0 = baseState { tsShowHelp = False, tsInputBuffer = "/help" }
@@ -1249,7 +1248,7 @@ spec = do
               , TiAssistant "recent answer"
               ]
             s0 = baseState
-              { tsTranscript = transcript
+              { tsTranscript = transcriptFromList transcript
               , tsConversation =
                   [ SystemMsg "current system"
                   , UserMsg "hidden hook context"
@@ -1543,7 +1542,7 @@ spec = do
         let usage' c = (mkTokenUsage 10 5 15) { tuCost = Just c }
             s0 = baseState
               { tsStatus = StatusThinking
-              , tsTranscript = [DiUser "Hello"]
+              , tsTranscript = transcriptFromList [DiUser "Hello"]
               , tsInputBuffer = "/clear"
               }
             (s1, _) = updateTui (EvHarness (EvLLMResponse Nothing [ToolCall "c1" "bash" "{}"] (Just (usage' 0.25)))) s0
@@ -1642,8 +1641,7 @@ spec = do
         it "renders the thinking line under the last item when status is thinking" $ do
           let thinkingState = baseState
                 { tsStatus = StatusThinking
-                , tsTranscript =
-                    [ TiUser "analyze repo"
+                , tsTranscript = transcriptFromList [ TiUser "analyze repo"
                     , TiAssistant "I am analyzing."
                     ]
                 }
@@ -1666,11 +1664,11 @@ spec = do
         it "does not render the thinking line when status is idle or finished" $ do
           let idleState = baseState
                 { tsStatus = StatusIdle
-                , tsTranscript = [TiUser "hello", TiAssistant "world"]
+                , tsTranscript = transcriptFromList [TiUser "hello", TiAssistant "world"]
                 }
               finishedState = baseState
                 { tsStatus = StatusFinished
-                , tsTranscript = [TiUser "hello", TiAssistant "world"]
+                , tsTranscript = transcriptFromList [TiUser "hello", TiAssistant "world"]
                 }
           any ("Thinking..." `T.isInfixOf`) (renderTestRows idleState (120, 40)) `shouldBe` False
           any ("Thinking..." `T.isInfixOf`) (renderTestRows finishedState (120, 40)) `shouldBe` False
@@ -1678,7 +1676,7 @@ spec = do
         it "renders the thinking line even when transcript has no items yet" $ do
           let emptyThinkingState = baseState
                 { tsStatus = StatusThinking
-                , tsTranscript = []
+                , tsTranscript = emptyTranscript
                 }
               rows = renderTestRows emptyThinkingState (120, 40)
           any ("Thinking..." `T.isInfixOf`) rows `shouldBe` True
@@ -2181,8 +2179,7 @@ spec = do
 
       it "copies the last assistant response with /copy (Issue #155)" $ do
         let withReply = baseState
-              { tsTranscript =
-                  [ DiUser "first", DiAssistant "old reply"
+              { tsTranscript = transcriptFromList [ DiUser "first", DiAssistant "old reply"
                   , DiUser "second", DiAssistant "latest reply", DiNotice "done"
                   ]
               }
@@ -2242,3 +2239,56 @@ spec = do
           prompt <- buildTuiSystemPrompt tuiSandbox (Just "Reply in JSON only")
           prompt `shouldSatisfy` ("Follow strict types." `T.isInfixOf`)
           prompt `shouldSatisfy` ("Reply in JSON only" `T.isInfixOf`)
+
+    describe "Long Transcript Indexing and Windowed Rendering (Issue #300)" $ do
+      let freshState = initialTuiState "test-model" Nothing
+          mkTurn i =
+            let cid = "call-" <> T.pack (show i)
+                tc = ToolCall cid "list_dir" ("{\"turn\":" <> T.pack (show i) <> "}")
+            in [ EvTurnStart i
+               , EvLLMResponse (Just ("msg-" <> T.pack (show i))) [tc] Nothing
+               , EvToolCall "list_dir" ("{\"turn\":" <> T.pack (show i) <> "}")
+               , EvToolResult "list_dir" (ToolSuccess ("ok-" <> T.pack (show i)))
+               , EvTurnComplete i
+               ]
+          runTurns n =
+            foldl (\s e -> let s' = handleAgentEvent e s in tsTranscript s' `seq` s')
+                  freshState
+                  (concatMap mkTurn [1..n])
+
+      it "preserves chronological order, lifecycle transitions, and indexed toggle on long transcripts" $ do
+        let st = runTurns 250
+            items = transcriptItems (tsTranscript st)
+        length items `shouldBe` 500
+        transcriptToolCount (tsTranscript st) `shouldBe` 250
+        tsSelectedToolIndex st `shouldBe` 249
+        let toggled = toggleToolExpanded 120 st
+            toggledCards = [tc | TiToolCard tc <- transcriptItems (tsTranscript toggled)]
+        tcExpanded (toggledCards !! 120) `shouldBe` True
+        tcExpanded (toggledCards !! 119) `shouldBe` False
+        tcExpanded (toggledCards !! 121) `shouldBe` False
+
+      it "renders the tail window in FocusInput and reveals selected middle cards in FocusTranscript" $ do
+        let st = runTurns 250
+            tailRows = renderTestRows (st { tsFocus = FocusInput }) (100, 30)
+        -- M.renderWidget renders VpTranscript from offset 0 of the 100-item tail window (turns 201..250).
+        any ("msg-201" `T.isInfixOf`) tailRows `shouldBe` True
+        any ("msg-1" `T.isInfixOf`) tailRows `shouldBe` False
+        let midSelected = toggleToolExpanded 120 (st { tsFocus = FocusTranscript, tsSelectedToolIndex = 120, tsTranscriptManualScroll = False })
+            midRows = renderTestRows midSelected (100, 30)
+        any ("ok-121" `T.isInfixOf`) midRows `shouldBe` True
+
+      it "keeps event-update allocations linear and redraw allocations bounded in transcript length" $ do
+        let measureAlloc act = do
+              setAllocationCounter 0
+              x <- act
+              c <- getAllocationCounter
+              pure (x, fromIntegral (-c) :: Double)
+        (stSmall, evSmall) <- measureAlloc (pure $! runTurns 100)
+        (stLarge, evLarge) <- measureAlloc (pure $! runTurns 1000)
+        let evRatio = evLarge / max 1 evSmall
+        evRatio `shouldSatisfy` (< 25.0)
+        (_, rdSmall) <- measureAlloc (pure $! length (renderTestRows (stSmall { tsFocus = FocusInput }) (100, 30)))
+        (_, rdLarge) <- measureAlloc (pure $! length (renderTestRows (stLarge { tsFocus = FocusInput }) (100, 30)))
+        let rdRatio = rdLarge / max 1 rdSmall
+        rdRatio `shouldSatisfy` (< 3.0)
