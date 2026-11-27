@@ -27,15 +27,17 @@ import qualified Hach.Git as Git
 import Hach.Hooks (executeHooks)
 import Hach.Memory (ProjectInitializationResult(..), initializeWorkspaceInstructionsFile, loadHierarchicalMemory, resolveMemoryImports)
 import Hach.Notifications (sendDesktopNotification)
-import Hach.Paths (Workspace(..))
+import Hach.Paths (Workspace(..), relativeToWorkspace, resolveWorkspacePath)
 import Hach.Inference
-import Hach.Permissions (evalPermission, evalPermissionForAuthority)
+import Hach.Permissions (evalPermission, evalPermissionForAuthorityPaths, extractPathArg)
 import qualified Hach.Sessions as Sessions
 import Hach.Tools
 import Hach.Types
+import Control.Exception (SomeException, try)
 import Control.Monad (when)
 import qualified Data.Aeson as Aeson
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.List (nub)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
@@ -384,10 +386,18 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
 
   , interpCheckPermission = \tool args -> do
       mode <- readIORef prtMode
+      scope <- currentIOWorkspaceScope env
       let argsVal = fromMaybe Aeson.Null (Aeson.decodeStrict (TE.encodeUtf8 args))
           capability = resolveTool (ToolCall "" tool args)
-          decision = case capability of
-            Just (Right resolved) -> evalPermissionForAuthority mode prtRules (resolvedToolCanonicalName resolved) argsVal (resolvedToolAuthority resolved)
+      paths <- case extractPathArg argsVal of
+        Nothing      -> pure []
+        Just rawPath -> resolvePermissionPaths scope rawPath
+      let decision = case capability of
+            Just (Right resolved) ->
+              let canonical = resolvedToolCanonicalName resolved
+              in evalPermissionForAuthorityPaths mode prtRules canonical canonical (resolvedToolAuthority resolved) paths
+            _ | Just (canonical, authority) <- resolveToolIdentity tool ->
+              evalPermissionForAuthorityPaths mode prtRules canonical tool authority paths
             _ -> evalPermission mode prtRules tool argsVal
       case decision of
         PermAllow      -> pure Nothing
@@ -465,6 +475,17 @@ ioAlgebraWithLog logger env@IOEnv{..} = AgentAlgebra
                  (Aeson.decodeStrict (TE.encodeUtf8 restTxt))
              )
         _ -> (Nothing, Aeson.String payload)
+
+    resolvePermissionPaths :: Workspace -> FilePath -> IO [FilePath]
+    resolvePermissionPaths ws rawPath = do
+      res <- try (resolveWorkspacePath ws rawPath) :: IO (Either SomeException (Either String FilePath))
+      case res of
+        Right (Right fullPath) -> do
+          relRes <- try (relativeToWorkspace ws fullPath) :: IO (Either SomeException FilePath)
+          pure $ case relRes of
+            Right rel -> nub [rawPath, rel]
+            Left _    -> [rawPath]
+        _ -> pure [rawPath]
 
     messageToText = \case
       SystemMsg c    -> "[System] " <> c

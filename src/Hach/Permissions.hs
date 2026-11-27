@@ -4,6 +4,7 @@
 module Hach.Permissions
   ( evalPermission
   , evalPermissionForAuthority
+  , evalPermissionForAuthorityPaths
   , isProtectedPath
   , extractPathArg
   , matchGlob
@@ -20,7 +21,7 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy as BSL
 import Data.List (tails)
 import qualified Data.Map.Lazy as Map
-import Data.Maybe (listToMaybe)
+import Data.Maybe (listToMaybe, mapMaybe, maybeToList)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -171,26 +172,42 @@ evalPermissionForAuthorityAs
   -> Aeson.Value
   -> ToolAuthority
   -> PermissionDecision
-evalPermissionForAuthorityAs mode rules canonical displayName args authority
+evalPermissionForAuthorityAs mode rules canonical displayName args authority =
+  evalPermissionForAuthorityPaths mode rules canonical displayName authority (maybeToList (extractPathArg args))
+
+-- | Evaluate a capability against all candidate path spellings (for example
+-- both the caller's logical path and its workspace-relative canonical target).
+evalPermissionForAuthorityPaths
+  :: PermissionMode
+  -> [PermissionRule]
+  -> Text
+  -> Text
+  -> ToolAuthority
+  -> [FilePath]
+  -> PermissionDecision
+evalPermissionForAuthorityPaths mode rules canonical displayName authority paths
   | mode == ModeBypassPermissions = PermAllow
+  | authority == AuthorityWorkspaceWrite && any isProtectedPath paths =
+      PermDeny ("Protected path: access denied to " <> maybe "" T.pack (listToMaybe paths))
   | otherwise =
-       let mPath = extractPathArg args
-        in if authority == AuthorityWorkspaceWrite && maybe False isProtectedPath mPath
-             then PermDeny ("Protected path: access denied to " <> maybe "" T.pack mPath)
-             else case listToMaybe (concatMap (\r -> maybe [] pure (matchRule r canonical mPath)) rules) of
-               Just decision -> decision
-               Nothing -> case mode of
-                 ModePlan | authority == AuthorityInteraction -> PermAllow
-                 ModePlan | authority /= AuthorityRead -> PermDeny "Plan mode is read-only. Tool execution denied."
-                 ModePlan -> PermAllow
-                 ModeDefault | authority == AuthorityInteraction -> PermAllow
-                 ModeDefault | authority /= AuthorityRead -> PermAsk ("Tool execution requires approval: " <> displayName)
-                 ModeDefault -> PermAllow
-                 ModeAcceptEdits | authority == AuthorityInteraction -> PermAllow
-                 ModeAcceptEdits | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
-                 ModeAcceptEdits | authority == AuthorityCommand -> PermAsk ("Command execution requires approval: " <> displayName)
-                 ModeAcceptEdits -> PermAsk ("Tool execution requires approval: " <> displayName)
-                 ModeAuto | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
-                 ModeAuto -> PermAsk ("Auto mode requires approval for: " <> displayName)
-                 ModeDontAsk -> PermAllow
-                 ModeBypassPermissions -> PermAllow
+      case listToMaybe (concatMap matchRuleForPaths rules) of
+        Just decision -> decision
+        Nothing -> case mode of
+          ModePlan | authority == AuthorityInteraction -> PermAllow
+          ModePlan | authority /= AuthorityRead -> PermDeny "Plan mode is read-only. Tool execution denied."
+          ModePlan -> PermAllow
+          ModeDefault | authority == AuthorityInteraction -> PermAllow
+          ModeDefault | authority /= AuthorityRead -> PermAsk ("Tool execution requires approval: " <> displayName)
+          ModeDefault -> PermAllow
+          ModeAcceptEdits | authority == AuthorityInteraction -> PermAllow
+          ModeAcceptEdits | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
+          ModeAcceptEdits | authority == AuthorityCommand -> PermAsk ("Command execution requires approval: " <> displayName)
+          ModeAcceptEdits -> PermAsk ("Tool execution requires approval: " <> displayName)
+          ModeAuto | authority `elem` [AuthorityRead, AuthorityWorkspaceWrite] -> PermAllow
+          ModeAuto -> PermAsk ("Auto mode requires approval for: " <> displayName)
+          ModeDontAsk -> PermAllow
+          ModeBypassPermissions -> PermAllow
+  where
+    matchRuleForPaths r = case paths of
+      [] -> maybe [] pure (matchRule r canonical Nothing)
+      _  -> maybe [] pure (listToMaybe (mapMaybe (\p -> matchRule r canonical (Just p)) paths))
