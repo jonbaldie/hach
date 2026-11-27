@@ -982,6 +982,12 @@ cliModuleSpec = do
         , optNoTui = True
         }
 
+    it "treats --no-tui as a value when a value-taking option consumes it" $ do
+      forM_ ["-w", "--worktree", "--session-id", "--add-dir", "--append-system-prompt"] $ \flag ->
+        fmap optNoTui (parseCliArgs [flag, "--no-tui"]) `shouldBe` Right False
+      fmap optNoTui (parseCliArgs ["-w", "branch", "--no-tui"]) `shouldBe` Right True
+      fmap optNoTui (parseCliArgs ["--", "--no-tui"]) `shouldBe` Right False
+
     it "parses arguments when no model flag is provided" $ do
       let args = ["run", "my", "task"]
       parseCliArgs args `shouldBe` Right defaultCliOptions

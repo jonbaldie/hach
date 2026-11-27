@@ -475,13 +475,21 @@ spec = do
           Left _  -> True
           Right _ -> False
 
-    it "--no-tui is sticky regardless of surrounding words" $ vigorous $
-      \(wordsBefore :: [String]) (wordsAfter :: [String]) ->
-        let cleanBefore = filter (`notElem` ["--", "-h", "--help"]) wordsBefore
-            args = cleanBefore ++ ["--no-tui"] ++ wordsAfter
-        in case parseCliArgs args of
-             Left _     -> True
-             Right opts -> optNoTui opts
+    it "sets optNoTui for a standalone --no-tui among complete arguments" $ vigorous $
+      let chunk = elements
+            [ ["prompt"], ["-c"], ["--version"], ["-m", "model"]
+            , ["--provider", "openrouter"], ["--max-turns", "2"]
+            , ["--output-format", "text"], ["--worktree", "branch"]
+            , ["-w", "--no-tui"], ["--session-id", "--no-tui"]
+            , ["--add-dir", "dir"], ["--append-system-prompt", "context"]
+            , ["--model=model"], ["--worktree=branch"]
+            ]
+      in forAll (listOf chunk) $ \before ->
+         forAll (listOf (frequency [(9, chunk), (1, pure ["--"])])) $ \after ->
+           let args = concat before ++ ["--no-tui"] ++ concat after
+           in case parseCliArgs args of
+                Left err -> counterexample (show args ++ ": " ++ err) False
+                Right opts -> counterexample (show args) (optNoTui opts)
 
     it "CLI model override wins over OS env and .env" $ vigorous $
       forAll (T.pack <$> listOf1 (elements ['a'..'z'])) $ \cli ->
