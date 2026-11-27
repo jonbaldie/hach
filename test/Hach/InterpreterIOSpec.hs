@@ -35,6 +35,8 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory
   ( createDirectoryIfMissing
+  , createDirectoryLink
+  , createFileLink
   , doesDirectoryExist
   , doesFileExist
   , getTemporaryDirectory
@@ -154,6 +156,66 @@ spec = (renderEventQuietSpec >>) $ describe "Hach.Interpreter.IO (permission + h
         let env = env0 { ioResolveAsk = \_ _ _ -> pure Nothing }
         permissionText (ioAlgebra env) "write_file" "{\"path\":\".git/config\"}"
           `shouldReturn` Just "Protected path: access denied to .git/config"
+
+      it "enforces path deny rules through workspace symlinks (issue #310)" $ do
+        createDirectoryIfMissing True (testDir </> "sub")
+        writeFile (testDir </> "secret.txt") "original"
+        writeFile (testDir </> "sub" </> "nested-secret.txt") "nested-original"
+        createFileLink "secret.txt" (testDir </> "alias.txt")
+        createFileLink "alias.txt" (testDir </> "chain.txt")
+        createFileLink "nonexistent-secret.txt" (testDir </> "dangling.txt")
+        createDirectoryLink "sub" (testDir </> "dir-link")
+        createFileLink ".git/config" (testDir </> "git-alias.txt")
+        createFileLink "/etc/passwd" (testDir </> "escape.txt")
+
+        let rules =
+              [ PermissionRule RuleDeny (Just "write_file") (Just "secret.txt")
+              , PermissionRule RuleDeny (Just "replace_file_content") (Just "secret.txt")
+              , PermissionRule RuleDeny (Just "read_file") (Just "secret.txt")
+              , PermissionRule RuleDeny (Just "write_file") (Just "**/nested-secret.txt")
+              , PermissionRule RuleDeny (Just "write_file") (Just "sub/new-secret.txt")
+              , PermissionRule RuleDeny (Just "write_file") (Just "nonexistent-secret.txt")
+              ]
+            perms = defaultIOEnvPermissions
+              { iopInitialMode = ModeAcceptEdits
+              , iopRules = rules
+              }
+        env <- newIOEnvWithPermissions perms (openRouterConnection "k") "test-model" testDir False
+        let alg = ioAlgebra env
+
+        -- File symlink and chain symlink for write, edit, and read
+        permissionText alg "write_file" "{\"path\":\"alias.txt\",\"content\":\"x\"}"
+          >>= (`shouldSatisfy` isJust)
+        permissionText alg "write_file" "{\"path\":\"chain.txt\",\"content\":\"x\"}"
+          >>= (`shouldSatisfy` isJust)
+        permissionText alg "replace_file_content" "{\"path\":\"alias.txt\",\"old_content\":\"a\",\"new_content\":\"b\"}"
+          >>= (`shouldSatisfy` isJust)
+        permissionText alg "Edit" "{\"path\":\"chain.txt\",\"old_content\":\"a\",\"new_content\":\"b\"}"
+          >>= (`shouldSatisfy` isJust)
+        permissionText alg "read_file" "{\"path\":\"alias.txt\"}"
+          >>= (`shouldSatisfy` isJust)
+
+        -- Symlinked parent directory (existing and nonexistent target)
+        permissionText alg "write_file" "{\"path\":\"dir-link/nested-secret.txt\",\"content\":\"x\"}"
+          >>= (`shouldSatisfy` isJust)
+        permissionText alg "write_file" "{\"path\":\"dir-link/new-secret.txt\",\"content\":\"x\"}"
+          >>= (`shouldSatisfy` isJust)
+
+        -- Dangling symlink target
+        permissionText alg "write_file" "{\"path\":\"dangling.txt\",\"content\":\"x\"}"
+          >>= (`shouldSatisfy` isJust)
+
+        -- Protected path via symlink
+        permissionText alg "write_file" "{\"path\":\"git-alias.txt\",\"content\":\"x\"}"
+          >>= (`shouldSatisfy` isJust)
+
+        -- Escaping symlink does not crash permission evaluation
+        permissionText alg "write_file" "{\"path\":\"escape.txt\",\"content\":\"x\"}"
+          `shouldReturn` Nothing
+
+        -- Unrelated allowed write still succeeds
+        permissionText alg "write_file" "{\"path\":\"public.txt\",\"content\":\"ok\"}"
+          `shouldReturn` Nothing
 
     describe "interpRunHook" $ do
       it "runs configured PreToolUse command hooks and blocks on exit code 2" $ do

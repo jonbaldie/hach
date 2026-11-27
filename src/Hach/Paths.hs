@@ -14,6 +14,7 @@ module Hach.Paths
    , matchStarGlob
   ) where
 
+import Control.Exception (SomeException, try)
 import Data.List (isPrefixOf, maximumBy, nub)
 import Data.Ord (comparing)
 import Data.Text (Text)
@@ -22,6 +23,8 @@ import System.Directory
   ( canonicalizePath
   , doesDirectoryExist
   , doesFileExist
+  , getSymbolicLinkTarget
+  , pathIsSymbolicLink
   )
 import System.FilePath
   ( (</>)
@@ -82,21 +85,45 @@ collapseLogicalPath p =
         | otherwise = d : acc
   in joinPath (reverse (foldl step [] dirs))
 
--- | Canonicalize an existing path or the deepest existing parent directory
--- of a non-existing path. This resolves symlinks while preserving target filename.
+-- | Canonicalize an existing path, a dangling symlink, or the deepest existing
+-- parent directory of a non-existing path. This resolves symlinks while
+-- preserving target filename.
 canonicalizeCandidate :: FilePath -> IO FilePath
-canonicalizeCandidate path = do
+canonicalizeCandidate = canonicalizeCandidateWithDepth 40
+
+canonicalizeCandidateWithDepth :: Int -> FilePath -> IO FilePath
+canonicalizeCandidateWithDepth depth path = do
   existsFile <- doesFileExist path
   existsDir  <- doesDirectoryExist path
   if existsFile || existsDir
     then canonicalizePath path
     else do
-      let parent = takeDirectory path
-      if parent == path
-        then pure path
-        else do
-          canonParent <- canonicalizeCandidate parent
-          pure (canonParent </> takeFileName path)
+      mTarget <- if depth > 0 then tryFollowSymlink path else pure Nothing
+      case mTarget of
+        Just target ->
+          let resolvedTarget =
+                if isAbsolute target
+                  then target
+                  else takeDirectory path </> target
+          in canonicalizeCandidateWithDepth (depth - 1) (collapseLogicalPath resolvedTarget)
+        Nothing -> do
+          let parent = takeDirectory path
+          if parent == path
+            then pure path
+            else do
+              canonParent <- canonicalizeCandidateWithDepth depth parent
+              pure (canonParent </> takeFileName path)
+
+tryFollowSymlink :: FilePath -> IO (Maybe FilePath)
+tryFollowSymlink path = do
+  res <- try $ do
+    isLink <- pathIsSymbolicLink path
+    if isLink
+      then Just <$> getSymbolicLinkTarget path
+      else pure Nothing
+  pure $ case (res :: Either SomeException (Maybe FilePath)) of
+    Right mTarget -> mTarget
+    Left _        -> Nothing
 
 -- | Resolve a target path against the workspace.
 -- Enforces that the resolved path is strictly located within one of the
