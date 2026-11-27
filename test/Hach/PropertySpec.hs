@@ -108,13 +108,21 @@ spec = do
             Left _  -> True
             Right _ -> True
 
-      it "always sets optNoTui = True when --no-tui is present" $
-        withNumTests 2000 $ property $ \wordsBefore wordsAfter ->
-          let cleanBefore = filter (`notElem` ["--", "-h", "--help"]) wordsBefore
-              args = cleanBefore ++ ["--no-tui"] ++ wordsAfter
-          in case parseCliArgs args of
-               Left _     -> True
-               Right opts -> optNoTui opts == True
+      it "sets optNoTui for a standalone --no-tui among complete arguments" $ withNumTests 2000 $
+        let chunk = elements
+              [ ["prompt"], ["-c"], ["--version"], ["-m", "model"]
+              , ["--provider", "openrouter"], ["--max-turns", "2"]
+              , ["--output-format", "text"], ["--worktree", "branch"]
+              , ["-w", "--no-tui"], ["--session-id", "--no-tui"]
+              , ["--add-dir", "dir"], ["--append-system-prompt", "context"]
+              , ["--model=model"], ["--worktree=branch"]
+              ]
+        in forAll (listOf chunk) $ \before ->
+           forAll (listOf (frequency [(9, chunk), (1, pure ["--"])])) $ \after ->
+             let args = concat before ++ ["--no-tui"] ++ concat after
+             in case parseCliArgs args of
+                  Left err -> counterexample (show args ++ ": " ++ err) False
+                  Right opts -> counterexample (show args) (optNoTui opts)
 
     describe "OpenRouter Error Handling" $ do
       it "handles string error payloads without falling back to JSON parse failure" $ do
