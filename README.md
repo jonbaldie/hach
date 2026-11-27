@@ -104,6 +104,26 @@ To run without the terminal user interface, add the --no-tui flag:
 hach --no-tui "Run the test suite and fix any errors"
 ```
 
+To run one shell command in the workspace and exit with its status, without
+starting the agent, use `--exec`:
+
+```bash
+hach --exec "cabal build"
+```
+
+Hach stops an `--exec` command after 60 seconds by default. When that happens
+it kills the command and its child processes, writes `Command timed out after
+60 seconds` to standard error and exits with status 1. To give a longer command
+more time, pass `--exec-timeout SECONDS`, a whole number of seconds from 1 to
+604800 (one week):
+
+```bash
+hach --exec-timeout 1800 --exec "cabal build"
+```
+
+`--exec-timeout` only applies to `--exec`. It does not change the timeouts of
+commands the agent runs.
+
 To list every command-line option, run `hach --help`.
 
 ## Configuration

@@ -6,6 +6,8 @@ module Hach.CLI
   ( CliOptions(..)
   , OutputFormat(..)
   , defaultCliOptions
+  , defaultExecTimeoutSeconds
+  , maxExecTimeoutSeconds
   , parseOutputFormat
   , parsePermMode
   , parseCliArgs
@@ -72,6 +74,7 @@ data CliOptions = CliOptions
   , optWorktree             :: !(Maybe Text)
   , optInit                 :: !Bool
   , optExec                 :: !(Maybe Text)
+  , optExecTimeout          :: !(Maybe Int)
   , optPermissionMode       :: !(Maybe PermissionMode)
   , optDangerouslySkipPerms :: !Bool
   , optVersion              :: !Bool
@@ -98,11 +101,29 @@ defaultCliOptions = CliOptions
   , optWorktree             = Nothing
   , optInit                 = False
   , optExec                 = Nothing
+  , optExecTimeout          = Nothing
   , optPermissionMode       = Nothing
   , optDangerouslySkipPerms = False
   , optVersion              = False
   , optHelp                 = False
   }
+
+-- | Seconds a '--exec' command may run when '--exec-timeout' is not given.
+-- Matches the shell runner's own default.
+defaultExecTimeoutSeconds :: Int
+defaultExecTimeoutSeconds = 60
+
+-- | Largest accepted '--exec-timeout': one week. The bound keeps the
+-- microsecond count handed to 'System.Timeout.timeout' far from overflow.
+maxExecTimeoutSeconds :: Int
+maxExecTimeoutSeconds = 7 * 24 * 60 * 60
+
+-- | Parse an '--exec-timeout' value: a whole number of seconds from 1 to
+-- 'maxExecTimeoutSeconds'. Read as 'Integer' so overflow cannot wrap.
+parseExecTimeout :: String -> Maybe Int
+parseExecTimeout val = case readMaybe val :: Maybe Integer of
+  Just n | n >= 1 && n <= toInteger maxExecTimeoutSeconds -> Just (fromInteger n)
+  _ -> Nothing
 
 -- | Parse output format string.
 parseOutputFormat :: String -> Maybe OutputFormat
@@ -337,7 +358,11 @@ cliFlags =
   , CliFlag ["--add-dir"] (Just "DIR") "Add a working directory tools may reach (repeatable)"
   , CliFlag ["-w", "--worktree"] (Just "NAME") "Work in the git worktree NAME, creating it if needed"
   , CliFlag ["--init"] Nothing "Create a CLAUDE.md guidelines template and exit"
-  , CliFlag ["--exec"] (Just "CMD") "Run the shell command CMD in the workspace and exit"
+  , CliFlag ["--exec"] (Just "CMD")
+      "Run the shell command CMD in the workspace and exit (stopped after --exec-timeout)"
+  , CliFlag ["--exec-timeout"] (Just "SECONDS")
+      ( "Stop --exec CMD after SECONDS seconds (default "
+          ++ show defaultExecTimeoutSeconds ++ ", max " ++ show maxExecTimeoutSeconds ++ ")" )
   , CliFlag ["--permission-mode"] (Just "MODE")
       "default, acceptEdits, plan, auto, dontAsk or bypassPermissions"
   , CliFlag ["--dangerously-skip-permissions"] Nothing "Skip all permission prompts"
@@ -385,11 +410,19 @@ parseCliArgs args = go args defaultCliOptions []
     -- Flags that take one free-text value in either the separate or the
     -- @--flag=value@ form. Their values are validated during configuration
     -- resolution, so a local-only intent such as @--version@ still works.
+    execTimeoutError =
+      "--exec-timeout requires a whole number of seconds from 1 to "
+        ++ show maxExecTimeoutSeconds
+
     textValueFlags =
       [ ("--provider", \v o -> o { optProvider = Just v })
       , ("--base-url", \v o -> o { optBaseUrl = Just v })
       ]
 
+    go [] opts _
+      | Just _ <- optExecTimeout opts
+      , Nothing <- optExec opts =
+          Left "--exec-timeout only applies to --exec"
     go [] opts promptWords =
       let mPrompt = case promptWords of
             [] -> Nothing
@@ -558,6 +591,18 @@ parseCliArgs args = go args defaultCliOptions []
 
       | Just val <- stripPrefix "--exec=" arg =
           go rest opts { optExec = Just (T.pack val), optNoTui = True } promptWords
+
+      | arg == "--exec-timeout" =
+          case rest of
+            (val : rest') -> case parseExecTimeout val of
+              Just n  -> go rest' opts { optExecTimeout = Just n } promptWords
+              Nothing -> Left execTimeoutError
+            [] -> Left "--exec-timeout requires an argument"
+
+      | Just val <- stripPrefix "--exec-timeout=" arg =
+          case parseExecTimeout val of
+            Just n  -> go rest opts { optExecTimeout = Just n } promptWords
+            Nothing -> Left execTimeoutError
 
       | arg == "--permission-mode" =
           case rest of

@@ -66,7 +66,7 @@ runHach = do
 
   case intent of
     IntentExec cmd -> do
-      (code, out, err) <- runExecCommand activeWorkspace cmd
+      (code, out, err) <- runExecCommand activeWorkspace optExecTimeout cmd
       TIO.putStr out
       TIO.hPutStr stderr err
       exitWith code

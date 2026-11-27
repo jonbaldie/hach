@@ -11,7 +11,7 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import Data.Aeson (object, (.=))
 import Data.Either (isRight)
-import Data.List (intercalate, isPrefixOf)
+import Data.List (intercalate, isPrefixOf, isSuffixOf)
 import System.Directory
   ( createDirectory
   , createDirectoryIfMissing
@@ -209,6 +209,53 @@ headlessCliSpec = describe "headless CLI prompt acquisition" $ do
       exitCode `shouldBe` ExitSuccess
       stdoutText `shouldBe` worktree <> "\n"
       stderrText `shouldBe` ""
+
+  describe "--exec-timeout end to end (Issue #316)" $ do
+    let runExec workspace args = do
+          executable <- hachExecutable
+          environment <- hachEnvironment
+          readCreateProcessWithExitCode
+            (proc executable args) { cwd = Just workspace, env = Just environment }
+            ""
+
+    it "completes a command that finishes within an explicit timeout" $
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, stderrText) <-
+          runExec workspace ["--exec-timeout", "5", "--exec", "sleep 2; echo done; echo warn >&2"]
+        exitCode `shouldBe` ExitSuccess
+        stdoutText `shouldBe` "done\n"
+        stderrText `shouldBe` "warn\n"
+
+    it "stops a longer command with a visible error, non-zero exit and no survivors" $
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, stderrText) <-
+          runExec workspace
+            [ "--exec-timeout=1", "--exec"
+            , "echo $$ > shell.pid; sleep 30 & echo $! > child.pid; wait; echo finished"
+            ]
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldBe` ""
+        stderrText `shouldContain` "Command timed out after 1 seconds"
+        stderrText `shouldSatisfy` ("\n" `isSuffixOf`)
+        let alive pidFile = do
+              pid <- T.unpack . T.strip <$> TIO.readFile (workspace </> pidFile)
+              (code, _, _) <- readCreateProcessWithExitCode (proc "kill" ["-0", pid]) ""
+              pure (code == ExitSuccess)
+        alive "shell.pid" `shouldReturn` False
+        alive "child.pid" `shouldReturn` False
+
+    it "keeps the exit status of a command that finishes in time" $
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, _, _) <- runExec workspace ["--exec-timeout", "5", "--exec", "exit 7"]
+        exitCode `shouldBe` ExitFailure 7
+
+    it "rejects an invalid timeout without running the command" $
+      withTemporaryWorkspace $ \workspace -> do
+        (exitCode, stdoutText, _) <-
+          runExec workspace ["--exec-timeout", "0", "--exec", "touch ran"]
+        exitCode `shouldBe` ExitFailure 1
+        stdoutText `shouldContain` "--exec-timeout requires a whole number of seconds"
+        doesFileExist (workspace </> "ran") `shouldReturn` False
 
   it "rejects worktree case collisions on CLI startup" $ do
     executable <- hachExecutable
@@ -1116,6 +1163,37 @@ cliModuleSpec = do
         Left err -> err `shouldContain` "requires an argument"
         Right _  -> expectationFailure "Expected failure when --exec has no argument"
 
+    describe "--exec-timeout (Issue #316)" $ do
+      let rejects args needle = case parseCliArgs args of
+            Left err -> err `shouldContain` needle
+            Right opts -> expectationFailure ("expected a parse error, got " ++ show opts)
+
+      it "leaves the timeout unset by default" $
+        fmap optExecTimeout (parseCliArgs ["--exec", "true"]) `shouldBe` Right Nothing
+
+      it "accepts separate and equals forms, before or after --exec" $ do
+        parseCliArgs ["--exec-timeout", "600", "--exec", "make"] `shouldBe` Right defaultCliOptions
+          { optExec = Just "make", optNoTui = True, optExecTimeout = Just 600 }
+        parseCliArgs ["--exec", "make", "--exec-timeout=1"] `shouldBe` Right defaultCliOptions
+          { optExec = Just "make", optNoTui = True, optExecTimeout = Just 1 }
+
+      it "accepts the documented maximum" $
+        fmap optExecTimeout (parseCliArgs ["--exec", "true", "--exec-timeout", show maxExecTimeoutSeconds])
+          `shouldBe` Right (Just maxExecTimeoutSeconds)
+
+      it "rejects zero, negative, non-integer, overflow and missing values" $ do
+        forM_ ["0", "-5", "1.5", "abc", "", "60s", "99999999999999999999999", show (maxExecTimeoutSeconds + 1)] $ \v -> do
+          rejects ["--exec", "true", "--exec-timeout", v] "--exec-timeout requires a whole number of seconds"
+          rejects ["--exec", "true", "--exec-timeout=" ++ v] "--exec-timeout requires a whole number of seconds"
+        rejects ["--exec", "true", "--exec-timeout"] "--exec-timeout requires an argument"
+
+      it "rejects --exec-timeout without --exec" $
+        rejects ["--exec-timeout", "5", "hello"] "--exec-timeout only applies to --exec"
+
+      it "documents the unit, default and maximum in --help" $
+        forM_ ["--exec-timeout SECONDS", "default 60", show maxExecTimeoutSeconds] $ \needle ->
+          cliHelpText `shouldContain` needle
+
     it "fails on unknown flag" $ do
       case parseCliArgs ["--some-bogus-flag"] of
         Left err -> err `shouldContain` "Unknown flag"
@@ -1163,7 +1241,7 @@ cliModuleSpec = do
           , "-p", "--print", "--output-format", "-c", "--continue"
           , "-r", "--resume", "--session-id", "--max-turns", "--max-budget-usd"
           , "--append-system-prompt", "--add-dir", "-w", "--worktree"
-          , "--init", "--exec", "--permission-mode"
+          , "--init", "--exec", "--exec-timeout", "--permission-mode"
           , "--dangerously-skip-permissions", "--provider", "--base-url", "--"
           ]
         documentedFlags = concatMap cliFlagNames cliFlags

@@ -1301,11 +1301,14 @@ executeRunCommand root (RunCommandArgs cmd mTimeout) = do
       in pure $ ToolSuccess summary
 
 -- | Run a '--exec' command in the workspace and return its status plus streams.
-runExecCommand :: FilePath -> Text -> IO (ExitCode, Text, Text)
-runExecCommand root cmd = do
-  outcome <- runWorkspaceShell root cmd Nothing
+-- 'Nothing' keeps the shell runner's 60-second default timeout. A timeout or
+-- launch failure becomes exit status 1 with a newline-terminated message on
+-- the error stream.
+runExecCommand :: FilePath -> Maybe Int -> Text -> IO (ExitCode, Text, Text)
+runExecCommand root mTimeout cmd = do
+  outcome <- runWorkspaceShell root cmd mTimeout
   case outcome of
-    Left err -> pure (ExitFailure 1, T.empty, err)
+    Left err -> pure (ExitFailure 1, T.empty, err <> "\n")
     Right triple -> pure triple
 
 executeListDir :: Workspace -> ListDirArgs -> IO ToolResult
