@@ -1182,13 +1182,17 @@ cliModuleSpec = do
           `shouldBe` Right (Just maxExecTimeoutSeconds)
 
       it "rejects zero, negative, non-integer, overflow and missing values" $ do
-        forM_ ["0", "-5", "1.5", "abc", "", "60s", "99999999999999999999999", show (maxExecTimeoutSeconds + 1)] $ \v -> do
+        forM_ ["0", "-5", "1.5", "abc", "", "60s", " 2", "(2)", "0x10", "+5", "99999999999999999999999", show (maxExecTimeoutSeconds + 1)] $ \v -> do
           rejects ["--exec", "true", "--exec-timeout", v] "--exec-timeout requires a whole number of seconds"
           rejects ["--exec", "true", "--exec-timeout=" ++ v] "--exec-timeout requires a whole number of seconds"
         rejects ["--exec", "true", "--exec-timeout"] "--exec-timeout requires an argument"
 
       it "rejects --exec-timeout without --exec" $
         rejects ["--exec-timeout", "5", "hello"] "--exec-timeout only applies to --exec"
+
+      it "does not block --version" $
+        fmap startupIntent (parseCliArgs ["--exec-timeout", "5", "--version"])
+          `shouldBe` Right IntentVersion
 
       it "documents the unit, default and maximum in --help" $
         forM_ ["--exec-timeout SECONDS", "default 60", show maxExecTimeoutSeconds] $ \needle ->

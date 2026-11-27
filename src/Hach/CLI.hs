@@ -43,7 +43,7 @@ import System.Exit (ExitCode(..))
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
-import Data.Char (isSpace, toLower)
+import Data.Char (isDigit, isSpace, toLower)
 import Data.List (intercalate, isPrefixOf, stripPrefix)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -109,7 +109,7 @@ defaultCliOptions = CliOptions
   }
 
 -- | Seconds a '--exec' command may run when '--exec-timeout' is not given.
--- Matches the shell runner's own default.
+-- The CLI passes this value to the runner, so help and runtime agree.
 defaultExecTimeoutSeconds :: Int
 defaultExecTimeoutSeconds = 60
 
@@ -119,11 +119,14 @@ maxExecTimeoutSeconds :: Int
 maxExecTimeoutSeconds = 7 * 24 * 60 * 60
 
 -- | Parse an '--exec-timeout' value: a whole number of seconds from 1 to
--- 'maxExecTimeoutSeconds'. Read as 'Integer' so overflow cannot wrap.
+-- 'maxExecTimeoutSeconds', in plain decimal digits. Read as 'Integer' so
+-- overflow cannot wrap.
 parseExecTimeout :: String -> Maybe Int
-parseExecTimeout val = case readMaybe val :: Maybe Integer of
-  Just n | n >= 1 && n <= toInteger maxExecTimeoutSeconds -> Just (fromInteger n)
-  _ -> Nothing
+parseExecTimeout val
+  | null val || not (all isDigit val) = Nothing
+  | otherwise = case readMaybe val :: Maybe Integer of
+      Just n | n >= 1 && n <= toInteger maxExecTimeoutSeconds -> Just (fromInteger n)
+      _ -> Nothing
 
 -- | Parse output format string.
 parseOutputFormat :: String -> Maybe OutputFormat
@@ -410,18 +413,20 @@ parseCliArgs args = go args defaultCliOptions []
     -- Flags that take one free-text value in either the separate or the
     -- @--flag=value@ form. Their values are validated during configuration
     -- resolution, so a local-only intent such as @--version@ still works.
-    execTimeoutError =
-      "--exec-timeout requires a whole number of seconds from 1 to "
-        ++ show maxExecTimeoutSeconds
-
     textValueFlags =
       [ ("--provider", \v o -> o { optProvider = Just v })
       , ("--base-url", \v o -> o { optBaseUrl = Just v })
       ]
 
+    execTimeoutError =
+      "--exec-timeout requires a whole number of seconds from 1 to "
+        ++ show maxExecTimeoutSeconds
+
+    -- '--version' is local-only, so a stray '--exec-timeout' does not block it.
     go [] opts _
       | Just _ <- optExecTimeout opts
-      , Nothing <- optExec opts =
+      , Nothing <- optExec opts
+      , not (optVersion opts) =
           Left "--exec-timeout only applies to --exec"
     go [] opts promptWords =
       let mPrompt = case promptWords of

@@ -24,7 +24,7 @@ import Hach.TUI.App (runTui)
 import Hach.Types
 import Control.Exception (finally, tryJust)
 import Control.Monad (when)
-import Data.Maybe (isJust)
+import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (getCurrentDirectory, makeAbsolute)
@@ -66,7 +66,8 @@ runHach = do
 
   case intent of
     IntentExec cmd -> do
-      (code, out, err) <- runExecCommand activeWorkspace optExecTimeout cmd
+      (code, out, err) <- runExecCommand activeWorkspace
+          (Just (fromMaybe defaultExecTimeoutSeconds optExecTimeout)) cmd
       TIO.putStr out
       TIO.hPutStr stderr err
       exitWith code

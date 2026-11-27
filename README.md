@@ -112,8 +112,8 @@ hach --exec "cabal build"
 ```
 
 Hach stops an `--exec` command after 60 seconds by default. When that happens
-it kills the command and its child processes, writes `Command timed out after
-60 seconds` to standard error and exits with status 1. To give a longer command
+it kills the command's process group, writes `Command timed out after 60
+seconds: CMD` to standard error and exits with status 1. To give a longer command
 more time, pass `--exec-timeout SECONDS`, a whole number of seconds from 1 to
 604800 (one week):
 
